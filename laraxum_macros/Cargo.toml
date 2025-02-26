@@ -1,0 +1,16 @@
+[package]
+name = "laraxum_macros"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc_macro = true
+
+[dependencies]
+laraxum = { path = "../laraxum" }
+axum = "0.8.1"
+fmt2 = "0.3.4"
+quote = "1.0.38"
+sqlx = "0.8.3"
+syn = "2.0.98"
+serde = "1.0.218"

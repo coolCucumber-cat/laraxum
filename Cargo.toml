@@ -1,0 +1,3 @@
+[workspace]
+members = ["laraxum", "laraxum_macros"]
+resolver = "2"
