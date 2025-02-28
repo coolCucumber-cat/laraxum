@@ -94,17 +94,42 @@ impl Parse for Table {
 pub struct Db {
     /// the name for the database struct, for example `AppDb`
     self_type: Ident,
+    /// the name of the database
+    name: String,
     /// the type for the sql pool, for example `sqlx::MySqlPool`
     pool_type: Type,
     /// the tables in the database
     tables: Vec<Table>,
 }
 
+impl Parse for Db {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let self_type = input.parse::<Ident>()?;
+        let name = if input.parse::<Token![as]>().is_ok() {
+            input.parse::<LitStr>()?.value()
+        } else {
+            self_type.to_string()
+        };
+        input.parse::<Token![:]>()?;
+        let pool_type = input.parse::<Type>()?;
+        let content;
+        syn::braced!(content in input);
+        let tables = Punctuated::<Table, Token![,]>::parse_terminated(&content)?;
+        let tables = tables.into_iter().collect();
+        Ok(Self {
+            self_type,
+            name,
+            pool_type,
+            tables,
+        })
+    }
+}
+
 impl From<Db> for TokenStream {
     fn from(db: Db) -> Self {
         let Db {
             self_type: db_type,
-            // name,
+            name: db_name,
             pool_type: db_pool_type,
             tables,
         } = db;
@@ -208,7 +233,43 @@ impl From<Db> for TokenStream {
             let column_request_types = column_types.iter().map(|column| &column.0);
             let column_response_types = column_types.iter().map(|column| &column.1);
 
-            let controller = if table_auto_impl_controller {
+            let migration_up = fmt2::fmt! { { str } =>
+                "CREATE TABLE IF NOT EXISTS " {db_name} "." {table_name} " ("
+                    {table_id_name;std} " BIGINT PRIMARY KEY AUTO_INCREMENT"
+                    @..(sql_create => |c| "," {c})
+                ");"
+            };
+            let migration_down = fmt2::fmt! { { str } =>
+                "DROP TABLE " {db_name} "." {table_name} ";" ln
+            };
+
+            let get_all = fmt2::fmt! { { str } =>
+                "SELECT __"
+                {table_name} "." {table_id_name;std}
+                @..(column_response_names.clone() => |c| ", __" {table_name} "." {c;std})
+                " FROM " {db_name} "." {table_name} " __" {table_name}
+            };
+            let get_one = fmt2::fmt! { { str } =>
+                {get_all} " WHERE __" {table_name} "." {table_id_name;std} " = ?"
+            };
+            let create_one = fmt2::fmt! { { str } =>
+                "INSERT INTO " {db_name} "." {table_name} " ("
+                    @..join(column_request_names.clone() => ", " => |c| {c;std})
+                ") VALUES ("
+                    @..join(column_request_names.clone() => ", " => |_c| "?")
+                ")"
+            };
+            let update_one = fmt2::fmt! { { str } =>
+                "UPDATE " {db_name} "." {table_name} " SET "
+                @..join(column_request_names.clone() => ", " => |c| {c;std} " = ?")
+                " WHERE " {table_id_name;std} " = ?"
+            };
+            let delete_one = fmt2::fmt! { { str } =>
+                "DELETE FROM " {db_name} "." {table_name}
+                " WHERE " {table_id_name;std} " = ?"
+            };
+
+            let controller_ts = if table_auto_impl_controller {
                 quote! {
                     impl ::laraxum::Controller for #table_type {
                         type State = #db_type;
@@ -218,40 +279,12 @@ impl From<Db> for TokenStream {
                 quote! {}
             };
 
-            let create_table = fmt2::fmt! { { str } =>
-                "CREATE TABLE " {table_name} "("
-
-                ")"
-            };
-
-            let get_all = fmt2::fmt! { { str } =>
-                "SELECT __"
-                {table_name} "." {table_id_name;std}
-                @..(column_response_names.clone() => |c| ", __" {table_name} "." {c;std})
-                " FROM " {table_name} " __" {table_name}
-            };
-            let get_one = fmt2::fmt! { { str } =>
-                {get_all} " WHERE __" {table_name} "." {table_id_name;std} " = ?"
-            };
-            let create_one = fmt2::fmt! { { str } =>
-                "INSERT INTO " {table_name} " ("
-                    @..join(column_request_names.clone() => ", " => |c| {c;std})
-                ") VALUES ("
-                    @..join(column_request_names.clone() => ", " => |_c| "?")
-                ")"
-            };
-            let update_one = fmt2::fmt! { { str } =>
-                "UPDATE " {table_name} " SET "
-                @..join(column_request_names.clone() => ", " => |c| {c;std} " = ?")
-                " WHERE " {table_id_name;std} " = ?"
-            };
-            let delete_one = fmt2::fmt! { { str } =>
-                "DELETE FROM " {table_name}
-                " WHERE " {table_id_name;std} " = ?"
-            };
-
-            quote! {
-                #[doc = #get_all]
+            let table_ts = quote! {
+                #[doc = "`"]
+                #[doc = #db_name]
+                #[doc = "."]
+                #[doc = #table_name]
+                #[doc = "`"]
                 #[derive(::serde::Serialize)]
                 pub struct #table_type {
                     pub #table_id_name: ::laraxum::Id,
@@ -274,31 +307,51 @@ impl From<Db> for TokenStream {
                 impl ::laraxum::Model for #table_type {
                     type RequestQuery = ();
 
+                    /// `get_all`
+                    ///
+                    /// ```sql
                     #[doc = #get_all]
+                    /// ```
                     async fn get_all(db: &Self::Db) -> ::core::result::Result<::std::vec::Vec<Self::Response>, ::sqlx::Error> {
                         ::sqlx::query_as!(Self::Response, #get_all).fetch_all(&db.pool).await
                     }
+                    /// `get_one`
+                    ///
+                    /// ```sql
                     #[doc = #get_one]
+                    /// ```
                     async fn get_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<::core::option::Option<Self::Response>, ::sqlx::Error> {
                         ::sqlx::query_as!(Self::Response, #get_one, id).fetch_optional(&db.pool).await
                     }
+                    /// `get_one_exact`
+                    ///
+                    /// ```sql
                     #[doc = #get_one]
+                    /// ```
                     async fn get_one_exact(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<Self::Response, ::sqlx::Error> {
                         ::sqlx::query_as!(Self::Response, #get_one, id).fetch_one(&db.pool).await
                     }
+                    /// `create_one`
+                    ///
+                    /// ```sql
                     #[doc = #create_one]
+                    /// ```
                     async fn create_one(db: &Self::Db, r: Self::Request) -> ::core::result::Result<::laraxum::Id, ::sqlx::Error> {
                         ::core::result::Result::map(
                             ::sqlx::query!(
-                                #create_one
-                                #(, r.#column_request_names_1)*
+                                #create_one,
+                                #(r.#column_request_names_1,)*
                             )
                             .execute(&db.pool)
                             .await,
                             |r| r.last_insert_id(),
                         )
                     }
+                    /// `update_one`
+                    ///
+                    /// ```sql
                     #[doc = #update_one]
+                    /// ```
                     async fn update_one(
                         db: &Self::Db,
                         r: Self::Request,
@@ -306,41 +359,75 @@ impl From<Db> for TokenStream {
                     ) -> ::core::result::Result<(), ::sqlx::Error> {
                         ::core::result::Result::map(
                             ::sqlx::query!(
-                                #update_one
-                                #(, r.#column_request_names_2)*
-                                , id
+                                #update_one,
+                                #(r.#column_request_names_2,)*
+                                id,
                             )
                             .execute(&db.pool)
                             .await,
                             |_| (),
                         )
                     }
+                    /// `delete_one`
+                    ///
+                    /// ```sql
                     #[doc = #delete_one]
+                    /// ```
                     async fn delete_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<(), ::sqlx::Error> {
                         ::core::result::Result::map(
                             ::sqlx::query!(#delete_one, id)
                             .execute(&db.pool)
                             .await,
-                            |_| ()
+                            |_| (),
                         )
                     }
                 }
 
-                #controller
-            }
+                #controller_ts
+            };
+            (table_ts, migration_up, migration_down)
         };
-        let db_tables = tables.iter().map(transform_table);
+        let tables = tables.iter().map(transform_table).collect::<Vec<_>>();
 
+        let migration_up = fmt2::fmt! { { str } =>
+            "BEGIN TRANSACTION;"
+            @..(&tables => |table| {table.1})
+            "COMMIT;"
+        };
+        let migration_down = fmt2::fmt! { { str } =>
+            "BEGIN TRANSACTION;"
+            @..(tables.iter().rev() => |table| {table.2})
+            "COMMIT;"
+        };
+        let migration_up_full = fmt2::fmt! { { str } =>
+            "CREATE DATABASE IF NOT EXISTS " {db_name} ";"
+            {migration_up}
+        };
+        let migration_down_full = fmt2::fmt! { { str } =>
+            {migration_down}
+            "DROP DATABASE " {db_name} ";"
+        };
+
+        let root = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let root = root.join("laraxum");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("migration_up.sql"), &migration_up).unwrap();
+        std::fs::write(root.join("migration_down.sql"), &migration_down).unwrap();
+        std::fs::write(root.join("migration_up_full.sql"), &migration_up_full).unwrap();
+        std::fs::write(root.join("migration_down_full.sql"), &migration_down_full).unwrap();
+
+        let tables_ts = tables.iter().map(|table| &table.0);
         quote! {
+            #[doc = #migration_up_full]
             pub struct #db_type {
-                pool: #db_pool_type
+                pool: ::sqlx::Pool<#db_pool_type>,
             }
 
             impl ::laraxum::AnyDb for #db_type {
                 type Db = Self;
                 async fn connect_with_str(s: &str) -> ::core::result::Result<Self, ::sqlx::Error> {
                     ::core::result::Result::Ok(Self {
-                        pool: #db_pool_type::connect(s).await?
+                        pool: ::sqlx::Pool::<#db_pool_type>::connect(s).await?,
                     })
                 }
                 fn db(&self) -> &Self::Db {
@@ -348,31 +435,8 @@ impl From<Db> for TokenStream {
                 }
             }
 
-            #(#db_tables)*
+            #(#tables_ts)*
         }
         .into()
-    }
-}
-
-impl Parse for Db {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let self_type = input.parse::<Ident>()?;
-        // let name = if input.parse::<Token![as]>().is_ok() {
-        //     input.parse::<LitStr>()?.value()
-        // } else {
-        //     self_type.to_string()
-        // };
-        input.parse::<Token![:]>()?;
-        let pool_type = input.parse::<Type>()?;
-        let content;
-        syn::braced!(content in input);
-        let tables = Punctuated::<Table, Token![,]>::parse_terminated(&content)?;
-        let tables = tables.into_iter().collect();
-        Ok(Self {
-            self_type,
-            // name,
-            pool_type,
-            tables,
-        })
     }
 }

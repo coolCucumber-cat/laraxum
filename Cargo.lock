@@ -774,12 +774,8 @@ dependencies = [
 name = "laraxum_macros"
 version = "0.1.0"
 dependencies = [
- "axum",
  "fmt2",
- "laraxum",
  "quote",
- "serde",
- "sqlx",
  "syn",
 ]
 
