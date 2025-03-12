@@ -12,7 +12,67 @@ use serde::{Deserialize, Serialize};
 
 pub type Id = u64;
 
-pub type Sql = ();
+pub enum Error {
+    /// http `401 Unauthorized`
+    ///
+    /// Although the status code is called Unauthorized, it means the identity of the user is unknown and therefore unauthenticated
+    Unauthenticated,
+    /// http `403 Forbidden`
+    ///
+    /// Although this has the name of the name of the `401` status code, it means the identity of the user is known and unauthorized
+    Unauthorized,
+    /// http `404 Not Found`
+    ///
+    /// The resource could not be found
+    NotFound,
+    /// http `500 Internal Server Error`
+    ///
+    /// There was an issue with the server
+    Server,
+}
+
+impl Error {
+    fn status_code(self) -> StatusCode {
+        match self {
+            Self::Unauthenticated => StatusCode::UNAUTHORIZED,
+            Self::Unauthorized => StatusCode::FORBIDDEN,
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Server => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        self.status_code().into_response()
+    }
+}
+
+pub enum ModelError<BadRequest> {
+    /// http `400 Bad Request`
+    ///
+    /// Data in a request is invalid
+    BadRequest(BadRequest),
+    Other(Error),
+}
+
+impl<E> From<Error> for ModelError<E> {
+    fn from(other: Error) -> Self {
+        Self::Other(other)
+    }
+}
+
+impl<E> IntoResponse for ModelError<E>
+where
+    E: Serialize,
+{
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            Self::BadRequest(err) => Json(err).into_response(),
+            Self::Other(err) => err.into_response(),
+        }
+    }
+}
 
 pub trait Db<Model> {}
 
@@ -31,95 +91,72 @@ pub trait Table {
     type Db: Db<Self::Response>;
     type Response: Serialize;
     type Request: for<'a> Deserialize<'a>;
+    type RequestError: Serialize;
+    type RequestQuery: for<'a> Deserialize<'a>;
 }
 
 pub trait Model: Table {
-    type RequestQuery: for<'a> Deserialize<'a>;
-
-    async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, sqlx::Error>;
-    async fn get_one(db: &Self::Db, id: Id) -> Result<Option<Self::Response>, sqlx::Error>;
-    async fn get_one_exact(db: &Self::Db, id: Id) -> Result<Self::Response, sqlx::Error>;
-    async fn create_one(db: &Self::Db, r: Self::Request) -> Result<Id, sqlx::Error>;
-    async fn create_one_return(
-        db: &Self::Db,
-        r: Self::Request,
-    ) -> Result<Self::Response, sqlx::Error> {
+    async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, Error>;
+    async fn get_one(db: &Self::Db, id: Id) -> Result<Self::Response, Error>;
+    async fn create_one(db: &Self::Db, r: Self::Request) -> Result<Id, Error>;
+    async fn create_one_return(db: &Self::Db, r: Self::Request) -> Result<Self::Response, Error> {
         match Self::create_one(db, r).await {
-            Ok(id) => Self::get_one_exact(db, id).await,
+            Ok(id) => Self::get_one(db, id).await,
             Err(err) => Err(err),
         }
     }
-    async fn update_one(db: &Self::Db, r: Self::Request, id: Id) -> Result<(), sqlx::Error>;
+    async fn update_one(db: &Self::Db, r: Self::Request, id: Id) -> Result<(), Error>;
     async fn update_one_return(
         db: &Self::Db,
         r: Self::Request,
         id: Id,
-    ) -> Result<Self::Response, sqlx::Error> {
+    ) -> Result<Self::Response, Error> {
         match Self::update_one(db, r, id).await {
-            Ok(()) => Self::get_one_exact(db, id).await,
+            Ok(()) => Self::get_one(db, id).await,
             Err(err) => Err(err),
         }
     }
-    async fn delete_one(db: &Self::Db, id: Id) -> Result<(), sqlx::Error>;
+    async fn delete_one(db: &Self::Db, id: Id) -> Result<(), Error>;
 }
 
 pub trait Controller: Model {
     type State: AnyDb<Db = Self::Db>;
 
-    #[allow(unused_variables)]
     async fn index(
         State(state): State<Arc<Self::State>>,
-        Query(query): Query<Self::RequestQuery>,
-    ) -> Result<Json<Vec<Self::Response>>, impl IntoResponse> {
-        let db = state.db();
-        match Self::get_all(db).await {
-            Ok(r) => Ok(Json(r)),
-            Err(e) => Err(e.to_string()),
-        }
+        Query(_query): Query<Self::RequestQuery>,
+    ) -> Result<Json<Vec<Self::Response>>, Error> {
+        let rs = Self::get_all(state.db()).await?;
+        Ok(Json(rs))
     }
     async fn get(
         State(state): State<Arc<Self::State>>,
         Path(id): Path<Id>,
-    ) -> Result<Json<Self::Response>, impl IntoResponse> {
-        let db = state.db();
-        let map_err = Self::get_one(db, id)
-            .await
-            .map_err(|e| e.to_string().into_response())?;
-        match map_err {
-            Some(v) => Ok(Json(v)),
-            None => Err(StatusCode::NOT_FOUND.into_response()),
-        }
+    ) -> Result<Json<Self::Response>, Error> {
+        let rs = Self::get_one(state.db(), id).await?;
+        Ok(Json(rs))
     }
     async fn create(
         State(state): State<Arc<Self::State>>,
-        Json(r): Json<Self::Request>,
-    ) -> Result<Json<Self::Response>, impl IntoResponse> {
-        let db = state.db();
-        match Self::create_one_return(db, r).await {
-            Ok(r) => Ok(Json(r)),
-            Err(e) => Err(e.to_string()),
-        }
+        Json(rq): Json<Self::Request>,
+    ) -> Result<Json<Self::Response>, ModelError<Self::RequestError>> {
+        let rs = Self::create_one_return(state.db(), rq).await?;
+        Ok(Json(rs))
     }
     async fn update(
         State(state): State<Arc<Self::State>>,
         Path(id): Path<Id>,
-        Json(r): Json<Self::Request>,
-    ) -> Result<Json<Self::Response>, impl IntoResponse> {
-        let db = state.db();
-        match Self::update_one_return(db, r, id).await {
-            Ok(r) => Ok(Json(r)),
-            Err(e) => Err(e.to_string()),
-        }
+        Json(rq): Json<Self::Request>,
+    ) -> Result<Json<Self::Response>, ModelError<Self::RequestError>> {
+        let rs = Self::update_one_return(state.db(), rq, id).await?;
+        Ok(Json(rs))
     }
     async fn delete(
         State(state): State<Arc<Self::State>>,
         Path(id): Path<Id>,
-    ) -> Result<(), impl IntoResponse> {
-        let db = state.db();
-        match Self::delete_one(db, id).await {
-            Ok(()) => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
+    ) -> Result<(), Error> {
+        Self::delete_one(state.db(), id).await?;
+        Ok(())
     }
 }
 
