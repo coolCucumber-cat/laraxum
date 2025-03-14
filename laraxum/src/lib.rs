@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
-    Json,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +42,20 @@ impl Error {
     }
 }
 
+impl From<sqlx::Error> for Error {
+    fn from(error: sqlx::Error) -> Self {
+        match error {
+            sqlx::Error::RowNotFound => Self::NotFound,
+            #[cfg(debug_assertions)]
+            error => {
+                panic!("sql error: {error:?}");
+            }
+            #[cfg(not(debug_assertions))]
+            _ => Self::Server,
+        }
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         self.status_code().into_response()
@@ -66,7 +80,7 @@ impl<E> IntoResponse for ModelError<E>
 where
     E: Serialize,
 {
-    fn into_response(self) -> axum::response::Response {
+    fn into_response(self) -> Response {
         match self {
             Self::BadRequest(err) => Json(err).into_response(),
             Self::Other(err) => err.into_response(),
@@ -81,7 +95,8 @@ pub trait AnyDb: Sized {
     async fn connect_with_str(s: &str) -> Result<Self, sqlx::Error>;
     async fn connect() -> Result<Self, sqlx::Error> {
         let url = std::env::var("DATABASE_URL");
-        let url = url.map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+        let url = url.expect("a valid DATABASE_URL");
+        // let url = url.map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
         Self::connect_with_str(&url).await
     }
     fn db(&self) -> &Self::Db;

@@ -7,10 +7,15 @@ use crate::utils::parse_curly_brackets;
 
 use proc_macro2::Span;
 use quote::quote;
-use syn::{parse::Parse, punctuated::Punctuated, spanned::Spanned, Ident, LitStr, Token, Type};
+use syn::{
+    Fields, Ident, ItemStruct, LitStr, Token, Type, parse::Parse, punctuated::Punctuated,
+    spanned::Spanned,
+};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const UNKNOWN_TYPE: &str = "unknown type";
+const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table cannot have multiple IDs";
+const MUST_BE_FIELD_STRUCT: &str = "must be field struct";
 
 macro_rules! ty_enum {
     {
@@ -171,11 +176,17 @@ impl Parse for ColumnTyPrimitive {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ColumnTyInner {
     Primitive(ColumnTyPrimitive),
     Foreign(Ident),
     // Primary(kw::Id),
+}
+
+impl ColumnTyInner {
+    fn is_id(&self) -> bool {
+        matches!(self, ColumnTyInner::Primitive(ty) if ty.is_id())
+    }
 }
 
 impl Parse for ColumnTyInner {
@@ -193,7 +204,7 @@ impl Parse for ColumnTyInner {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ColumnTy {
     ty_inner: ColumnTyInner,
     nullability: Option<kw::Option>,
@@ -266,9 +277,13 @@ struct RequestColumn {
 }
 
 impl RequestColumn {
-    fn request_setter(request_columns: &[Self]) -> proc_macro2::TokenStream {
-        let names = request_columns.iter().map(|rc| &rc.name);
-        quote! { #(request.#names,)* }
+    fn request_setter(
+        request_columns: &[Self],
+    ) -> impl Iterator<Item = proc_macro2::TokenStream> + Clone {
+        request_columns.iter().map(|rc| {
+            let name = &rc.name;
+            quote! { request.#name }
+        })
     }
 }
 
@@ -279,7 +294,18 @@ struct ResponseColumn {
 }
 
 impl ResponseColumn {
-    fn response_getter() {}
+    fn response_getter(response_columns: &[Self], table_name: &Ident) -> proc_macro2::TokenStream {
+        let response_columns = response_columns.iter().map(|rc| {
+            let name = &rc.name;
+            let from_expanded_response = &rc.from_expanded_response;
+            quote! { #name: #from_expanded_response }
+        });
+        quote! {
+            #table_name {
+                #(#response_columns,)*
+            }
+        }
+    }
 }
 
 struct ExpandedReponseColumn {
@@ -333,13 +359,13 @@ impl Parse for Table {
         let mut id_name = None;
         let mut columns = vec![];
         for column in columns_iter {
-            if matches!(&column.ty.ty_inner, ColumnTyInner::Primary(_)) {
+            if column.ty.ty_inner.is_id() {
                 match id_name {
                     Some(_) => {
                         return Err(syn::Error::new(
                             column.name.span(),
-                            "table cannot have multiple IDs",
-                        ))
+                            TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
+                        ));
                     }
                     None => id_name = Some(column.name.clone()),
                 }
@@ -386,30 +412,33 @@ impl Table {
         for column in &self.columns {
             match &column.ty.ty_inner {
                 ColumnTyInner::Primitive(column_ty) => {
-                    let rs_ty = column_ty.clone().rs_ty(column.ty.nullability);
-                    let sql_ty = column_ty.clone().sql_ty(column.ty.nullability);
+                    let rs_ty = column_ty.rs_ty(column.ty.nullability);
+                    let sql_ty = column_ty.sql_ty(column.ty.nullability);
 
                     let create_column = fmt2::fmt! { { str } =>
                         {column.name;std} " " {sql_ty}
                     };
                     create_columns.push(create_column);
 
-                    let request_column = RequestColumn {
-                        name: column.name.clone(),
-                        ty: rs_ty.clone(),
-                    };
-                    request_columns.push(request_column);
-
                     let expanded_response_column = ExpandedReponseColumn {
                         inner_name: column.response_name.clone(),
                         table_name: query_table_name.clone(),
                     };
-                    let response_column = expanded_response_column.to_response_column(rs_ty);
+                    let response_column =
+                        expanded_response_column.to_response_column(rs_ty.clone());
                     expanded_response_columns.push(expanded_response_column);
                     response_columns.push(response_column);
+
+                    if !column_ty.is_id() {
+                        let request_column = RequestColumn {
+                            name: column.name.clone(),
+                            ty: rs_ty.clone(),
+                        };
+                        request_columns.push(request_column);
+                    }
                 }
                 // ColumnTyInner::Primary(kw_id) => {}
-                ColumnTyInner::Foreign(foreign_table_ty) => {
+                ColumnTyInner::Foreign(_foreign_table_ty) => {
                     unimplemented!();
                     // let foreign_table = tables
                     //     .iter()
@@ -500,7 +529,9 @@ impl Table {
             quote! { #name: #ty }
         });
 
-        let request_setter = RequestColumn::request_setter(&request_columns);
+        let request_setter_create = RequestColumn::request_setter(&request_columns);
+        let request_setter_update = request_setter_create.clone();
+        let response_getter = ResponseColumn::response_getter(&response_columns, &self.ty);
         let table_ty = &self.ty;
         let db_ty = &db.self_ty;
 
@@ -534,43 +565,48 @@ impl Table {
                 type Db = #db_ty;
                 type Response = #table_ty;
                 type Request = #table_request_ty;
+                type RequestError = ();
+                type RequestQuery = ();
             }
 
             impl ::laraxum::Model for #table_ty {
-                type RequestError = ();
-                type RequestQuery = ();
-
                 /// `get_all`
                 ///
                 /// ```sql
                 #[doc = #get_all]
                 /// ```
-                async fn get_all(db: &Self::Db) -> ::core::result::Result<::std::vec::Vec<Self::Response>, ::sqlx::Error> {
-                    ::sqlx::query_as!(Self::Response, #get_all).fetch_all(&db.pool).await
+                async fn get_all(db: &Self::Db) -> ::core::result::Result<::std::vec::Vec<Self::Response>, ::laraxum::Error> {
+                    let response = ::sqlx::query!(#get_all)
+                        .map(|response| #response_getter)
+                        .fetch_all(&db.pool)
+                        .await?;
+                    ::core::result::Result::Ok(response)
                 }
                 /// `get_one`
                 ///
                 /// ```sql
                 #[doc = #get_one]
                 /// ```
-                async fn get_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<::core::option::Option<Self::Response>, ::sqlx::Error> {
-                    ::sqlx::query_as!(Self::Response, #get_one, id).fetch_optional(&db.pool).await
+                async fn get_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<Self::Response, ::laraxum::Error> {
+                    let response = ::sqlx::query!(#get_one, id)
+                        .map(|response| #response_getter)
+                        .fetch_one(&db.pool)
+                        .await?;
+                    ::core::result::Result::Ok(response)
                 }
                 /// `create_one`
                 ///
                 /// ```sql
                 #[doc = #create_one]
                 /// ```
-                async fn create_one(db: &Self::Db, request: Self::Request) -> ::core::result::Result<::laraxum::Id, ::sqlx::Error> {
-                    ::core::result::Result::map(
-                        ::sqlx::query!(
-                            #create_one,
-                            #request_setter
-                        )
-                        .execute(&db.pool)
-                        .await,
-                        |r| r.last_insert_id(),
+                async fn create_one(db: &Self::Db, request: Self::Request) -> ::core::result::Result<::laraxum::Id, ::laraxum::Error> {
+                    let response = ::sqlx::query!(
+                        #create_one,
+                        #(#request_setter_create,)*
                     )
+                    .execute(&db.pool)
+                    .await?;
+                    ::core::result::Result::Ok(response.last_insert_id())
                 }
                 /// `update_one`
                 ///
@@ -581,30 +617,26 @@ impl Table {
                     db: &Self::Db,
                     request: Self::Request,
                     id: ::laraxum::Id,
-                ) -> ::core::result::Result<(), ::sqlx::Error> {
-                    ::core::result::Result::map(
-                        ::sqlx::query!(
-                            #update_one,
-                            #request_setter
-                            id,
-                        )
-                        .execute(&db.pool)
-                        .await,
-                        |_| (),
+                ) -> ::core::result::Result<(), ::laraxum::Error> {
+                    ::sqlx::query!(
+                        #update_one,
+                        #(#request_setter_update,)*
+                        id,
                     )
+                    .execute(&db.pool)
+                    .await?;
+                    ::core::result::Result::Ok(())
                 }
                 /// `delete_one`
                 ///
                 /// ```sql
                 #[doc = #delete_one]
                 /// ```
-                async fn delete_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<(), ::sqlx::Error> {
-                    ::core::result::Result::map(
-                        ::sqlx::query!(#delete_one, id)
-                        .execute(&db.pool)
-                        .await,
-                        |_| (),
-                    )
+                async fn delete_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<(), ::laraxum::Error> {
+                    ::sqlx::query!(#delete_one, id)
+                    .execute(&db.pool)
+                    .await?;
+                    ::core::result::Result::Ok(())
                 }
             }
 
@@ -619,30 +651,35 @@ pub struct Db {
     self_ty: Ident,
     /// the name of the database
     name: String,
-    /// the type for the sql pool, for example `sqlx::MySqlPool`
-    pool_type: Type,
     /// the tables in the database
     tables: Vec<Table>,
 }
 
 impl Parse for Db {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let ItemStruct {
+            attrs,
+            ident: self_type,
+            fields,
+            ..
+        } = input.parse::<ItemStruct>()?;
+        let Fields::Named(fields) = fields else {
+            return Err(syn::Error::new(self_type.span(), MUST_BE_FIELD_STRUCT));
+        };
+        let fields = fields.named;
+
         let self_type = input.parse::<Ident>()?;
         let name = if input.parse::<Token![as]>().is_ok() {
             input.parse::<LitStr>()?.value()
         } else {
             self_type.to_string()
         };
-        input.parse::<Token![:]>()?;
-        let pool_type = input.parse::<Type>()?;
-        let content;
-        syn::braced!(content in input);
+        let content = parse_curly_brackets(input)?;
         let tables = Punctuated::<Table, Token![,]>::parse_terminated(&content)?;
         let tables = tables.into_iter().collect();
         Ok(Self {
             self_ty: self_type,
             name,
-            pool_type,
             tables,
         })
     }
@@ -686,7 +723,12 @@ impl From<Db> for proc_macro::TokenStream {
         let tables_ts = tables.iter().map(|table| &table.0);
 
         let db_type = &db.self_ty;
-        let db_pool_type = db.pool_type;
+        #[cfg(feature = "mysql")]
+        let db_pool_type = quote! { ::sqlx::MySql };
+        #[cfg(feature = "postgres")]
+        let db_pool_type = quote! { ::sqlx::Postgres };
+        #[cfg(feature = "sqlite")]
+        let db_pool_type = quote! { ::sqlx::Sqlite };
 
         quote! {
             #[doc = #migration_up_full]

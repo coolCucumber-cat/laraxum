@@ -3,9 +3,9 @@ use crate::utils::parse_curly_brackets;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
+    Expr, Ident, LitStr, Path, Token, TypePath,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Expr, ExprCall, Ident, LitStr, Path, Token, TypePath,
 };
 
 struct MethodRoute {
@@ -50,7 +50,7 @@ impl Parse for MethodRouter {
 enum NestedRouteAttr {
     Nested(String, NestedRouteAttrs),
     Route { method_router: MethodRouter },
-    FnCall { fn_call: ExprCall },
+    FnCall { fn_call: Expr },
 }
 
 impl Parse for NestedRouteAttr {
@@ -64,7 +64,7 @@ impl Parse for NestedRouteAttr {
             let method_router = input.parse::<MethodRouter>()?;
             Ok(Self::Route { method_router })
         } else {
-            let fn_call = input.parse::<ExprCall>()?;
+            let fn_call = input.parse::<Expr>()?;
             Ok(Self::FnCall { fn_call })
         }
     }
@@ -88,7 +88,7 @@ enum RouteAttr {
         method_router: MethodRouter,
     },
     FnCall {
-        fn_call: ExprCall,
+        fn_call: Expr,
     },
 }
 
@@ -140,32 +140,19 @@ fn unnest_route_attrs(
 }
 
 pub struct Router {
-    router_expr: Option<Expr>,
     route_attrs: RouteAttrs,
 }
 
 impl Parse for Router {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let router_expr = if input.parse::<Token![_]>().is_ok() {
-            None
-        } else {
-            Some(input.parse::<Expr>()?)
-        };
-        input.parse::<Token![=>]>()?;
         let route_attrs = input.parse::<RouteAttrs>()?;
-        Ok(Self {
-            router_expr,
-            route_attrs,
-        })
+        Ok(Self { route_attrs })
     }
 }
 
 impl From<Router> for TokenStream {
     fn from(router: Router) -> Self {
-        let mut router_expr = match router.router_expr {
-            Some(router_expr) => quote! { #router_expr },
-            None => quote! { ::axum::routing::Router::new() },
-        };
+        let mut router_expr = quote! { ::axum::routing::Router::new() };
         for route_attr in &router.route_attrs.route_attrs {
             match route_attr {
                 RouteAttr::FnCall { fn_call } => {
