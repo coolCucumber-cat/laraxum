@@ -1,279 +1,293 @@
-mod kw {
-    syn::custom_keyword! { Option }
-    syn::custom_keyword! { Id }
-}
+use std::borrow::Cow;
 
-use crate::utils::parse_curly_brackets;
-
-use proc_macro2::Span;
 use quote::quote;
-use syn::{
-    Fields, Ident, ItemStruct, LitStr, Token, Type, parse::Parse, punctuated::Punctuated,
-    spanned::Spanned,
-};
+use syn::{Attribute, Field, Ident, Item, ItemMod, Meta, Type, spanned::Spanned};
 
+use crate::utils::{is_type_optional, parse_ident_from_path_segments};
+
+const DB_MOD_MUST_HAVE_CONTENT: &str = "db mod must have content";
+const TABLE_MUST_BE_STRUCT: &str = "item must be struct";
+const TABLE_MUST_BE_FIELD_STRUCT: &str = "table must be field struct";
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
+const TABLE_MUST_HAVE_MIN_1_UPDATABLE_COLUMNS: &str =
+    "table must have at least one updatable column";
 const UNKNOWN_TYPE: &str = "unknown type";
-const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table cannot have multiple IDs";
-const MUST_BE_FIELD_STRUCT: &str = "must be field struct";
 
 macro_rules! ty_enum {
     {
+        $(#[$meta:meta])*
         enum $enum:ident {
             $(
-                $(#[$meta:meta])*
-                $ident:ident($ty:ty) => $rs_ty:ty => $sql_ty:expr
+                $ident:ident($ty:ty)
             ),* $(,)?
         }
     } => {
-        #[allow(non_camel_case_types)]
-        #[derive(Copy, Clone, PartialEq, Eq)]
+        $(#[$meta])*
         enum $enum {
             $(
-                $(#[$meta])*
-                #[doc = $sql_ty]
                 $ident,
             )*
         }
 
-        impl $enum {
-            fn sql_ty_not_null(self) -> &'static str {
-                match self {
-                    $(
-                        $(#[$meta])*
-                        Self::$ident => $sql_ty,
-                    )*
-                }
-            }
-            fn sql_ty_null(self) -> &'static str {
-                match self {
-                    $(
-                        $(#[$meta])*
-                        Self::$ident => ::core::concat!($sql_ty, " NOT NULL"),
-                    )*
-                }
-            }
 
-            fn rs_ty_not_null(self, span: ::proc_macro2::Span) -> ::proc_macro2::TokenStream {
-                match self {
-                    $(
-                        $(#[$meta])*
-                        Self::$ident => ::quote::quote_spanned! { span => $rs_ty },
-                    )*
-                }
-            }
-            fn rs_ty_null(self, span: ::proc_macro2::Span, nullability: kw::Option) -> ::proc_macro2::TokenStream {
-                let ident = self.rs_ty_not_null(span);
-                ::quote::quote! { ::core::option::#nullability<#ident> }
-            }
+        impl ::core::convert::TryFrom::<::syn::Type> for $enum {
+            type Error = ::syn::Error;
 
-
-            fn parse_ty(input: ::syn::Type) -> ::core::option::Option<Self> {
+            fn try_from(ty: ::syn::Type) -> ::core::result::Result::<Self, Self::Error> {
                 $(
-                    $(#[$meta])*
                     {
-                        let ty: ::syn::Type = ::syn::parse_quote! { $ty };
-                        if ty == input {
-                            return ::core::option::Option::Some(Self::$ident);
+                        let ty_cmp: ::syn::Type = ::syn::parse_quote! { $ty };
+                        if ty == ty_cmp {
+                            return ::core::result::Result::Ok(Self::$ident);
                         }
                     }
                 )*
-                ::core::option::Option::None
+                let span = ::syn::spanned::Spanned::span(&ty);
+                ::core::result::Result::Err(::syn::Error::new(span, UNKNOWN_TYPE))
             }
         }
     };
 }
 
-#[cfg(feature = "mysql")]
 ty_enum! {
-    enum ColumnTyPrimitiveInner {
-        Id(Id) => u64 => "BIGINT PRIMARY KEY AUTO_INCREMENT",
-        String(String) => ::std::string::String => "VARCHAR(255)",
-        StringText(String<Text>) => ::std::string::String => "TEXT",
-        bool(bool) => bool => "BOOL",
-        u8(u8) => u8 => "TINYINT UNSIGNED",
-        i8(i8) => i8 => "TINYINT",
-        u16(u16) => u16 => "SMALLINT UNSIGNED",
-        i16(i16) => i16 => "SMALLINT",
-        u32(u32) => u32 => "INT UNSIGNED",
-        i32(i32) => i32 => "INT",
-        u64(u64) => u64 => "BIGINT UNSIGNED",
-        i64(i64) => i64 => "BIGINT",
-        f32(f32) => f32 => "FLOAT",
-        f64(f64) => f64 => "DOUBLE",
-    }
-}
+    #[allow(non_camel_case_types)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum ScalarTyRs {
+        String(String),
+        bool(bool),
+        u8(u8),
+        i8(i8),
+        u16(u16),
+        i16(i16),
+        u32(u32),
+        i32(i32),
+        u64(u64),
+        i64(i64),
+        f32(f32),
+        f64(f64),
 
-#[cfg(feature = "postgres")]
-ty_enum! {
-    enum ColumnTyPrimitiveInner {
-        Id(Id) => u64 => "SERIAL PRIMARY KEY",
-        String(String) => ::std::string::String => "VARCHAR(255)",
-        bool(bool) => bool => "BOOL",
-        i8(i8) => i8 => "CHAR",  // TINYINT
-        i16(i16) => i16 => "INT2", // SMALLINT
-        i32(i32) => i32 => "INT4", // INT
-        i64(i64) => i64 => "INT8", // BIGINT
-        f32(f32) => f32 => "FLOAT4", // FLOAT
-        f64(f64) => f64 => "FLOAT8", // DOUBLE
-    }
-}
+        TimePrimitiveDateTime(time::PrimitiveDateTime),
+        TimeOffsetDateTime(time::OffsetDateTime),
+        TimeDate(time::Date),
+        TimeTime(time::Time),
+        TimeDuration(time::Duration),
 
-#[cfg(feature = "sqlite")]
-ty_enum! {
-    enum ColumnTyPrimitiveInner {
-        Id(Id) => u64 => "INTEGER PRIMARY KEY AUTOINCREMENT",
-        String(String) => ::std::string::String => "TEXT",
-        bool(bool) => bool => "BOOLEAN",
-        u8(u8) => u8 => "INTEGER",
-        i8(i8) => i8 => "INTEGER",
-        u16(u16) => u16 => "INTEGER",
-        i16(i16) => i16 => "INTEGER",
-        u32(u32) => u32 => "INTEGER",
-        i32(i32) => i32 => "INTEGER",
-        u64(u64) => u64 => "INTEGER",
-        i64(i64) => i64 => "BIGINT",
-        f32(f32) => f32 => "FLOAT",
-        f64(f64) => f64 => "DOUBLE",
+        ChronoDateTimeUtc(chrono::DateTime<chrono::Utc>),
+        ChronoDateTimeLocal(chrono::DateTime<chrono::Local>),
+        ChronoNaiveDateTime(chrono::NaiveDateTime),
+        ChronoNaiveDate(chrono::NaiveDate),
+        ChronoNaiveTime(chrono::NaiveTime),
+        ChronoTimeDelta(chrono::TimeDelta),
     }
 }
 
 #[derive(Clone, Copy)]
-struct ColumnTyPrimitive {
-    ty: ColumnTyPrimitiveInner,
-    span: Span,
+struct RealTyRs {
+    ty: ScalarTyRs,
+    optional: bool,
 }
 
-impl ColumnTyPrimitive {
-    fn sql_ty(self, nullability: Option<kw::Option>) -> &'static str {
-        if nullability.is_some() {
-            self.ty.sql_ty_null()
-        } else {
-            self.ty.sql_ty_not_null()
+impl TryFrom<Type> for RealTyRs {
+    type Error = syn::Error;
+    fn try_from(input: Type) -> Result<Self, Self::Error> {
+        let (ty, optional) = is_type_optional(input);
+        let ty = ScalarTyRs::try_from(ty)?;
+        Ok(Self { ty, optional })
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ScalarTy {
+    Varchar(u32),
+    Text,
+    bool,
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+    f32,
+    f64,
+
+    TimePrimitiveDateTime,
+    TimeOffsetDateTime,
+    TimeDate,
+    TimeTime,
+    TimeDuration,
+
+    ChronoDateTimeUtc,
+    ChronoDateTimeLocal,
+    ChronoNaiveDateTime,
+    ChronoNaiveDate,
+    ChronoNaiveTime,
+    ChronoTimeDelta,
+}
+
+impl ScalarTy {
+    const SQL_TY_ID: &str = {
+        #[cfg(feature = "mysql")]
+        {
+            "BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT"
         }
-    }
+    };
 
-    fn rs_ty(self, nullability: Option<kw::Option>) -> proc_macro2::TokenStream {
-        match nullability {
-            Some(nullability) => self.ty.rs_ty_null(self.span, nullability),
-            None => self.ty.rs_ty_not_null(self.span),
-        }
-    }
+    fn sql_ty(self) -> Cow<'static, str> {
+        #[cfg(feature = "mysql")]
+        {
+            match self {
+                Self::Varchar(len) => Cow::Owned(fmt2::fmt! { { str } => "VARCHAR(" {len} ")" }),
+                Self::Text => Cow::Borrowed("TEXT"),
+                Self::bool => Cow::Borrowed("BOOL"),
+                Self::u8 => Cow::Borrowed("TINYINT UNSIGNED"),
+                Self::i8 => Cow::Borrowed("TINYINT"),
+                Self::u16 => Cow::Borrowed("SMALLINT UNSIGNED"),
+                Self::i16 => Cow::Borrowed("SMALLINT"),
+                Self::u32 => Cow::Borrowed("INT UNSIGNED"),
+                Self::i32 => Cow::Borrowed("INT"),
+                Self::u64 => Cow::Borrowed("BIGINT UNSIGNED"),
+                Self::i64 => Cow::Borrowed("BIGINT"),
+                Self::f32 => Cow::Borrowed("FLOAT"),
+                Self::f64 => Cow::Borrowed("DOUBLE"),
 
-    fn is_id(self) -> bool {
-        matches!(self.ty, ColumnTyPrimitiveInner::Id)
-    }
-}
+                Self::TimePrimitiveDateTime => Cow::Borrowed("DATETIME"),
+                Self::TimeOffsetDateTime => Cow::Borrowed("TIMESTAMP"),
+                Self::TimeDate => Cow::Borrowed("DATE"),
+                Self::TimeTime => Cow::Borrowed("TIME"),
+                Self::TimeDuration => Cow::Borrowed("TIME"),
 
-impl Parse for ColumnTyPrimitive {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ty_token = input.parse::<Type>()?;
-        let span = ty_token.span();
-        match ColumnTyPrimitiveInner::parse_ty(ty_token) {
-            Some(ty) => Ok(Self { ty, span }),
-            None => Err(syn::Error::new(span, UNKNOWN_TYPE)),
-        }
-    }
-}
-
-#[derive(Clone)]
-enum ColumnTyInner {
-    Primitive(ColumnTyPrimitive),
-    Foreign(Ident),
-    // Primary(kw::Id),
-}
-
-impl ColumnTyInner {
-    fn is_id(&self) -> bool {
-        matches!(self, ColumnTyInner::Primitive(ty) if ty.is_id())
-    }
-}
-
-impl Parse for ColumnTyInner {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // if let Ok(kw_id) = input.parse::<kw::Id>() {
-        // Ok(Self::Primary(kw_id))
-        // } else
-        if input.parse::<Token![&]>().is_ok() {
-            let ty = input.parse::<Ident>()?;
-            Ok(Self::Foreign(ty))
-        } else {
-            let ty = input.parse::<ColumnTyPrimitive>()?;
-            Ok(Self::Primitive(ty))
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ColumnTy {
-    ty_inner: ColumnTyInner,
-    nullability: Option<kw::Option>,
-}
-
-impl Parse for ColumnTy {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let nullability = input.parse::<kw::Option>().ok();
-        let ty_inner = if nullability.is_some() {
-            input.parse::<Token![<]>()?;
-            let ty_inner = input.parse::<ColumnTyInner>()?;
-            input.parse::<Token![>]>()?;
-            ty_inner
-        } else {
-            input.parse::<ColumnTyInner>()?
-        };
-
-        match (ty_inner.clone(), nullability) {
-            (ColumnTyInner::Primitive(ty), Some(kw::Option { span })) if ty.is_id() => {
-                Err(syn::Error::new(span, "ID must not be nullable"))
+                Self::ChronoDateTimeUtc => Cow::Borrowed("TIMESTAMP"),
+                Self::ChronoDateTimeLocal => Cow::Borrowed("TIMESTAMP"),
+                Self::ChronoNaiveDateTime => Cow::Borrowed("DATETIME"),
+                Self::ChronoNaiveDate => Cow::Borrowed("DATE"),
+                Self::ChronoNaiveTime => Cow::Borrowed("TIME"),
+                Self::ChronoTimeDelta => Cow::Borrowed("TIME"),
             }
-            _ => Ok(Self {
-                ty_inner,
-                nullability,
-            }),
         }
-        // match (ty_inner.clone(), nullability) {
-        //     (ColumnTyInner::Primary(_), Some(kw::Option { span })) => {
-        //         Err(syn::Error::new(span, "ID must not be nullable"))
+
+        // #[cfg(feature = "postgres")]
+        // ty_enum! {
+        //     enum ColumnTyPrimitiveInner {
+        //         Id(Id) => u64 => "SERIAL PRIMARY KEY",
+        //         String(String) => ::std::string::String => "VARCHAR(255)",
+        //         bool(bool) => bool => "BOOL",
+        //         i8(i8) => i8 => "CHAR",  // TINYINT
+        //         i16(i16) => i16 => "INT2", // SMALLINT
+        //         i32(i32) => i32 => "INT4", // INT
+        //         i64(i64) => i64 => "INT8", // BIGINT
+        //         f32(f32) => f32 => "FLOAT4", // FLOAT
+        //         f64(f64) => f64 => "FLOAT8", // DOUBLE
         //     }
-        //     _ => Ok(Self {
-        //         ty_inner,
-        //         nullability,
-        //     }),
+        // }
+        //
+        // #[cfg(feature = "sqlite")]
+        // ty_enum! {
+        //     enum ColumnTyPrimitiveInner {
+        //         Id(Id) => u64 => "INTEGER PRIMARY KEY AUTOINCREMENT",
+        //         String(String) => ::std::string::String => "TEXT",
+        //         bool(bool) => bool => "BOOLEAN",
+        //         u8(u8) => u8 => "INTEGER",
+        //         i8(i8) => i8 => "INTEGER",
+        //         u16(u16) => u16 => "INTEGER",
+        //         i16(i16) => i16 => "INTEGER",
+        //         u32(u32) => u32 => "INTEGER",
+        //         i32(i32) => i32 => "INTEGER",
+        //         u64(u64) => u64 => "INTEGER",
+        //         i64(i64) => i64 => "BIGINT",
+        //         f32(f32) => f32 => "FLOAT",
+        //         f64(f64) => f64 => "DOUBLE",
+        //     }
         // }
     }
 }
 
-#[derive(Clone)]
-struct Column {
-    /// the name for the column
-    response_name: Ident,
-    /// the name for the column in the request
-    name: Ident,
-    /// the type the column has
-    ty: ColumnTy,
+#[derive(Clone, Copy)]
+struct RealTy {
+    ty: ScalarTy,
+    optional: bool,
 }
 
-impl Parse for Column {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let name = input.parse::<Ident>()?;
-        let response_name = if input.parse::<Token![|]>().is_ok() {
-            input.parse::<Ident>()?
+impl RealTy {
+    fn sql_ty(self) -> Cow<'static, str> {
+        let sql_ty = self.ty.sql_ty();
+        if self.optional {
+            Cow::Owned(fmt2::fmt! { { str } => {sql_ty} " NOT NULL" })
         } else {
-            name.clone()
+            sql_ty
+        }
+    }
+}
+
+#[derive(Clone)]
+enum VirtualTyAttr {
+    None,
+    Varchar(u32),
+    Text,
+    Id,
+    Foreign,
+    OnCreate,
+    OnUpdate,
+}
+
+#[derive(Clone)]
+enum VirtualTy {
+    Id,
+    Real(RealTy),
+    Foreign(Ident),
+    OnCreate(RealTy),
+    OnUpdate(RealTy),
+}
+
+#[derive(Clone)]
+struct Column {
+    /// the name for the column in the response
+    response_ident: Ident,
+    /// the name for the column in the request
+    request_ident: Ident,
+    /// the type for the column
+    virtual_ty: VirtualTy,
+    /// the parsed rust type for the column
+    rs_ty: Type,
+}
+
+impl TryFrom<Field> for Column {
+    type Error = syn::Error;
+    fn try_from(field: Field) -> Result<Self, Self::Error> {
+        let field_span = field.span();
+        let response_ident = field
+            .ident
+            .ok_or_else(|| syn::Error::new(field_span, TABLE_MUST_BE_FIELD_STRUCT))?;
+        let request_ident = response_ident.clone();
+        let rs_ty = field.ty;
+
+        // TODO: make attribute parsing work properly
+        fn attr_is_id(attr: &Attribute) -> bool {
+            matches!(&attr.meta, Meta::Path(path) if parse_ident_from_path_segments(&path.segments).is_some_and(|ident| ident=="id"))
+        }
+        let virtual_ty_attr = if field.attrs.iter().any(attr_is_id) {
+            VirtualTyAttr::Id
+        } else {
+            VirtualTyAttr::None
         };
-        input.parse::<Token![:]>()?;
-        let ty = input.parse::<ColumnTy>()?;
+
+        // let real_ty_rs=;
+
         Ok(Self {
-            response_name,
-            name,
-            ty,
+            response_ident,
+            request_ident,
+            virtual_ty: ty,
+            rs_ty,
         })
     }
 }
 
 struct RequestColumn {
     name: Ident,
-    ty: proc_macro2::TokenStream,
+    ty: Type,
 }
 
 impl RequestColumn {
@@ -289,7 +303,7 @@ impl RequestColumn {
 
 struct ResponseColumn {
     name: Ident,
-    ty: proc_macro2::TokenStream,
+    ty: Type,
     from_expanded_response: proc_macro2::TokenStream,
 }
 
@@ -322,7 +336,7 @@ impl ExpandedReponseColumn {
             {self.table_name} "." {self.inner_name;std} " AS " {self.name();std}
         }
     }
-    fn to_response_column(&self, ty: proc_macro2::TokenStream) -> ResponseColumn {
+    fn to_response_column(&self, ty: Type) -> ResponseColumn {
         let name = self.name();
         ResponseColumn {
             name: self.inner_name.clone(),
@@ -334,112 +348,129 @@ impl ExpandedReponseColumn {
 
 struct Table {
     /// the name for the table struct, for example `Customer`
-    ty: Ident,
+    ident: Ident,
     /// the name for the sql table, for example `customers`
     name: String,
     /// the name for the id of the table, for example `CustomerId`
-    id_name: Ident,
+    id_ident: Ident,
     /// automatically implement the controller as well as the model, using the db as the state
     auto_impl_controller: bool,
     /// the columns in the database
     columns: Vec<Column>,
 }
 
-impl Parse for Table {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let auto_impl_controller = input.parse::<Token![auto]>().is_ok();
-        let ty = input.parse::<Ident>()?;
-        let name = if input.parse::<Token![as]>().is_ok() {
-            input.parse::<LitStr>()?.value()
-        } else {
-            ty.to_string()
+impl TryFrom<Item> for Table {
+    type Error = syn::Error;
+    fn try_from(item: Item) -> Result<Self, Self::Error> {
+        let Item::Struct(item_struct) = item else {
+            return Err(syn::Error::new(item.span(), TABLE_MUST_BE_STRUCT));
         };
-        let content = parse_curly_brackets(input)?;
-        let columns_iter = Punctuated::<Column, Token![,]>::parse_terminated(&content)?;
+        let ident = item_struct.ident;
+        let name = ident.to_string();
+
+        let columns = item_struct.fields.into_iter().map(Column::try_from);
+        let columns: Result<Vec<Column>, syn::Error> = columns.collect();
+        let columns = columns?;
+
+        let mut has_min_1_updatable_columns = false;
         let mut id_name = None;
-        let mut columns = vec![];
-        for column in columns_iter {
-            if column.ty.ty_inner.is_id() {
-                match id_name {
-                    Some(_) => {
+        for column in &columns {
+            match &column.virtual_ty {
+                VirtualTy::Id => {
+                    if id_name.is_some() {
                         return Err(syn::Error::new(
-                            column.name.span(),
+                            column.response_ident.span(),
                             TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
                         ));
                     }
-                    None => id_name = Some(column.name.clone()),
+                    id_name = Some(column.response_ident.clone());
                 }
+                VirtualTy::Real(_) | VirtualTy::OnUpdate(_) | VirtualTy::Foreign(_) => {
+                    has_min_1_updatable_columns = true;
+                }
+                VirtualTy::OnCreate(_) => {}
             }
-            // if matches!(&column.ty.ty_inner, ColumnTyInner::Primary(_)) {
-            //     match id_name {
-            //         Some(_) => {
-            //             return Err(syn::Error::new(
-            //                 column.name.span(),
-            //                 "table cannot have multiple IDs",
-            //             ))
-            //         }
-            //         None => id_name = Some(column.name.clone()),
-            //     }
-            // }
-            columns.push(column);
         }
-        let Some(id_name) = id_name else {
-            return Err(syn::Error::new(ty.span(), TABLE_MUST_HAVE_ID));
+        let Some(id_ident) = id_name else {
+            return Err(syn::Error::new(ident.span(), TABLE_MUST_HAVE_ID));
         };
+        if !has_min_1_updatable_columns {
+            return Err(syn::Error::new(
+                ident.span(),
+                TABLE_MUST_HAVE_MIN_1_UPDATABLE_COLUMNS,
+            ));
+        }
+
+        let auto_impl_controller = true;
+
         Ok(Self {
-            ty,
+            ident,
             name,
-            columns,
+            id_ident,
             auto_impl_controller,
-            id_name,
+            columns,
         })
     }
 }
 
 impl Table {
     fn transform_table(&self, db: &Db) -> (proc_macro2::TokenStream, String, String) {
-        let table_request_ty = quote::format_ident!("{}Request", self.ty);
+        let table_request_ty = quote::format_ident!("{}Request", self.ident);
         let query_table_name = fmt2::fmt! { { str } => "__" {db.name} "__" {self.name} };
 
-        let mut request_columns = vec![];
-        let mut expanded_response_columns = vec![];
-        let mut response_columns = vec![];
-        let mut create_columns = vec![];
-        let joins = vec![
-            fmt2::fmt! { { str } => "FROM " {db.name} "." {self.name} " AS " {query_table_name}},
+        let mut request_columns: Vec<RequestColumn> = vec![];
+        let mut expanded_response_columns: Vec<ExpandedReponseColumn> = vec![];
+        let mut response_columns: Vec<ResponseColumn> = vec![];
+        let mut create_columns: Vec<String> = vec![];
+        let joins: Vec<String> = vec![
+            fmt2::fmt! { { str } => "FROM " {db.name} "." {self.name} " AS " {query_table_name} },
         ];
 
         for column in &self.columns {
-            match &column.ty.ty_inner {
-                ColumnTyInner::Primitive(column_ty) => {
-                    let rs_ty = column_ty.rs_ty(column.ty.nullability);
-                    let sql_ty = column_ty.sql_ty(column.ty.nullability);
+            match &column.virtual_ty {
+                VirtualTy::Real(real_ty) => {
+                    let sql_ty = real_ty.sql_ty();
 
                     let create_column = fmt2::fmt! { { str } =>
-                        {column.name;std} " " {sql_ty}
+                        {column.request_ident;std} " " {sql_ty}
                     };
                     create_columns.push(create_column);
 
                     let expanded_response_column = ExpandedReponseColumn {
-                        inner_name: column.response_name.clone(),
+                        inner_name: column.response_ident.clone(),
                         table_name: query_table_name.clone(),
                     };
                     let response_column =
-                        expanded_response_column.to_response_column(rs_ty.clone());
+                        expanded_response_column.to_response_column(column.rs_ty.clone());
                     expanded_response_columns.push(expanded_response_column);
                     response_columns.push(response_column);
 
-                    if !column_ty.is_id() {
-                        let request_column = RequestColumn {
-                            name: column.name.clone(),
-                            ty: rs_ty.clone(),
-                        };
-                        request_columns.push(request_column);
-                    }
+                    let request_column = RequestColumn {
+                        name: column.request_ident.clone(),
+                        ty: column.rs_ty.clone(),
+                    };
+                    request_columns.push(request_column);
                 }
-                // ColumnTyInner::Primary(kw_id) => {}
-                ColumnTyInner::Foreign(_foreign_table_ty) => {
-                    unimplemented!();
+                VirtualTy::Id => {
+                    let sql_ty = ScalarTyRs::SQL_TY_ID;
+
+                    let create_column = fmt2::fmt! { { str } =>
+                        {column.request_ident;std} " " {sql_ty}
+                    };
+                    create_columns.push(create_column);
+
+                    let expanded_response_column = ExpandedReponseColumn {
+                        inner_name: column.response_ident.clone(),
+                        table_name: query_table_name.clone(),
+                    };
+                    let response_column =
+                        expanded_response_column.to_response_column(column.rs_ty.clone());
+                    expanded_response_columns.push(expanded_response_column);
+                    response_columns.push(response_column);
+                }
+                VirtualTy::OnCreate(_x) => {}
+                VirtualTy::OnUpdate(_x) => {}
+                VirtualTy::Foreign(_foreign_table_ty) => {
                     // let foreign_table = tables
                     //     .iter()
                     //     .find(|&ft| &ft.self_type == foreign_table_type)
@@ -499,7 +530,7 @@ impl Table {
             @..(joins => |join| " " {join})
         };
         let get_one = fmt2::fmt! { { str } =>
-            {get_all} " WHERE " {query_table_name} "." {self.id_name;std} " = ?"
+            {get_all} " WHERE " {query_table_name} "." {self.id_ident;std} " = ?"
         };
         let create_one = fmt2::fmt! { { str } =>
             "INSERT INTO " {db.name} "." {self.name} " ("
@@ -510,12 +541,12 @@ impl Table {
         };
         let update_one = fmt2::fmt! { { str } =>
             "UPDATE " {db.name} "." {self.name} " SET "
-            @..join(request_columns.iter() => "," => |c| {c.name;std} "=?")
-            " WHERE " {self.id_name;std} " = ?"
+            @..join(request_columns.iter() => "," => |c| {c.name;std} " = ?")
+            " WHERE " {self.id_ident;std} " = ?"
         };
         let delete_one = fmt2::fmt! { { str } =>
             "DELETE FROM " {db.name} "." {self.name}
-            " WHERE " {self.id_name;std} " = ?"
+            " WHERE " {self.id_ident;std} " = ?"
         };
 
         let table_columns = response_columns.iter().map(|c| {
@@ -531,9 +562,9 @@ impl Table {
 
         let request_setter_create = RequestColumn::request_setter(&request_columns);
         let request_setter_update = request_setter_create.clone();
-        let response_getter = ResponseColumn::response_getter(&response_columns, &self.ty);
-        let table_ty = &self.ty;
-        let db_ty = &db.self_ty;
+        let response_getter = ResponseColumn::response_getter(&response_columns, &self.ident);
+        let table_ty = &self.ident;
+        let db_ty = &db.ident;
 
         let controller_ts = if self.auto_impl_controller {
             quote! {
@@ -575,7 +606,9 @@ impl Table {
                 /// ```sql
                 #[doc = #get_all]
                 /// ```
-                async fn get_all(db: &Self::Db) -> ::core::result::Result<::std::vec::Vec<Self::Response>, ::laraxum::Error> {
+                async fn get_all(db: &Self::Db)
+                    -> ::core::result::Result::<::std::vec::Vec<Self::Response>, ::laraxum::Error>
+                {
                     let response = ::sqlx::query!(#get_all)
                         .map(|response| #response_getter)
                         .fetch_all(&db.pool)
@@ -587,7 +620,9 @@ impl Table {
                 /// ```sql
                 #[doc = #get_one]
                 /// ```
-                async fn get_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<Self::Response, ::laraxum::Error> {
+                async fn get_one(db: &Self::Db, id: ::laraxum::Id)
+                    -> ::core::result::Result::<Self::Response, ::laraxum::Error>
+                {
                     let response = ::sqlx::query!(#get_one, id)
                         .map(|response| #response_getter)
                         .fetch_one(&db.pool)
@@ -599,13 +634,15 @@ impl Table {
                 /// ```sql
                 #[doc = #create_one]
                 /// ```
-                async fn create_one(db: &Self::Db, request: Self::Request) -> ::core::result::Result<::laraxum::Id, ::laraxum::Error> {
+                async fn create_one(db: &Self::Db, request: Self::Request)
+                    -> ::core::result::Result::<::laraxum::Id, ::laraxum::Error>
+                {
                     let response = ::sqlx::query!(
                         #create_one,
                         #(#request_setter_create,)*
                     )
-                    .execute(&db.pool)
-                    .await?;
+                        .execute(&db.pool)
+                        .await?;
                     ::core::result::Result::Ok(response.last_insert_id())
                 }
                 /// `update_one`
@@ -617,14 +654,14 @@ impl Table {
                     db: &Self::Db,
                     request: Self::Request,
                     id: ::laraxum::Id,
-                ) -> ::core::result::Result<(), ::laraxum::Error> {
+                ) -> ::core::result::Result::<(), ::laraxum::Error> {
                     ::sqlx::query!(
                         #update_one,
                         #(#request_setter_update,)*
                         id,
                     )
-                    .execute(&db.pool)
-                    .await?;
+                        .execute(&db.pool)
+                        .await?;
                     ::core::result::Result::Ok(())
                 }
                 /// `delete_one`
@@ -632,10 +669,12 @@ impl Table {
                 /// ```sql
                 #[doc = #delete_one]
                 /// ```
-                async fn delete_one(db: &Self::Db, id: ::laraxum::Id) -> ::core::result::Result<(), ::laraxum::Error> {
+                async fn delete_one(db: &Self::Db, id: ::laraxum::Id)
+                    -> ::core::result::Result::<(), ::laraxum::Error>
+                {
                     ::sqlx::query!(#delete_one, id)
-                    .execute(&db.pool)
-                    .await?;
+                        .execute(&db.pool)
+                        .await?;
                     ::core::result::Result::Ok(())
                 }
             }
@@ -646,52 +685,51 @@ impl Table {
     }
 }
 
+#[derive(darling::FromMeta)]
+pub struct DbArgs {
+    rename: Option<String>,
+}
+
 pub struct Db {
-    /// the name for the database struct, for example `AppDb`
-    self_ty: Ident,
+    /// the name for the database module, for example `db`
+    ident: Ident,
     /// the name of the database
     name: String,
+    /// the attributes on the module
+    attrs: Vec<Attribute>,
     /// the tables in the database
     tables: Vec<Table>,
 }
 
-impl Parse for Db {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ItemStruct {
-            attrs,
-            ident: self_type,
-            fields,
-            ..
-        } = input.parse::<ItemStruct>()?;
-        let Fields::Named(fields) = fields else {
-            return Err(syn::Error::new(self_type.span(), MUST_BE_FIELD_STRUCT));
+impl Db {
+    pub fn new(item_mod: ItemMod, args: DbArgs) -> syn::Result<Self> {
+        let ident = item_mod.ident;
+        let name = args.rename.unwrap_or_else(|| ident.to_string());
+        let attrs = item_mod.attrs;
+        let Some((_, tables)) = item_mod.content else {
+            return Err(syn::Error::new(ident.span(), DB_MOD_MUST_HAVE_CONTENT));
         };
-        let fields = fields.named;
-
-        let self_type = input.parse::<Ident>()?;
-        let name = if input.parse::<Token![as]>().is_ok() {
-            input.parse::<LitStr>()?.value()
-        } else {
-            self_type.to_string()
-        };
-        let content = parse_curly_brackets(input)?;
-        let tables = Punctuated::<Table, Token![,]>::parse_terminated(&content)?;
-        let tables = tables.into_iter().collect();
+        let tables = tables.into_iter();
+        let tables: Result<Vec<Table>, syn::Error> = tables.map(Table::try_from).collect();
+        let tables = tables?;
         Ok(Self {
-            self_ty: self_type,
+            ident,
             name,
+            attrs,
             tables,
         })
     }
 }
 
-impl From<Db> for proc_macro::TokenStream {
+impl From<Db> for proc_macro2::TokenStream {
     fn from(db: Db) -> Self {
         let tables = db
             .tables
             .iter()
             .map(|table| table.transform_table(&db))
             .collect::<Vec<_>>();
+
+        let tables_ts = tables.iter().map(|table| &table.0);
 
         let migration_up = fmt2::fmt! { { str } =>
             "BEGIN TRANSACTION;"
@@ -720,25 +758,33 @@ impl From<Db> for proc_macro::TokenStream {
         std::fs::write(root.join("migration_up_full.sql"), &migration_up_full).unwrap();
         std::fs::write(root.join("migration_down_full.sql"), &migration_down_full).unwrap();
 
-        let tables_ts = tables.iter().map(|table| &table.0);
-
-        let db_type = &db.self_ty;
-        #[cfg(feature = "mysql")]
-        let db_pool_type = quote! { ::sqlx::MySql };
-        #[cfg(feature = "postgres")]
-        let db_pool_type = quote! { ::sqlx::Postgres };
-        #[cfg(feature = "sqlite")]
-        let db_pool_type = quote! { ::sqlx::Sqlite };
+        let db_ident = &db.ident;
+        let db_pool_type = {
+            #[cfg(feature = "mysql")]
+            {
+                quote! { ::sqlx::MySql }
+            }
+            #[cfg(feature = "sqlite")]
+            {
+                quote! { ::sqlx::Sqlite }
+            }
+            #[cfg(feature = "postgres")]
+            {
+                quote! { ::sqlx::Postgres }
+            }
+        };
 
         quote! {
+            /// ```sql
             #[doc = #migration_up_full]
-            pub struct #db_type {
+            /// ```
+            pub struct #db_ident {
                 pool: ::sqlx::Pool<#db_pool_type>,
             }
 
-            impl ::laraxum::AnyDb for #db_type {
+            impl ::laraxum::AnyDb for #db_ident {
                 type Db = Self;
-                async fn connect_with_str(s: &str) -> ::core::result::Result<Self, ::sqlx::Error> {
+                async fn connect_with_str(s: &str) -> ::core::result::Result::<Self, ::sqlx::Error> {
                     ::core::result::Result::Ok(Self {
                         pool: ::sqlx::Pool::<#db_pool_type>::connect(s).await?,
                     })
@@ -749,7 +795,8 @@ impl From<Db> for proc_macro::TokenStream {
             }
 
             #(#tables_ts)*
+
+            use ::laraxum_macros::{id, foreign, on_update, on_create};
         }
-        .into()
     }
 }

@@ -32,7 +32,7 @@ pub enum Error {
 }
 
 impl Error {
-    fn status_code(self) -> StatusCode {
+    const fn status_code(self) -> StatusCode {
         match self {
             Self::Unauthenticated => StatusCode::UNAUTHORIZED,
             Self::Unauthorized => StatusCode::FORBIDDEN,

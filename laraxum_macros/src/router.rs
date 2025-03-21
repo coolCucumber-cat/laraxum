@@ -1,6 +1,5 @@
 use crate::utils::parse_curly_brackets;
 
-use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     Expr, Ident, LitStr, Path, Token, TypePath,
@@ -150,7 +149,7 @@ impl Parse for Router {
     }
 }
 
-impl From<Router> for TokenStream {
+impl From<Router> for proc_macro2::TokenStream {
     fn from(router: Router) -> Self {
         let mut router_expr = quote! { ::axum::routing::Router::new() };
         for route_attr in &router.route_attrs.route_attrs {
@@ -198,6 +197,6 @@ impl From<Router> for TokenStream {
                 }
             }
         }
-        router_expr.into()
+        router_expr
     }
 }
