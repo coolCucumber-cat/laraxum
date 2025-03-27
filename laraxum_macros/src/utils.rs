@@ -6,7 +6,10 @@ use syn::{
     GenericArgument, Ident, Path, PathSegment, Token, Type, TypePath,
     parse::{ParseBuffer, ParseStream},
     punctuated::Punctuated,
+    spanned::Spanned,
 };
+
+const EXPECTED_IDENT: &str = "expected identifier";
 
 macro_rules! helper_attribute_macro {
     ($parent_macro:ident => $self_macro:ident => $self_ty:ty => $input:expr) => {
@@ -71,24 +74,37 @@ fn parse_path_segments_from_type_path(
 
 pub fn parse_ident_from_path_segments(
     path_segments: &Punctuated<PathSegment, Token![::]>,
-) -> Option<&Ident> {
+) -> Result<&Ident, syn::Error> {
     if let Some(PathSegment {
         ident,
         arguments: syn::PathArguments::None,
     }) = parse_exactly_one_punctuated(path_segments)
     {
-        Some(ident)
+        Ok(ident)
     } else {
-        None
+        Err(syn::Error::new(path_segments.span(), EXPECTED_IDENT))
     }
 }
-pub fn parse_ident_from_ty(ty: &Type) -> Option<&Ident> {
-    if let Type::Path(path) = ty {
-        let path_segments = parse_path_segments_from_type_path(path)?;
-        parse_ident_from_path_segments(path_segments)
+pub fn parse_ident_from_ty(ty: &Type) -> Result<&Ident, syn::Error> {
+    let path_segments = if let Type::Path(path) = ty {
+        parse_path_segments_from_type_path(path)
     } else {
         None
+    };
+    if let Some(path_segments) = path_segments {
+        parse_ident_from_path_segments(path_segments)
+    } else {
+        Err(syn::Error::new(ty.span(), EXPECTED_IDENT))
     }
+    // if let Type::Path(path) = ty {
+    //     if let Some(path_segments) = parse_path_segments_from_type_path(path) {
+    //         parse_ident_from_path_segments(path_segments)
+    //     } else {
+    //         syn::Error::new(ty.span(), EXPECTED_IDENT)
+    //     }
+    // } else {
+    //     syn::Error::new(ty.span(), EXPECTED_IDENT)
+    // }
 }
 
 pub fn parse_option_from_path_segments(
