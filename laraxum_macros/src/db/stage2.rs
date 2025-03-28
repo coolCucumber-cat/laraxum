@@ -148,38 +148,66 @@ impl TryFrom<stage1::Column> for Column {
         let mut attr = ColumnAttr::DEFAULT;
         // turn list of attrs into singular, unique values
         for stage1_attr in stage1_attrs {
-            match stage1_attr {
-                stage1::ColumnAttr::Id if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Id)
-                }
-                stage1::ColumnAttr::OnCreate if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(
-                        AutoTimeEvent::OnCreate,
-                    ))
-                }
-                stage1::ColumnAttr::OnUpdate if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(
-                        AutoTimeEvent::OnUpdate,
-                    ))
-                }
-                stage1::ColumnAttr::Foreign if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::Foreign
-                }
-                stage1::ColumnAttr::Varchar(len) if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len))
-                }
-                stage1::ColumnAttr::Char(len) if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len))
-                }
-                stage1::ColumnAttr::Text if attr == ColumnAttr::DEFAULT => {
-                    attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Text)
-                }
-                stage1::ColumnAttr::Name(name) if request_ident.is_none() => {
-                    request_ident = Some(name);
-                }
-                stage1::ColumnAttr::Response(_expr) => {}
-                _ => return Err(syn::Error::new(response_ident.span(), DUPLICATE_ATTR)),
-            }
+            if let Some(()) = stage1_attr.id {
+                attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Id);
+            };
+            if let Some(()) = stage1_attr.on_update {
+                attr =
+                    ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeEvent::OnCreate));
+            };
+            if let Some(()) = stage1_attr.on_create {
+                attr =
+                    ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeEvent::OnUpdate));
+            };
+            if let Some(()) = stage1_attr.foreign {
+                attr = ColumnAttr::Foreign;
+            };
+            if let Some(len) = stage1_attr.varchar {
+                attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len));
+            };
+            if let Some(len) = stage1_attr.char {
+                attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len));
+            };
+            if let Some(()) = stage1_attr.text {
+                attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Text);
+            };
+            if let Some(name) = stage1_attr.name {
+                request_ident = Some(name);
+            };
+            if let Some(_expr) = stage1_attr.response {};
+            // _ => return Err(syn::Error::new(response_ident.span(), DUPLICATE_ATTR)),
+            // match stage1_attr {
+            //     stage1::ColumnAttr::Id if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Id)
+            //     }
+            //     stage1::ColumnAttr::OnCreate if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(
+            //             AutoTimeEvent::OnCreate,
+            //         ))
+            //     }
+            //     stage1::ColumnAttr::OnUpdate if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(
+            //             AutoTimeEvent::OnUpdate,
+            //         ))
+            //     }
+            //     stage1::ColumnAttr::Foreign if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::Foreign
+            //     }
+            //     stage1::ColumnAttr::Varchar(len) if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len))
+            //     }
+            //     stage1::ColumnAttr::Char(len) if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len))
+            //     }
+            //     stage1::ColumnAttr::Text if attr == ColumnAttr::DEFAULT => {
+            //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Text)
+            //     }
+            //     stage1::ColumnAttr::Name(name) if request_ident.is_none() => {
+            //         request_ident = Some(name);
+            //     }
+            //     stage1::ColumnAttr::Response(_expr) => {}
+            //     _ => return Err(syn::Error::new(response_ident.span(), DUPLICATE_ATTR)),
+            // }
         }
 
         let request_ident = request_ident.unwrap_or_else(|| response_ident.clone());
@@ -299,20 +327,33 @@ impl TryFrom<stage1::Table> for Table {
         let mut name = None;
         let mut auto_impl_controller = false;
         for stage1_attr in stage1_attrs {
-            match stage1_attr {
-                stage1::TableAttr::Auto => {
-                    if auto_impl_controller {
-                        return Err(syn::Error::new(ident.span(), DUPLICATE_ATTR));
-                    }
-                    auto_impl_controller = true;
+            if stage1_attr.auto.is_some() {
+                if auto_impl_controller {
+                    return Err(syn::Error::new(ident.span(), DUPLICATE_ATTR));
                 }
-                stage1::TableAttr::Name(n) => {
-                    if name.is_some() {
-                        return Err(syn::Error::new(ident.span(), DUPLICATE_ATTR));
-                    }
-                    name = Some(n);
-                }
+                auto_impl_controller = true;
             }
+            if let Some(n) = stage1_attr.name {
+                if name.is_some() {
+                    return Err(syn::Error::new(ident.span(), DUPLICATE_ATTR));
+                }
+                name = Some(n);
+            }
+
+            // match stage1_attr {
+            //     stage1::TableAttr::Auto => {
+            //         if auto_impl_controller {
+            //             return Err(syn::Error::new(ident.span(), DUPLICATE_ATTR));
+            //         }
+            //         auto_impl_controller = true;
+            //     }
+            //     stage1::TableAttr::Name(n) => {
+            //         if name.is_some() {
+            //             return Err(syn::Error::new(ident.span(), DUPLICATE_ATTR));
+            //         }
+            //         name = Some(n);
+            //     }
+            // }
         }
         let name = name.unwrap_or_else(|| ident.to_string());
 

@@ -141,3 +141,17 @@ pub fn is_type_optional(ty: Type) -> (Type, bool) {
         None => (ty, false),
     }
 }
+
+pub fn from_meta_root<T>(item: &syn::Meta) -> darling::Result<T>
+where
+    T: darling::FromMeta,
+{
+    // (match *item {
+    //     syn::Meta::Path(path) => T::from_word(),
+    //     syn::Meta::List(ref value) => {
+    //         T::from_list(&darling::ast::NestedMeta::parse_meta_list(value.tokens.clone())?[..])
+    //     }
+    //     syn::Meta::NameValue(ref value) => T::from_expr(&value.value),
+    // })
+    T::from_list(&[darling::ast::NestedMeta::Meta(item.clone())]).map_err(|e| e.with_span(item))
+}

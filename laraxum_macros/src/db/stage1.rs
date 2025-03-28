@@ -1,4 +1,4 @@
-use crate::utils::{is_type_optional, parse_ident_from_ty};
+use crate::utils::{from_meta_root, is_type_optional, parse_ident_from_ty};
 
 use darling::FromMeta;
 use syn::{
@@ -115,24 +115,48 @@ impl TryFrom<Type> for ForeignTy {
     }
 }
 
+// #[derive(darling::FromMeta)]
+// #[darling(rename_all = "snake_case")]
+// pub enum ColumnAttr {
+//     /// type: _ -> real
+//     Id,
+//     OnUpdate,
+//     OnCreate,
+//
+//     /// type: real -> foreign
+//     Foreign,
+//
+//     /// type: real -> real
+//     Varchar(StringLen),
+//     Char(StringLen),
+//     Text,
+//
+//     Name(Ident),
+//     Response(Expr),
+// }
 #[derive(darling::FromMeta)]
-#[darling(rename_all = "snake_case")]
-pub enum ColumnAttr {
+pub struct ColumnAttr {
     /// type: _ -> real
-    Id,
-    OnUpdate,
-    OnCreate,
+    pub id: Option<()>,
+    pub on_update: Option<()>,
+    pub on_create: Option<()>,
 
     /// type: real -> foreign
-    Foreign,
+    pub foreign: Option<()>,
 
     /// type: real -> real
-    Varchar(StringLen),
-    Char(StringLen),
-    Text,
+    pub varchar: Option<StringLen>,
+    pub char: Option<StringLen>,
+    pub text: Option<()>,
 
-    Name(Ident),
-    Response(Expr),
+    pub name: Option<Ident>,
+    pub response: Option<Expr>,
+}
+
+impl ColumnAttr {
+    fn from_meta_root(item: &syn::Meta) -> darling::Result<Self> {
+        from_meta_root(item)
+    }
 }
 
 pub struct Column {
@@ -158,7 +182,9 @@ impl TryFrom<Field> for Column {
             return Err(syn::Error::new(span, TABLE_MUST_BE_FIELD_STRUCT));
         };
 
-        let attrs = attrs.iter().map(|attr| ColumnAttr::from_meta(&attr.meta));
+        let attrs = attrs
+            .iter()
+            .map(|attr| ColumnAttr::from_meta_root(&attr.meta));
         let attrs: Result<Vec<ColumnAttr>, darling::Error> = attrs.collect();
         let attrs = attrs?;
 
@@ -174,18 +200,40 @@ impl TryFrom<Field> for Column {
     }
 }
 
+// #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
+// #[derive(darling::FromMeta)]
+// #[darling(rename_all = "snake_case")]
+// pub enum TableAttr {
+//     Auto,
+//     Name(String),
+// }
+
 #[derive(darling::FromMeta)]
-#[darling(rename_all = "snake_case")]
-pub enum TableAttr {
-    Auto,
-    Name(String),
+pub struct TableAttr {
+    pub auto: Option<()>,
+    pub name: Option<String>,
 }
 
+impl TableAttr {
+    fn from_meta_root(item: &syn::Meta) -> darling::Result<Self> {
+        from_meta_root(item)
+    }
+}
+
+// #[derive(darling::FromDeriveInput)]
 pub struct Table {
     pub ident: Ident,
     pub columns: Vec<Column>,
     pub attrs: Vec<TableAttr>,
     pub vis: Visibility,
+}
+#[derive(darling::FromDeriveInput)]
+#[darling(forward_attrs(allow, doc, cfg))]
+pub struct TableAttrs {
+    pub attrs: Vec<syn::Attribute>,
+
+    pub auto: Option<()>,
+    pub name: Option<String>,
 }
 
 impl TryFrom<Item> for Table {
@@ -204,9 +252,20 @@ impl TryFrom<Item> for Table {
             return Err(syn::Error::new(item.span(), TABLE_MUST_BE_STRUCT));
         };
 
-        let attrs = attrs.iter().map(|attr| TableAttr::from_meta(&attr.meta));
+        let attrs = attrs.iter().map(|attr| {
+            // let meta = &attr.meta;
+            // let syn::Meta::List(list) = meta else {
+            //     panic!("metalist: {meta:?}");
+            // };
+            // assert_eq!(&list.path, "table");
+
+            TableAttr::from_meta_root(&attr.meta)
+            // TableAttr::from_meta(&attr.meta)
+        });
         let attrs: Result<Vec<TableAttr>, darling::Error> = attrs.collect();
         let attrs = attrs?;
+        // panic!("attrs: {attrs:?}");
+        // assert_eq!(attrs, [TableAttr::Auto, TableAttr::Name("groups".into())]);
 
         // TODO: check theres no generics
 
@@ -283,4 +342,30 @@ impl Parse for Db {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         input.parse::<Item>().and_then(Db::try_from)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use syn::Attribute;
+
+    #[test]
+    fn table_attr() {
+        let attr: Attribute = syn::parse_quote!(#[name = "groups"]);
+        let meta = attr.meta;
+        let table_attr: TableAttr = from_meta_root(&meta).unwrap();
+        // let x = matches!(&table_attr, TableAttr::Name(x) if x == "groups");
+        // assert!(x);
+        assert_eq!(table_attr.name.as_deref(), Some("groups"));
+    }
+
+    // #[test]
+    // fn db_attr() {
+    //     let attr: Attribute = syn::parse_quote!(#[name = "dossier"]);
+    //     let meta = attr.meta;
+    //     let db_attr: DbAttr = DbAttr::from_meta(&meta).unwrap();
+    //     // let name = db_attr.name.as_deref();
+    //     assert_eq!(db_attr.name.as_deref(), Some("dossier"));
+    // }
 }
