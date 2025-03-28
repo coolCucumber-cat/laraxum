@@ -1,9 +1,9 @@
-use crate::utils::{from_meta_root, is_type_optional, parse_ident_from_ty};
+use crate::utils::{is_type_optional, parse_ident_from_ty};
 
-use darling::FromMeta;
+use darling::{FromAttributes, FromMeta};
 use syn::{
-    Expr, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility, parse::Parse,
-    spanned::Spanned,
+    Attribute, Expr, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
+    parse::Parse, spanned::Spanned,
 };
 
 const DB_ITEM_MUST_BE_MOD: &str = "db item must be module";
@@ -115,54 +115,30 @@ impl TryFrom<Type> for ForeignTy {
     }
 }
 
-// #[derive(darling::FromMeta)]
-// #[darling(rename_all = "snake_case")]
-// pub enum ColumnAttr {
-//     /// type: _ -> real
-//     Id,
-//     OnUpdate,
-//     OnCreate,
-//
-//     /// type: real -> foreign
-//     Foreign,
-//
-//     /// type: real -> real
-//     Varchar(StringLen),
-//     Char(StringLen),
-//     Text,
-//
-//     Name(Ident),
-//     Response(Expr),
-// }
-#[derive(darling::FromMeta)]
-pub struct ColumnAttr {
-    /// type: _ -> real
-    pub id: Option<()>,
-    pub on_update: Option<()>,
-    pub on_create: Option<()>,
-
-    /// type: real -> foreign
-    pub foreign: Option<()>,
-
-    /// type: real -> real
+#[derive(darling::FromAttributes, Default)]
+#[darling(attributes(db), forward_attrs(cfg, doc, allow), default)]
+pub struct ColumnAttrs {
+    // type
+    pub id: bool,
+    pub on_update: bool,
+    pub on_create: bool,
+    pub foreign: bool,
     pub varchar: Option<StringLen>,
     pub char: Option<StringLen>,
-    pub text: Option<()>,
-
+    pub text: bool,
+    // name
     pub name: Option<Ident>,
+    // response
     pub response: Option<Expr>,
-}
 
-impl ColumnAttr {
-    fn from_meta_root(item: &syn::Meta) -> darling::Result<Self> {
-        from_meta_root(item)
-    }
+    // forwarded attrs
+    pub attrs: Vec<Attribute>,
 }
 
 pub struct Column {
     pub ident: Ident,
     pub ty: Type,
-    pub attrs: Vec<ColumnAttr>,
+    pub attrs: ColumnAttrs,
 }
 
 impl TryFrom<Field> for Column {
@@ -182,11 +158,7 @@ impl TryFrom<Field> for Column {
             return Err(syn::Error::new(span, TABLE_MUST_BE_FIELD_STRUCT));
         };
 
-        let attrs = attrs
-            .iter()
-            .map(|attr| ColumnAttr::from_meta_root(&attr.meta));
-        let attrs: Result<Vec<ColumnAttr>, darling::Error> = attrs.collect();
-        let attrs = attrs?;
+        let attrs = ColumnAttrs::from_attributes(&attrs)?;
 
         if !matches!(vis, Visibility::Inherited) {
             return Err(syn::Error::new(vis.span(), FIELD_MUST_NOT_HAVE_VIS));
@@ -200,46 +172,31 @@ impl TryFrom<Field> for Column {
     }
 }
 
-// #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
-// #[derive(darling::FromMeta)]
-// #[darling(rename_all = "snake_case")]
-// pub enum TableAttr {
-//     Auto,
-//     Name(String),
-// }
-
-#[derive(darling::FromMeta)]
-pub struct TableAttr {
-    pub auto: Option<()>,
+#[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
+#[derive(darling::FromAttributes)]
+#[darling(attributes(db), forward_attrs(allow, doc, cfg))]
+pub struct TableAttrs {
+    #[darling(default, rename = "auto")]
+    pub auto_impl_controller: bool,
     pub name: Option<String>,
+
+    pub attrs: Vec<Attribute>,
 }
 
-impl TableAttr {
-    fn from_meta_root(item: &syn::Meta) -> darling::Result<Self> {
-        from_meta_root(item)
-    }
-}
-
-// #[derive(darling::FromDeriveInput)]
 pub struct Table {
     pub ident: Ident,
     pub columns: Vec<Column>,
-    pub attrs: Vec<TableAttr>,
+    pub attrs: TableAttrs,
     pub vis: Visibility,
-}
-#[derive(darling::FromDeriveInput)]
-#[darling(forward_attrs(allow, doc, cfg))]
-pub struct TableAttrs {
-    pub attrs: Vec<syn::Attribute>,
-
-    pub auto: Option<()>,
-    pub name: Option<String>,
 }
 
 impl TryFrom<Item> for Table {
     type Error = syn::Error;
     fn try_from(item: Item) -> Result<Self, Self::Error> {
-        let Item::Struct(ItemStruct {
+        let Item::Struct(item_struct) = item else {
+            return Err(syn::Error::new(item.span(), TABLE_MUST_BE_STRUCT));
+        };
+        let ItemStruct {
             attrs,
             vis,
             struct_token: _,
@@ -247,25 +204,9 @@ impl TryFrom<Item> for Table {
             generics: _,
             fields,
             semi_token: _,
-        }) = item
-        else {
-            return Err(syn::Error::new(item.span(), TABLE_MUST_BE_STRUCT));
-        };
+        } = item_struct;
 
-        let attrs = attrs.iter().map(|attr| {
-            // let meta = &attr.meta;
-            // let syn::Meta::List(list) = meta else {
-            //     panic!("metalist: {meta:?}");
-            // };
-            // assert_eq!(&list.path, "table");
-
-            TableAttr::from_meta_root(&attr.meta)
-            // TableAttr::from_meta(&attr.meta)
-        });
-        let attrs: Result<Vec<TableAttr>, darling::Error> = attrs.collect();
-        let attrs = attrs?;
-        // panic!("attrs: {attrs:?}");
-        // assert_eq!(attrs, [TableAttr::Auto, TableAttr::Name("groups".into())]);
+        let attrs = TableAttrs::from_attributes(&attrs)?;
 
         // TODO: check theres no generics
 
@@ -352,12 +293,16 @@ mod tests {
 
     #[test]
     fn table_attr() {
-        let attr: Attribute = syn::parse_quote!(#[name = "groups"]);
-        let meta = attr.meta;
-        let table_attr: TableAttr = from_meta_root(&meta).unwrap();
-        // let x = matches!(&table_attr, TableAttr::Name(x) if x == "groups");
-        // assert!(x);
-        assert_eq!(table_attr.name.as_deref(), Some("groups"));
+        let attr: Attribute = syn::parse_quote!(#[db(name = "groups")]);
+        let table_attr = TableAttrs::from_attributes(&[attr]).unwrap();
+        assert_eq!(
+            table_attr,
+            TableAttrs {
+                attrs: vec![],
+                auto_impl_controller: false,
+                name: Some("groups".into())
+            }
+        );
     }
 
     // #[test]
