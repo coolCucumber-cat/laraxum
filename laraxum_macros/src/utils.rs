@@ -2,6 +2,9 @@ mod kw {
     syn::custom_keyword! { Option }
 }
 
+use core::{borrow::Borrow, ops::Deref};
+use std::borrow::Cow;
+
 use syn::{
     GenericArgument, Ident, Path, PathSegment, Token, Type, TypePath,
     parse::{ParseBuffer, ParseStream},
@@ -72,15 +75,15 @@ impl Push<syn::Error> for syn::Error {
 
 pub trait TryCollectAll<T, CollectT, E, CollectE>: Iterator<Item = Result<T, E>> + Sized
 where
-    CollectT: Push<T> + Default,
+    CollectT: Push<T>,
     CollectE: Push<E>,
 {
-    fn try_collect_all(mut self) -> Result<CollectT, CollectE> {
+    fn try_collect_all(mut self) -> Result<Option<CollectT>, CollectE> {
         let e = 'ok: {
             let mut collect_t = match self.next() {
                 Some(Ok(t)) => CollectT::new_and_push(t),
                 Some(Err(e)) => break 'ok e,
-                None => return Ok(CollectT::default()),
+                None => return Ok(None),
             };
             for value in &mut self {
                 match value {
@@ -88,7 +91,7 @@ where
                     Err(e) => break 'ok e,
                 }
             }
-            return Ok(collect_t);
+            return Ok(Some(collect_t));
         };
         let mut collect_e = CollectE::new_and_push(e);
         for value in self {
@@ -97,6 +100,12 @@ where
             }
         }
         Err(collect_e)
+    }
+    fn try_collect_all_default(self) -> Result<CollectT, CollectE>
+    where
+        CollectT: Default,
+    {
+        self.try_collect_all().map(Option::unwrap_or_default)
     }
 }
 impl<I, T, CollectT, E, CollectE> TryCollectAll<T, CollectT, E, CollectE> for I
@@ -196,31 +205,28 @@ pub fn parse_option_from_path_segments(
     Some(ty2)
 }
 pub fn parse_option_from_ty(ty: &Type) -> Option<&Type> {
-    if let Type::Path(path) = ty {
-        let path_segments = parse_path_segments_from_type_path(path)?;
-        parse_option_from_path_segments(path_segments)
-    } else {
-        None
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let path_segments = parse_path_segments_from_type_path(path)?;
+    parse_option_from_path_segments(path_segments)
+}
+
+pub fn is_type_optional<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
+    match ty {
+        Cow::Owned(ty2) => match parse_option_from_ty(&ty2) {
+            Some(ty3) => (Cow::Owned(ty3.to_owned()), true),
+            None => (Cow::Owned(ty2), false),
+        },
+        Cow::Borrowed(ty2) => match parse_option_from_ty(ty2) {
+            Some(ty3) => (Cow::Borrowed(ty3), true),
+            None => (Cow::Borrowed(ty2), false),
+        },
     }
 }
 
-pub fn is_type_optional(ty: Type) -> (Type, bool) {
-    match parse_option_from_ty(&ty) {
-        Some(ty2) => (ty2.clone(), true),
-        None => (ty, false),
-    }
-}
-
-pub fn from_meta_root<T>(item: &syn::Meta) -> darling::Result<T>
+pub fn cow_try_and_then<'t, T>(ty: Cow<'t, T>, f: F) -> (Cow<'t, T>, bool)
 where
-    T: darling::FromMeta,
+    F: for<'t1> FnOnce(&'t1 T) -> Result<&T>,
 {
-    // (match *item {
-    //     syn::Meta::Path(path) => T::from_word(),
-    //     syn::Meta::List(ref value) => {
-    //         T::from_list(&darling::ast::NestedMeta::parse_meta_list(value.tokens.clone())?[..])
-    //     }
-    //     syn::Meta::NameValue(ref value) => T::from_expr(&value.value),
-    // })
-    T::from_list(&[darling::ast::NestedMeta::Meta(item.clone())]).map_err(|e| e.with_span(item))
 }

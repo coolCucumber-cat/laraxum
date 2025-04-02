@@ -178,11 +178,9 @@ impl Table {
             match &column.virtual_ty {
                 stage2::VirtualTy::Real(real_ty) => {
                     let sql_ty = real_ty.sql_ty();
-
-                    let create_column = fmt2::fmt! { { str } =>
+                    create_columns.push(fmt2::fmt! { { str } =>
                         {column.request_ident;std} " " {sql_ty}
-                    };
-                    create_columns.push(create_column);
+                    });
 
                     let expanded_response_column = ExpandedReponseColumn {
                         inner_name: column.response_ident.clone(),
@@ -193,19 +191,16 @@ impl Table {
                     expanded_response_columns.push(expanded_response_column);
                     response_columns.push(response_column);
 
-                    let request_column = RequestColumn {
+                    request_columns.push(RequestColumn {
                         name: column.request_ident.clone(),
                         ty: column.rs_ty.clone(),
-                    };
-                    request_columns.push(request_column);
+                    });
                 }
                 stage2::VirtualTy::Id => {
                     let sql_ty = stage2::ScalarTy::SQL_TY_ID;
-
-                    let create_column = fmt2::fmt! { { str } =>
+                    create_columns.push(fmt2::fmt! { { str } =>
                         {column.request_ident;std} " " {sql_ty}
-                    };
-                    create_columns.push(create_column);
+                    });
 
                     let expanded_response_column = ExpandedReponseColumn {
                         inner_name: column.response_ident.clone(),
@@ -216,7 +211,21 @@ impl Table {
                     expanded_response_columns.push(expanded_response_column);
                     response_columns.push(response_column);
                 }
-                stage2::VirtualTy::OnCreate(_x) => {}
+                stage2::VirtualTy::OnCreate(time_ty) => {
+                    let sql_ty = time_ty.sql_ty();
+                    create_columns.push(fmt2::fmt! { { str } =>
+                        {column.request_ident;std} " " {sql_ty}
+                    });
+
+                    let expanded_response_column = ExpandedReponseColumn {
+                        inner_name: column.response_ident.clone(),
+                        table_name: query_table_name.clone(),
+                    };
+                    let response_column =
+                        expanded_response_column.to_response_column(column.rs_ty.clone());
+                    expanded_response_columns.push(expanded_response_column);
+                    response_columns.push(response_column);
+                }
                 stage2::VirtualTy::OnUpdate(_x) => {}
                 stage2::VirtualTy::Foreign(_foreign_table_ty) => {
                     // let foreign_table = tables

@@ -1,5 +1,7 @@
 use syn::{Ident, Type, Visibility, spanned::Spanned};
 
+use crate::utils::TryCollectAll;
+
 use super::stage1::{self, ForeignTy, StringLen};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
@@ -7,26 +9,18 @@ const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs
 const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "must be string";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "must not be null";
+const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have conflicting types";
 
-#[allow(non_camel_case_types)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ScalarTy {
+pub enum StringScalarTy {
     Varchar(StringLen),
     Char(StringLen),
     Text,
-    bool,
-    u8,
-    i8,
-    u16,
-    i16,
-    u32,
-    i32,
-    u64,
-    i64,
-    f32,
-    f64,
+}
 
-    TimePrimitiveDateTime,
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum TimeScalarTy {
+    TimeDateTime,
     TimeOffsetDateTime,
     TimeDate,
     TimeTime,
@@ -40,10 +34,27 @@ pub enum ScalarTy {
     ChronoTimeDelta,
 }
 
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ScalarTy {
+    bool,
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+    f32,
+    f64,
+    String(StringScalarTy),
+    Time(TimeScalarTy),
+}
+
 impl From<stage1::ScalarTy> for ScalarTy {
     fn from(stage1_scalar_ty: stage1::ScalarTy) -> Self {
         match stage1_scalar_ty {
-            stage1::ScalarTy::String => Self::Varchar(255),
             stage1::ScalarTy::bool => Self::bool,
             stage1::ScalarTy::u8 => Self::u8,
             stage1::ScalarTy::i8 => Self::i8,
@@ -55,28 +66,50 @@ impl From<stage1::ScalarTy> for ScalarTy {
             stage1::ScalarTy::i64 => Self::i64,
             stage1::ScalarTy::f32 => Self::f32,
             stage1::ScalarTy::f64 => Self::f64,
-            stage1::ScalarTy::TimePrimitiveDateTime => Self::TimePrimitiveDateTime,
-            stage1::ScalarTy::TimeOffsetDateTime => Self::TimeOffsetDateTime,
-            stage1::ScalarTy::TimeDate => Self::TimeDate,
-            stage1::ScalarTy::TimeTime => Self::TimeTime,
-            stage1::ScalarTy::TimeDuration => Self::TimeDuration,
-            stage1::ScalarTy::ChronoDateTimeUtc => Self::ChronoDateTimeUtc,
-            stage1::ScalarTy::ChronoDateTimeLocal => Self::ChronoDateTimeLocal,
-            stage1::ScalarTy::ChronoNaiveDateTime => Self::ChronoNaiveDateTime,
-            stage1::ScalarTy::ChronoNaiveDate => Self::ChronoNaiveDate,
-            stage1::ScalarTy::ChronoNaiveTime => Self::ChronoNaiveTime,
-            stage1::ScalarTy::ChronoTimeDelta => Self::ChronoTimeDelta,
+
+            stage1::ScalarTy::String => Self::String(StringScalarTy::Varchar(255)),
+
+            stage1::ScalarTy::TimeDateTime => Self::Time(TimeScalarTy::TimeDateTime),
+            stage1::ScalarTy::TimeOffsetDateTime => Self::Time(TimeScalarTy::TimeOffsetDateTime),
+            stage1::ScalarTy::TimeDate => Self::Time(TimeScalarTy::TimeDate),
+            stage1::ScalarTy::TimeTime => Self::Time(TimeScalarTy::TimeTime),
+            stage1::ScalarTy::TimeDuration => Self::Time(TimeScalarTy::TimeDuration),
+            stage1::ScalarTy::ChronoDateTimeUtc => Self::Time(TimeScalarTy::ChronoDateTimeUtc),
+            stage1::ScalarTy::ChronoDateTimeLocal => Self::Time(TimeScalarTy::ChronoDateTimeLocal),
+            stage1::ScalarTy::ChronoNaiveDateTime => Self::Time(TimeScalarTy::ChronoNaiveDateTime),
+            stage1::ScalarTy::ChronoNaiveDate => Self::Time(TimeScalarTy::ChronoNaiveDate),
+            stage1::ScalarTy::ChronoNaiveTime => Self::Time(TimeScalarTy::ChronoNaiveTime),
+            stage1::ScalarTy::ChronoTimeDelta => Self::Time(TimeScalarTy::ChronoTimeDelta),
         }
     }
 }
-
-pub use ScalarTy as TimeTy;
 
 #[derive(Clone, Copy)]
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
 }
+
+pub struct IdTy;
+
+impl TryFrom<RealTy> for IdTy {
+    type Error = syn::Error;
+    fn try_from(real_ty: RealTy) -> Result<Self, Self::Error> {
+        let RealTy {
+            ty: stage1::ScalarTy::u64,
+            optional,
+        } = real_ty
+        else {
+            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+        };
+        if optional {
+            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
+        }
+        Ok(Self)
+    }
+}
+
+pub use ScalarTy as TimeTy;
 
 impl From<stage1::RealTy> for RealTy {
     fn from(stage1_real_ty: stage1::RealTy) -> Self {
@@ -88,17 +121,14 @@ impl From<stage1::RealTy> for RealTy {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum ColumnAttr {
-    Foreign,
-    NotForeign(ColumnAttrNotForeign),
-}
-
-impl ColumnAttr {
-    const DEFAULT: Self = Self::NotForeign(ColumnAttrNotForeign::None);
+enum StringAttr {
+    Varchar(StringLen),
+    Char(StringLen),
+    Text,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum AutoTimeEvent {
+enum AutoTimeAttr {
     OnCreate,
     OnUpdate,
 }
@@ -107,10 +137,44 @@ enum AutoTimeEvent {
 enum ColumnAttrNotForeign {
     None,
     Id,
-    Varchar(StringLen),
-    Char(StringLen),
-    Text,
-    AutoTime(AutoTimeEvent),
+    String(StringAttr),
+    AutoTime(AutoTimeAttr),
+}
+
+impl ColumnAttrNotForeign {
+    const DEFAULT: Self = Self::None;
+}
+impl Default for ColumnAttrNotForeign {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum ColumnAttr {
+    Foreign,
+    NotForeign(ColumnAttrNotForeign),
+}
+
+impl ColumnAttr {
+    const DEFAULT: Self = Self::NotForeign(ColumnAttrNotForeign::DEFAULT);
+
+    fn set(&mut self, attr: Self, ident: &Ident) -> syn::Result<()> {
+        if self == &Self::DEFAULT {
+            *self = attr;
+            Ok(())
+        } else {
+            Err(syn::Error::new(
+                ident.span(),
+                COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES,
+            ))
+        }
+    }
+}
+impl Default for ColumnAttr {
+    fn default() -> Self {
+        Self::NotForeign(ColumnAttrNotForeign::DEFAULT)
+    }
 }
 
 #[derive(Clone)]
@@ -120,6 +184,91 @@ pub enum VirtualTy {
     Foreign(ForeignTy),
     OnCreate(TimeTy),
     OnUpdate(TimeTy),
+}
+
+impl VirtualTy {
+    fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: &Type) -> syn::Result<Self> {
+        // turn combination of attrs and types into valid type
+        match attr {
+            ColumnAttr::Foreign => {
+                let foreign_ty = ForeignTy::try_from(rs_ty.clone())?;
+                Ok(VirtualTy::Foreign(foreign_ty))
+            }
+            ColumnAttr::NotForeign(attr) => {
+                use ColumnAttrNotForeign as CANF;
+                let stage1_real_ty = stage1::RealTy::try_from(rs_ty.clone())?;
+                match (attr, stage1_real_ty) {
+                    (CANF::None, stage1_real_ty) => {
+                        Ok(VirtualTy::Real(RealTy::from(stage1_real_ty)))
+                    }
+                    (
+                        CANF::Id,
+                        stage1::RealTy {
+                            ty: stage1::ScalarTy::u64,
+                            optional: false,
+                        },
+                    ) => Ok(VirtualTy::Id),
+                    (
+                        CANF::Id,
+                        stage1::RealTy {
+                            ty: stage1::ScalarTy::u64,
+                            optional: true,
+                        },
+                    ) => Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL)),
+                    (CANF::Id, _) => Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64)),
+                    (
+                        CANF::AutoTime(event),
+                        stage1::RealTy {
+                            ty: stage1_scalar_ty,
+                            optional: false,
+                        },
+                    ) => {
+                        let scalar_ty = ScalarTy::from(stage1_scalar_ty);
+                        match event {
+                            AutoTimeAttr::OnCreate => Ok(VirtualTy::OnCreate(scalar_ty)),
+                            AutoTimeAttr::OnUpdate => Ok(VirtualTy::OnUpdate(scalar_ty)),
+                        }
+                    }
+                    (CANF::AutoTime(_), _) => {
+                        Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL))
+                    }
+                    (
+                        CANF::Varchar(len),
+                        stage1::RealTy {
+                            ty: stage1::ScalarTy::String,
+                            optional,
+                        },
+                    ) => Ok(VirtualTy::Real(RealTy {
+                        ty: ScalarTy::Varchar(len),
+                        optional,
+                    })),
+                    (
+                        CANF::Char(len),
+                        stage1::RealTy {
+                            ty: stage1::ScalarTy::String,
+                            optional,
+                        },
+                    ) => Ok(VirtualTy::Real(RealTy {
+                        ty: ScalarTy::Char(len),
+                        optional,
+                    })),
+                    (
+                        CANF::Text,
+                        stage1::RealTy {
+                            ty: stage1::ScalarTy::String,
+                            optional,
+                        },
+                    ) => Ok(VirtualTy::Real(RealTy {
+                        ty: ScalarTy::Text,
+                        optional,
+                    })),
+                    (CANF::Varchar(_) | CANF::Char(_) | CANF::Text, _) => {
+                        Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING))
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -143,146 +292,50 @@ impl TryFrom<stage1::Column> for Column {
             attrs: stage1_attrs,
         } = stage1_column;
 
-        let mut request_ident = None;
+        let request_ident = stage1_attrs.name.unwrap_or_else(|| response_ident.clone());
+
         let mut attr = ColumnAttr::DEFAULT;
         if stage1_attrs.id {
-            attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Id);
-        };
-        if stage1_attrs.on_update {
-            attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeEvent::OnCreate));
-        };
-        if stage1_attrs.on_create {
-            attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeEvent::OnUpdate));
+            attr.set(
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::Id),
+                &response_ident,
+            )?;
         };
         if stage1_attrs.foreign {
-            attr = ColumnAttr::Foreign;
+            attr.set(ColumnAttr::Foreign, &response_ident)?;
+        };
+        if stage1_attrs.on_create {
+            attr.set(
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeAttr::OnCreate)),
+                &response_ident,
+            )?;
+        };
+        if stage1_attrs.on_update {
+            attr.set(
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeAttr::OnUpdate)),
+                &response_ident,
+            )?;
         };
         if let Some(len) = stage1_attrs.varchar {
-            attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len));
+            attr.set(
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len)),
+                &response_ident,
+            )?;
         };
         if let Some(len) = stage1_attrs.char {
-            attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len));
+            attr.set(
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len)),
+                &response_ident,
+            )?;
         };
         if stage1_attrs.text {
-            attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Text);
+            attr.set(
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::Text),
+                &response_ident,
+            )?;
         };
-        if let Some(name) = stage1_attrs.name {
-            request_ident = Some(name);
-        };
-        if let Some(_expr) = stage1_attrs.response {};
-        // _ => return Err(syn::Error::new(response_ident.span(), DUPLICATE_ATTR)),
-        // match stage1_attr {
-        //     stage1::ColumnAttr::Id if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Id)
-        //     }
-        //     stage1::ColumnAttr::OnCreate if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(
-        //             AutoTimeEvent::OnCreate,
-        //         ))
-        //     }
-        //     stage1::ColumnAttr::OnUpdate if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(
-        //             AutoTimeEvent::OnUpdate,
-        //         ))
-        //     }
-        //     stage1::ColumnAttr::Foreign if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::Foreign
-        //     }
-        //     stage1::ColumnAttr::Varchar(len) if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len))
-        //     }
-        //     stage1::ColumnAttr::Char(len) if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len))
-        //     }
-        //     stage1::ColumnAttr::Text if attr == ColumnAttr::DEFAULT => {
-        //         attr = ColumnAttr::NotForeign(ColumnAttrNotForeign::Text)
-        //     }
-        //     stage1::ColumnAttr::Name(name) if request_ident.is_none() => {
-        //         request_ident = Some(name);
-        //     }
-        //     stage1::ColumnAttr::Response(_expr) => {}
-        //     _ => return Err(syn::Error::new(response_ident.span(), DUPLICATE_ATTR)),
-        // }
 
-        let request_ident = request_ident.unwrap_or_else(|| response_ident.clone());
-        // turn combination of attrs and types into valid type
-        let virtual_ty = match attr {
-            ColumnAttr::Foreign => {
-                let foreign_ty = ForeignTy::try_from(rs_ty.clone())?;
-                VirtualTy::Foreign(foreign_ty)
-            }
-            ColumnAttr::NotForeign(attr) => {
-                use ColumnAttrNotForeign as CANF;
-                let stage1_real_ty = stage1::RealTy::try_from(rs_ty.clone())?;
-                match (attr, stage1_real_ty) {
-                    (CANF::None, stage1_real_ty) => VirtualTy::Real(RealTy::from(stage1_real_ty)),
-                    (
-                        CANF::Id,
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::u64,
-                            optional: false,
-                        },
-                    ) => VirtualTy::Id,
-                    (
-                        CANF::Id,
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::u64,
-                            optional: true,
-                        },
-                    ) => return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL)),
-                    (CANF::Id, _) => return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64)),
-                    (
-                        CANF::AutoTime(event),
-                        stage1::RealTy {
-                            ty: stage1_scalar_ty,
-                            optional: false,
-                        },
-                    ) => {
-                        let scalar_ty = ScalarTy::from(stage1_scalar_ty);
-                        match event {
-                            AutoTimeEvent::OnCreate => VirtualTy::OnCreate(scalar_ty),
-                            AutoTimeEvent::OnUpdate => VirtualTy::OnUpdate(scalar_ty),
-                        }
-                    }
-                    (CANF::AutoTime(_), _) => {
-                        return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
-                    }
-                    (
-                        CANF::Varchar(len),
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        },
-                    ) => VirtualTy::Real(RealTy {
-                        ty: ScalarTy::Varchar(len),
-                        optional,
-                    }),
-                    (
-                        CANF::Char(len),
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        },
-                    ) => VirtualTy::Real(RealTy {
-                        ty: ScalarTy::Char(len),
-                        optional,
-                    }),
-                    (
-                        CANF::Text,
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        },
-                    ) => VirtualTy::Real(RealTy {
-                        ty: ScalarTy::Text,
-                        optional,
-                    }),
-                    (CANF::Varchar(_) | CANF::Char(_) | CANF::Text, _) => {
-                        return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
-                    }
-                }
-            }
-        };
+        let virtual_ty = VirtualTy::try_from_attr_and_ty(attr, &rs_ty)?;
 
         Ok(Self {
             response_ident,
@@ -339,7 +392,7 @@ impl TryFrom<stage1::Table> for Table {
             }
             Ok(column)
         });
-        let columns: Result<Vec<Column>, syn::Error> = columns.collect();
+        let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
 
         let id_ident = id_ident.ok_or_else(|| syn::Error::new(ident.span(), TABLE_MUST_HAVE_ID))?;
@@ -377,7 +430,7 @@ impl Db {
         let name = name.unwrap_or_else(|| ident.to_string());
 
         let tables = tables.into_iter().map(Table::try_from);
-        let tables: Result<Vec<Table>, syn::Error> = tables.collect();
+        let tables: Result<Vec<Table>, syn::Error> = tables.try_collect_all_default();
         let tables = tables?;
 
         Ok(Self {

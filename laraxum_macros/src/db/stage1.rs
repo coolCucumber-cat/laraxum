@@ -23,13 +23,18 @@ macro_rules! ty_enum {
         $(#[$meta:meta])*
         $vis:vis enum $enum:ident {
             $(
+                $(#[$variant_meta:meta])*
                 $ident:ident => $ty:ty
             ),* $(,)?
         }
+        // ;
+        // $(#[$mod_meta:meta])*
+        // $mod_vis:vis mod $mod_ident:ident;
     } => {
         $(#[$meta])*
         $vis enum $enum {
             $(
+                $(#[$variant_meta])*
                 $ident,
             )*
         }
@@ -50,6 +55,15 @@ macro_rules! ty_enum {
                 ::core::result::Result::Err(::syn::Error::new(span, UNKNOWN_TYPE))
             }
         }
+
+        // $(#[$mod_meta])*
+        // $mod_vis mod $mod_ident {
+        //     $(
+        //         $(#[$variant_meta])*
+        //         struct $ident;
+        //
+        //     )*
+        // }
     };
 }
 
@@ -70,19 +84,32 @@ ty_enum! {
         f32 => f32,
         f64 => f64,
 
-        TimePrimitiveDateTime => time::PrimitiveDateTime,
+        /// TIMESTAMP
         TimeOffsetDateTime => time::OffsetDateTime,
+        /// DATETIME
+        TimeDateTime => time::PrimitiveDateTime,
+        /// DATE
         TimeDate => time::Date,
+        /// TIME
         TimeTime => time::Time,
+        /// TIME
         TimeDuration => time::Duration,
 
+        /// TIMESTAMP
         ChronoDateTimeUtc => chrono::DateTime<chrono::offset::Utc>,
+        /// TIMESTAMP
         ChronoDateTimeLocal => chrono::DateTime<chrono::offset::Local>,
+        /// DATETIME
         ChronoNaiveDateTime => chrono::NaiveDateTime,
+        /// DATE
         ChronoNaiveDate => chrono::NaiveDate,
+        /// TIME
         ChronoNaiveTime => chrono::NaiveTime,
+        /// TIME
         ChronoTimeDelta => chrono::TimeDelta,
     }
+    // ;
+    // pub mod scalar_ty;
 }
 
 #[derive(Clone)]
@@ -100,6 +127,17 @@ impl TryFrom<Type> for RealTy {
     }
 }
 
+impl TryFrom<&Type> for RealTy {
+    type Error = syn::Error;
+    fn try_from(input: &Type) -> Result<Self, Self::Error> {
+        // let (ty, optional) = is_type_optional(input);
+        // let ty = ScalarTy::try_from(ty)?;
+        let ty = ScalarTy::bool;
+        let optional = true;
+        Ok(Self { ty, optional })
+    }
+}
+
 #[derive(Clone)]
 pub struct ForeignTy {
     pub ty: Ident,
@@ -108,8 +146,8 @@ pub struct ForeignTy {
 
 impl TryFrom<Type> for ForeignTy {
     type Error = syn::Error;
-    fn try_from(ty: Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_type_optional(ty);
+    fn try_from(input: Type) -> Result<Self, Self::Error> {
+        let (ty, optional) = is_type_optional(input);
         let ty = parse_ident_from_ty(&ty)?.clone();
         Ok(Self { ty, optional })
     }
@@ -158,8 +196,6 @@ impl TryFrom<Field> for Column {
             return Err(syn::Error::new(span, TABLE_MUST_BE_FIELD_STRUCT));
         };
 
-        let attrs = ColumnAttrs::from_attributes(&attrs)?;
-
         if !matches!(vis, Visibility::Inherited) {
             return Err(syn::Error::new(vis.span(), FIELD_MUST_NOT_HAVE_VIS));
         }
@@ -167,6 +203,8 @@ impl TryFrom<Field> for Column {
         if !matches!(mutability, FieldMutability::None) {
             return Err(syn::Error::new(span, FIELD_MUST_NOT_BE_MUT));
         }
+
+        let attrs = ColumnAttrs::from_attributes(&attrs)?;
 
         Ok(Self { ident, ty, attrs })
     }
