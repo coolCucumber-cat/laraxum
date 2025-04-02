@@ -213,20 +213,48 @@ pub fn parse_option_from_ty(ty: &Type) -> Option<&Type> {
 }
 
 pub fn is_type_optional<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
-    match ty {
-        Cow::Owned(ty2) => match parse_option_from_ty(&ty2) {
-            Some(ty3) => (Cow::Owned(ty3.to_owned()), true),
-            None => (Cow::Owned(ty2), false),
-        },
-        Cow::Borrowed(ty2) => match parse_option_from_ty(ty2) {
-            Some(ty3) => (Cow::Borrowed(ty3), true),
-            None => (Cow::Borrowed(ty2), false),
-        },
+    cow_try_and_then_is_some(ty, |ty| parse_option_from_ty(ty).map(Cow::Borrowed))
+}
+
+pub fn cow_try_and_then<'t, T, E, F>(cow: Cow<'t, T>, f: F) -> (Cow<'t, T>, Result<(), E>)
+where
+    T: ?Sized + ToOwned,
+    Cow<'t, T>: Borrow<T>,
+    F: for<'t1> FnOnce(&'t1 T) -> Result<Cow<'t1, T>, E>,
+{
+    match cow {
+        Cow::Owned(owned) => {
+            let cow2 = f(owned.borrow());
+            match cow2 {
+                Ok(cow2) => (Cow::Owned(cow2.into_owned()), Ok(())),
+                Err(err) => (Cow::Owned(owned), Err(err)),
+            }
+        }
+        Cow::Borrowed(borrowed) => {
+            let cow2 = f(borrowed);
+            match cow2 {
+                Ok(cow2) => (cow2, Ok(())),
+                Err(err) => (Cow::Borrowed(borrowed), Err(err)),
+            }
+        }
     }
 }
 
-pub fn cow_try_and_then<'t, T>(ty: Cow<'t, T>, f: F) -> (Cow<'t, T>, bool)
+pub fn cow_try_and_then_option<'t, T, F>(cow: Cow<'t, T>, f: F) -> (Cow<'t, T>, Option<()>)
 where
-    F: for<'t1> FnOnce(&'t1 T) -> Result<&T>,
+    T: ?Sized + ToOwned,
+    Cow<'t, T>: Borrow<T>,
+    F: for<'t1> FnOnce(&'t1 T) -> Option<Cow<'t1, T>>,
 {
+    let (cow, result) = cow_try_and_then(cow, |cow| f(cow).ok_or(()));
+    (cow, result.ok())
+}
+pub fn cow_try_and_then_is_some<'t, T, F>(cow: Cow<'t, T>, f: F) -> (Cow<'t, T>, bool)
+where
+    T: ?Sized + ToOwned,
+    Cow<'t, T>: Borrow<T>,
+    F: for<'t1> FnOnce(&'t1 T) -> Option<Cow<'t1, T>>,
+{
+    let (cow, result) = cow_try_and_then(cow, |cow| f(cow).ok_or(()));
+    (cow, result.is_ok())
 }
