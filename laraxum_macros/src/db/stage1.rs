@@ -116,19 +116,14 @@ ty_enum! {
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
-    pub rs_ty: Type,
 }
 
-impl TryFrom<Type> for RealTy {
+impl TryFrom<&Type> for RealTy {
     type Error = syn::Error;
-    fn try_from(rs_ty: Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_type_optional(&rs_ty);
+    fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
+        let (ty, optional) = is_type_optional(rs_ty);
         let ty = ScalarTy::try_from(ty)?;
-        Ok(Self {
-            ty,
-            optional,
-            rs_ty,
-        })
+        Ok(Self { ty, optional })
     }
 }
 
@@ -136,19 +131,14 @@ impl TryFrom<Type> for RealTy {
 pub struct ForeignTy {
     pub ty: Ident,
     pub optional: bool,
-    pub rs_ty: Type,
 }
 
-impl TryFrom<Type> for ForeignTy {
+impl TryFrom<&Type> for ForeignTy {
     type Error = syn::Error;
-    fn try_from(rs_ty: Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_type_optional(&rs_ty);
-        let ty = parse_ident_from_ty(&*ty)?.clone();
-        Ok(Self {
-            ty,
-            optional,
-            rs_ty,
-        })
+    fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
+        let (ty, optional) = is_type_optional(rs_ty);
+        let ty = parse_ident_from_ty(ty)?.clone();
+        Ok(Self { ty, optional })
     }
 }
 

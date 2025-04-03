@@ -1,8 +1,4 @@
-use std::borrow::Cow;
-
 use syn::{Ident, Type, Visibility, spanned::Spanned};
-
-use crate::utils::TryCollectAll;
 
 pub use super::stage1::ForeignTy;
 use super::stage1::{self};
@@ -102,33 +98,24 @@ impl From<stage1::RealTy> for RealTy {
     }
 }
 
-pub struct IdTy;
-
-impl TryFrom<RealTy> for IdTy {
-    type Error = &'static str;
-    fn try_from(real_ty: RealTy) -> Result<Self, Self::Error> {
-        let RealTy {
-            ty: ScalarTy::u64,
-            optional,
-        } = real_ty
-        else {
-            return Err(ID_MUST_BE_U64);
-        };
-        if optional {
-            return Err(COLUMN_MUST_NOT_BE_OPTIONAL);
-        }
-        Ok(Self)
-    }
-}
-
-pub use ScalarTy as TimeTy;
-
-#[derive(Clone, PartialEq, Eq)]
-enum StringAttr {
-    Varchar(stage1::StringLen),
-    Char(stage1::StringLen),
-    Text,
-}
+// pub struct IdTy;
+//
+// impl TryFrom<RealTy> for IdTy {
+//     type Error = &'static str;
+//     fn try_from(real_ty: RealTy) -> Result<Self, Self::Error> {
+//         let RealTy {
+//             ty: ScalarTy::u64,
+//             optional,
+//         } = real_ty
+//         else {
+//             return Err(ID_MUST_BE_U64);
+//         };
+//         if optional {
+//             return Err(COLUMN_MUST_NOT_BE_OPTIONAL);
+//         }
+//         Ok(Self)
+//     }
+// }
 
 #[derive(Clone, PartialEq, Eq)]
 enum AutoTimeAttr {
@@ -140,7 +127,7 @@ enum AutoTimeAttr {
 enum ColumnAttrNotForeign {
     None,
     Id,
-    String(StringAttr),
+    String(StringScalarTy),
     AutoTime(AutoTimeAttr),
 }
 
@@ -185,8 +172,8 @@ pub enum VirtualTy {
     Id,
     Real(RealTy),
     Foreign(ForeignTy),
-    OnCreate(TimeTy),
-    OnUpdate(TimeTy),
+    OnCreate(TimeScalarTy),
+    OnUpdate(TimeScalarTy),
 }
 
 #[derive(Clone)]
@@ -200,17 +187,56 @@ pub struct ColumnTy {
 impl ColumnTy {
     fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: Type) -> syn::Result<Self> {
         // turn combination of attrs and types into valid type
-        match attr {
+        let virtual_ty = match attr {
             ColumnAttr::Foreign => {
-                let foreign_ty = ForeignTy::try_from(rs_ty)?;
-                Ok(VirtualTy::Foreign(foreign_ty))
+                let foreign_ty = ForeignTy::try_from(&rs_ty)?;
+                VirtualTy::Foreign(foreign_ty)
             }
             ColumnAttr::NotForeign(attr) => {
                 use ColumnAttrNotForeign as CANF;
-                let stage1_real_ty = stage1::RealTy::try_from(rs_ty)?;
+                let stage1_real_ty = stage1::RealTy::try_from(&rs_ty)?;
                 match attr {
                     CANF::None => VirtualTy::Real(RealTy::from(stage1_real_ty)),
-                    CANF::Id => VirtualTy::Id(IdTy::try_from(stage1_real_ty).map_err()),
+                    CANF::Id => {
+                        // let id = IdTy::try_from(stage1_real_ty);
+                        // let id = id.map_err(|err| syn::Error::new(rs_ty.span(), err))?;
+                        // VirtualTy::Id(id)
+                        let stage1::RealTy {
+                            ty: stage1::ScalarTy::u64,
+                            optional,
+                        } = stage1_real_ty
+                        else {
+                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+                        };
+                        if optional {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
+                        };
+                        VirtualTy::Id
+                    }
+                    CANF::String(ty) => {
+                        let stage1::RealTy {
+                            ty: stage1::ScalarTy::String,
+                            optional,
+                        } = stage1_real_ty
+                        else {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
+                        };
+                        VirtualTy::Real(RealTy { ty, optional })
+                    }
+                    CANF::AutoTime(auto_time_event)=>{
+                        let stage1::RealTy {
+                            ty: stage1::ScalarTy::,
+                            optional,
+                        } = stage1_real_ty
+                        else {
+                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+                        };
+                        if optional {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
+                        };
+                        VirtualTy::Id
+
+                    }
                 }
                 // match (attr, stage1_real_ty) {
                 //     (CANF::None, stage1_real_ty) => {
@@ -282,7 +308,8 @@ impl ColumnTy {
                 //     }
                 // }
             }
-        }
+        };
+        Ok(Self { virtual_ty, rs_ty })
     }
 }
 
