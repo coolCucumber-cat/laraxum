@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::utils::{is_type_optional, parse_ident_from_ty};
 
 use darling::{FromAttributes, FromMeta};
@@ -39,14 +41,14 @@ macro_rules! ty_enum {
             )*
         }
 
-        impl ::core::convert::TryFrom::<::syn::Type> for $enum {
+        impl<'ty> ::core::convert::TryFrom::<&'ty ::syn::Type> for $enum {
             type Error = ::syn::Error;
 
-            fn try_from(ty: ::syn::Type) -> ::core::result::Result::<Self, Self::Error> {
+            fn try_from(ty: &'ty ::syn::Type) -> ::core::result::Result::<Self, Self::Error> {
                 $(
                     {
                         let ty_cmp: ::syn::Type = ::syn::parse_quote! { $ty };
-                        if ty == ty_cmp {
+                        if ty == &ty_cmp {
                             return ::core::result::Result::Ok(Self::$ident);
                         }
                     }
@@ -118,22 +120,11 @@ pub struct RealTy {
     pub optional: bool,
 }
 
-impl TryFrom<Type> for RealTy {
+impl<'ty> TryFrom<Cow<'ty, Type>> for RealTy {
     type Error = syn::Error;
-    fn try_from(input: Type) -> Result<Self, Self::Error> {
+    fn try_from(input: Cow<'ty, Type>) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(input);
-        let ty = ScalarTy::try_from(ty)?;
-        Ok(Self { ty, optional })
-    }
-}
-
-impl TryFrom<&Type> for RealTy {
-    type Error = syn::Error;
-    fn try_from(input: &Type) -> Result<Self, Self::Error> {
-        // let (ty, optional) = is_type_optional(input);
-        // let ty = ScalarTy::try_from(ty)?;
-        let ty = ScalarTy::bool;
-        let optional = true;
+        let ty = ScalarTy::try_from(&*ty)?;
         Ok(Self { ty, optional })
     }
 }
@@ -144,11 +135,11 @@ pub struct ForeignTy {
     pub optional: bool,
 }
 
-impl TryFrom<Type> for ForeignTy {
+impl<'ty> TryFrom<Cow<'ty, Type>> for ForeignTy {
     type Error = syn::Error;
-    fn try_from(input: Type) -> Result<Self, Self::Error> {
+    fn try_from(input: Cow<'ty, Type>) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(input);
-        let ty = parse_ident_from_ty(&ty)?.clone();
+        let ty = parse_ident_from_ty(&*ty)?.clone();
         Ok(Self { ty, optional })
     }
 }

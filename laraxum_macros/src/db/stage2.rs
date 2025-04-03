@@ -1,8 +1,11 @@
+use std::borrow::Cow;
+
 use syn::{Ident, Type, Visibility, spanned::Spanned};
 
 use crate::utils::TryCollectAll;
 
-use super::stage1::{self, ForeignTy, StringLen};
+pub use super::stage1::ForeignTy;
+use super::stage1::{self};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
@@ -13,8 +16,8 @@ const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have confl
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum StringScalarTy {
-    Varchar(StringLen),
-    Char(StringLen),
+    Varchar(stage1::StringLen),
+    Char(stage1::StringLen),
     Text,
 }
 
@@ -93,17 +96,17 @@ pub struct RealTy {
 pub struct IdTy;
 
 impl TryFrom<RealTy> for IdTy {
-    type Error = syn::Error;
+    type Error = &'static str;
     fn try_from(real_ty: RealTy) -> Result<Self, Self::Error> {
         let RealTy {
-            ty: stage1::ScalarTy::u64,
+            ty: ScalarTy::u64,
             optional,
         } = real_ty
         else {
-            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+            return Err(ID_MUST_BE_U64);
         };
         if optional {
-            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
+            return Err(COLUMN_MUST_NOT_BE_OPTIONAL);
         }
         Ok(Self)
     }
@@ -122,8 +125,8 @@ impl From<stage1::RealTy> for RealTy {
 
 #[derive(Clone, PartialEq, Eq)]
 enum StringAttr {
-    Varchar(StringLen),
-    Char(StringLen),
+    Varchar(stage1::StringLen),
+    Char(stage1::StringLen),
     Text,
 }
 
@@ -187,85 +190,89 @@ pub enum VirtualTy {
 }
 
 impl VirtualTy {
-    fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: &Type) -> syn::Result<Self> {
+    fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: Cow<Type>) -> syn::Result<Self> {
         // turn combination of attrs and types into valid type
         match attr {
             ColumnAttr::Foreign => {
-                let foreign_ty = ForeignTy::try_from(rs_ty.clone())?;
+                let foreign_ty = ForeignTy::try_from(rs_ty)?;
                 Ok(VirtualTy::Foreign(foreign_ty))
             }
             ColumnAttr::NotForeign(attr) => {
                 use ColumnAttrNotForeign as CANF;
-                let stage1_real_ty = stage1::RealTy::try_from(rs_ty.clone())?;
-                match (attr, stage1_real_ty) {
-                    (CANF::None, stage1_real_ty) => {
-                        Ok(VirtualTy::Real(RealTy::from(stage1_real_ty)))
-                    }
-                    (
-                        CANF::Id,
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::u64,
-                            optional: false,
-                        },
-                    ) => Ok(VirtualTy::Id),
-                    (
-                        CANF::Id,
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::u64,
-                            optional: true,
-                        },
-                    ) => Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL)),
-                    (CANF::Id, _) => Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64)),
-                    (
-                        CANF::AutoTime(event),
-                        stage1::RealTy {
-                            ty: stage1_scalar_ty,
-                            optional: false,
-                        },
-                    ) => {
-                        let scalar_ty = ScalarTy::from(stage1_scalar_ty);
-                        match event {
-                            AutoTimeAttr::OnCreate => Ok(VirtualTy::OnCreate(scalar_ty)),
-                            AutoTimeAttr::OnUpdate => Ok(VirtualTy::OnUpdate(scalar_ty)),
-                        }
-                    }
-                    (CANF::AutoTime(_), _) => {
-                        Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL))
-                    }
-                    (
-                        CANF::Varchar(len),
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        },
-                    ) => Ok(VirtualTy::Real(RealTy {
-                        ty: ScalarTy::Varchar(len),
-                        optional,
-                    })),
-                    (
-                        CANF::Char(len),
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        },
-                    ) => Ok(VirtualTy::Real(RealTy {
-                        ty: ScalarTy::Char(len),
-                        optional,
-                    })),
-                    (
-                        CANF::Text,
-                        stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        },
-                    ) => Ok(VirtualTy::Real(RealTy {
-                        ty: ScalarTy::Text,
-                        optional,
-                    })),
-                    (CANF::Varchar(_) | CANF::Char(_) | CANF::Text, _) => {
-                        Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING))
-                    }
+                let stage1_real_ty = stage1::RealTy::try_from(rs_ty)?;
+                match attr {
+                    CANF::None => VirtualTy::Real(RealTy::from(stage1_real_ty)),
+                    CANF::Id => VirtualTy::Id(IdTy::try_from(stage1_real_ty).map_err()),
                 }
+                // match (attr, stage1_real_ty) {
+                //     (CANF::None, stage1_real_ty) => {
+                //         Ok(VirtualTy::Real(RealTy::from(stage1_real_ty)))
+                //     }
+                //     (
+                //         CANF::Id,
+                //         stage1::RealTy {
+                //             ty: stage1::ScalarTy::u64,
+                //             optional: false,
+                //         },
+                //     ) => Ok(VirtualTy::Id),
+                //     (
+                //         CANF::Id,
+                //         stage1::RealTy {
+                //             ty: stage1::ScalarTy::u64,
+                //             optional: true,
+                //         },
+                //     ) => Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL)),
+                //     (CANF::Id, _) => Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64)),
+                //     (
+                //         CANF::AutoTime(event),
+                //         stage1::RealTy {
+                //             ty: stage1_scalar_ty,
+                //             optional: false,
+                //         },
+                //     ) => {
+                //         let scalar_ty = ScalarTy::from(stage1_scalar_ty);
+                //         match event {
+                //             AutoTimeAttr::OnCreate => Ok(VirtualTy::OnCreate(scalar_ty)),
+                //             AutoTimeAttr::OnUpdate => Ok(VirtualTy::OnUpdate(scalar_ty)),
+                //         }
+                //     }
+                //     (CANF::AutoTime(_), _) => {
+                //         Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL))
+                //     }
+                //     (
+                //         CANF::Varchar(len),
+                //         stage1::RealTy {
+                //             ty: stage1::ScalarTy::String,
+                //             optional,
+                //         },
+                //     ) => Ok(VirtualTy::Real(RealTy {
+                //         ty: ScalarTy::Varchar(len),
+                //         optional,
+                //     })),
+                //     (
+                //         CANF::Char(len),
+                //         stage1::RealTy {
+                //             ty: stage1::ScalarTy::String,
+                //             optional,
+                //         },
+                //     ) => Ok(VirtualTy::Real(RealTy {
+                //         ty: ScalarTy::Char(len),
+                //         optional,
+                //     })),
+                //     (
+                //         CANF::Text,
+                //         stage1::RealTy {
+                //             ty: stage1::ScalarTy::String,
+                //             optional,
+                //         },
+                //     ) => Ok(VirtualTy::Real(RealTy {
+                //         ty: ScalarTy::Text,
+                //         optional,
+                //     })),
+                //     (CANF::Varchar(_) | CANF::Char(_) | CANF::Text, _) => {
+                //         Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING))
+                //     }
+                // }
             }
         }
     }
