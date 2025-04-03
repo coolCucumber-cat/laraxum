@@ -93,6 +93,15 @@ pub struct RealTy {
     pub optional: bool,
 }
 
+impl From<stage1::RealTy> for RealTy {
+    fn from(stage1_real_ty: stage1::RealTy) -> Self {
+        Self {
+            ty: ScalarTy::from(stage1_real_ty.ty),
+            optional: stage1_real_ty.optional,
+        }
+    }
+}
+
 pub struct IdTy;
 
 impl TryFrom<RealTy> for IdTy {
@@ -113,15 +122,6 @@ impl TryFrom<RealTy> for IdTy {
 }
 
 pub use ScalarTy as TimeTy;
-
-impl From<stage1::RealTy> for RealTy {
-    fn from(stage1_real_ty: stage1::RealTy) -> Self {
-        Self {
-            ty: ScalarTy::from(stage1_real_ty.ty),
-            optional: stage1_real_ty.optional,
-        }
-    }
-}
 
 #[derive(Clone, PartialEq, Eq)]
 enum StringAttr {
@@ -189,8 +189,16 @@ pub enum VirtualTy {
     OnUpdate(TimeTy),
 }
 
-impl VirtualTy {
-    fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: Cow<Type>) -> syn::Result<Self> {
+#[derive(Clone)]
+pub struct ColumnTy {
+    /// the type for the column
+    pub virtual_ty: VirtualTy,
+    /// the parsed rust type for the column
+    pub rs_ty: Type,
+}
+
+impl ColumnTy {
+    fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: Type) -> syn::Result<Self> {
         // turn combination of attrs and types into valid type
         match attr {
             ColumnAttr::Foreign => {
@@ -284,10 +292,8 @@ pub struct Column {
     pub response_ident: Ident,
     /// the name for the column in the request
     pub request_ident: Ident,
-    /// the type for the column
-    pub virtual_ty: VirtualTy,
-    /// the parsed rust type for the column
-    pub rs_ty: Type,
+    /// the type of the column
+    pub ty: ColumnTy,
 }
 
 impl TryFrom<stage1::Column> for Column {
@@ -325,19 +331,19 @@ impl TryFrom<stage1::Column> for Column {
         };
         if let Some(len) = stage1_attrs.varchar {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::Varchar(len)),
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringAttr::Varchar(len))),
                 &response_ident,
             )?;
         };
         if let Some(len) = stage1_attrs.char {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::Char(len)),
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringAttr::Char(len))),
                 &response_ident,
             )?;
         };
         if stage1_attrs.text {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::Text),
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringAttr::Text)),
                 &response_ident,
             )?;
         };
