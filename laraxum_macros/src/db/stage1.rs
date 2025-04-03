@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use crate::utils::{is_type_optional, parse_ident_from_ty};
+use crate::utils::{
+    modname::{is_type_optional_cow, parse_ident_from_ty},
+    parse::is_type_optional,
+};
 
 use darling::{FromAttributes, FromMeta};
 use syn::{
@@ -118,14 +121,19 @@ ty_enum! {
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
+    pub rs_ty: Type,
 }
 
-impl<'ty> TryFrom<Cow<'ty, Type>> for RealTy {
+impl TryFrom<Type> for RealTy {
     type Error = syn::Error;
-    fn try_from(input: Cow<'ty, Type>) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_type_optional(input);
-        let ty = ScalarTy::try_from(&*ty)?;
-        Ok(Self { ty, optional })
+    fn try_from(rs_ty: Type) -> Result<Self, Self::Error> {
+        let (ty, optional) = is_type_optional(&rs_ty);
+        let ty = ScalarTy::try_from(ty)?;
+        Ok(Self {
+            ty,
+            optional,
+            rs_ty,
+        })
     }
 }
 
@@ -135,11 +143,11 @@ pub struct ForeignTy {
     pub optional: bool,
 }
 
-impl<'ty> TryFrom<Cow<'ty, Type>> for ForeignTy {
+impl TryFrom<Type> for ForeignTy {
     type Error = syn::Error;
-    fn try_from(input: Cow<'ty, Type>) -> Result<Self, Self::Error> {
+    fn try_from(input: Type) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(input);
-        let ty = parse_ident_from_ty(&*ty)?.clone();
+        let ty = modname::parse_ident_from_ty(&*ty)?.clone();
         Ok(Self { ty, optional })
     }
 }

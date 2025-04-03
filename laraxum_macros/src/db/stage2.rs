@@ -87,7 +87,7 @@ impl From<stage1::ScalarTy> for ScalarTy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,

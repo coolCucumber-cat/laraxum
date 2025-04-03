@@ -2,8 +2,6 @@ mod db;
 mod router;
 mod utils;
 
-use utils::helper_attribute_macro;
-
 #[proc_macro]
 pub fn router(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let router: router::Router = syn::parse_macro_input!(input);
@@ -34,51 +32,4 @@ fn db_syn(
     let stage3_db = db::stage3::Db::from(stage2_db);
 
     Ok(stage3_db)
-}
-
-macro_rules! sus {
-    () => {
-
-        #[proc_macro_attribute]
-        pub fn id2(
-            _attr: proc_macro::TokenStream,
-            input: proc_macro::TokenStream,
-        ) -> proc_macro::TokenStream {
-            helper_attribute_macro!(db => id => ::syn::Item => input)
-        }
-
-    };
-}
-sus! {}
-
-#[proc_macro_attribute]
-pub fn id(
-    _attr: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    helper_attribute_macro!(db => id => ::syn::Item => input)
-}
-
-#[proc_macro_attribute]
-pub fn foreign(
-    _attr: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    helper_attribute_macro!(db => foreign => ::syn::Item => input)
-}
-
-#[proc_macro_attribute]
-pub fn on_update(
-    _attr: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    helper_attribute_macro!(db => on_update => ::syn::Item => input)
-}
-
-#[proc_macro_attribute]
-pub fn on_create(
-    _attr: proc_macro::TokenStream,
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    helper_attribute_macro!(db => on_create => ::syn::Item => input)
 }
