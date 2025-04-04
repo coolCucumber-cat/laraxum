@@ -14,12 +14,17 @@ impl stage2::ScalarTy {
     };
 
     fn sql_ty(self) -> Cow<'static, str> {
+        use stage2::{StringScalarTy as S2String, TimeScalarTy as S2Time};
         #[cfg(feature = "mysql")]
         {
             match self {
-                Self::Varchar(len) => Cow::Owned(fmt2::fmt! { { str } => "VARCHAR(" {len} ")" }),
-                Self::Char(len) => Cow::Owned(fmt2::fmt! { { str } => "CHAR(" {len} ")" }),
-                Self::Text => Cow::Borrowed("TEXT"),
+                Self::String(S2String::Varchar(len)) => {
+                    Cow::Owned(fmt2::fmt! { { str } => "VARCHAR(" {len} ")" })
+                }
+                Self::String(S2String::Char(len)) => {
+                    Cow::Owned(fmt2::fmt! { { str } => "CHAR(" {len} ")" })
+                }
+                Self::String(S2String::Text) => Cow::Borrowed("TEXT"),
                 Self::bool => Cow::Borrowed("BOOL"),
                 Self::u8 => Cow::Borrowed("TINYINT UNSIGNED"),
                 Self::i8 => Cow::Borrowed("TINYINT"),
@@ -32,18 +37,18 @@ impl stage2::ScalarTy {
                 Self::f32 => Cow::Borrowed("FLOAT"),
                 Self::f64 => Cow::Borrowed("DOUBLE"),
 
-                Self::TimePrimitiveDateTime => Cow::Borrowed("DATETIME"),
-                Self::TimeOffsetDateTime => Cow::Borrowed("TIMESTAMP"),
-                Self::TimeDate => Cow::Borrowed("DATE"),
-                Self::TimeTime => Cow::Borrowed("TIME"),
-                Self::TimeDuration => Cow::Borrowed("TIME"),
+                Self::Time(S2Time::TimeDateTime) => Cow::Borrowed("DATETIME"),
+                Self::Time(S2Time::TimeOffsetDateTime) => Cow::Borrowed("TIMESTAMP"),
+                Self::Time(S2Time::TimeDate) => Cow::Borrowed("DATE"),
+                Self::Time(S2Time::TimeTime) => Cow::Borrowed("TIME"),
+                Self::Time(S2Time::TimeDuration) => Cow::Borrowed("TIME"),
 
-                Self::ChronoDateTimeUtc => Cow::Borrowed("TIMESTAMP"),
-                Self::ChronoDateTimeLocal => Cow::Borrowed("TIMESTAMP"),
-                Self::ChronoNaiveDateTime => Cow::Borrowed("DATETIME"),
-                Self::ChronoNaiveDate => Cow::Borrowed("DATE"),
-                Self::ChronoNaiveTime => Cow::Borrowed("TIME"),
-                Self::ChronoTimeDelta => Cow::Borrowed("TIME"),
+                Self::Time(S2Time::ChronoDateTimeUtc) => Cow::Borrowed("TIMESTAMP"),
+                Self::Time(S2Time::ChronoDateTimeLocal) => Cow::Borrowed("TIMESTAMP"),
+                Self::Time(S2Time::ChronoNaiveDateTime) => Cow::Borrowed("DATETIME"),
+                Self::Time(S2Time::ChronoNaiveDate) => Cow::Borrowed("DATE"),
+                Self::Time(S2Time::ChronoNaiveTime) => Cow::Borrowed("TIME"),
+                Self::Time(S2Time::ChronoTimeDelta) => Cow::Borrowed("TIME"),
             }
         }
 
@@ -167,7 +172,8 @@ impl Table {
         let query_table_name = fmt2::fmt! { { str } => "__" {db.name} "__" {table.name} };
 
         let mut request_columns_rs: Vec<RequestColumn> = vec![];
-        let mut request_columns_sql: Vec<RequestColumn> = vec![];
+        let mut request_columns_sql_create: Vec<RequestColumn> = vec![];
+        let mut request_columns_sql_update: Vec<RequestColumn> = vec![];
         let mut response_columns_sql: Vec<ExpandedReponseColumn> = vec![];
         let mut response_columns_rs: Vec<ResponseColumn> = vec![];
         let mut create_columns: Vec<String> = vec![];
