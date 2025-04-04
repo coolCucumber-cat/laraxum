@@ -1,5 +1,7 @@
 use syn::{Ident, Type, Visibility, spanned::Spanned};
 
+use crate::utils::collections::TryCollectAll;
+
 pub use super::stage1::ForeignTy;
 use super::stage1::{self};
 
@@ -221,21 +223,24 @@ impl ColumnTy {
                         else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
                         };
-                        VirtualTy::Real(RealTy { ty, optional })
-                    }
-                    CANF::AutoTime(auto_time_event)=>{
-                        let stage1::RealTy {
-                            ty: stage1::ScalarTy::,
+                        VirtualTy::Real(RealTy {
+                            ty: ScalarTy::String(ty),
                             optional,
-                        } = stage1_real_ty
-                        else {
-                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+                        })
+                    }
+                    CANF::AutoTime(auto_time_attr) => {
+                        let stage1::RealTy { ty, optional } = stage1_real_ty;
+                        let ty = ScalarTy::from(ty);
+                        let ScalarTy::Time(ty) = ty else {
+                            return Err(syn::Error::new(rs_ty.span(), ""));
                         };
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         };
-                        VirtualTy::Id
-
+                        match auto_time_attr {
+                            AutoTimeAttr::OnCreate => VirtualTy::OnCreate(ty),
+                            AutoTimeAttr::OnUpdate => VirtualTy::OnUpdate(ty),
+                        }
                     }
                 }
                 // match (attr, stage1_real_ty) {
@@ -358,30 +363,29 @@ impl TryFrom<stage1::Column> for Column {
         };
         if let Some(len) = stage1_attrs.varchar {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringAttr::Varchar(len))),
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringScalarTy::Varchar(len))),
                 &response_ident,
             )?;
         };
         if let Some(len) = stage1_attrs.char {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringAttr::Char(len))),
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringScalarTy::Char(len))),
                 &response_ident,
             )?;
         };
         if stage1_attrs.text {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringAttr::Text)),
+                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringScalarTy::Text)),
                 &response_ident,
             )?;
         };
 
-        let virtual_ty = VirtualTy::try_from_attr_and_ty(attr, &rs_ty)?;
+        let ty = ColumnTy::try_from_attr_and_ty(attr, rs_ty)?;
 
         Ok(Self {
             response_ident,
             request_ident,
-            virtual_ty,
-            rs_ty,
+            ty,
         })
     }
 }
@@ -421,7 +425,7 @@ impl TryFrom<stage1::Table> for Table {
         let mut id_ident = None;
         let columns = columns.into_iter().map(|stage1_column| {
             let column = Column::try_from(stage1_column)?;
-            if matches!(column.virtual_ty, VirtualTy::Id) {
+            if matches!(column.ty.virtual_ty, VirtualTy::Id) {
                 if id_ident.is_some() {
                     return Err(syn::Error::new(
                         column.response_ident.span(),

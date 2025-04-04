@@ -166,16 +166,17 @@ impl Table {
         let table_request_ty = quote::format_ident!("{}Request", table.ident);
         let query_table_name = fmt2::fmt! { { str } => "__" {db.name} "__" {table.name} };
 
-        let mut request_columns: Vec<RequestColumn> = vec![];
-        let mut expanded_response_columns: Vec<ExpandedReponseColumn> = vec![];
-        let mut response_columns: Vec<ResponseColumn> = vec![];
+        let mut request_columns_rs: Vec<RequestColumn> = vec![];
+        let mut request_columns_sql: Vec<RequestColumn> = vec![];
+        let mut response_columns_sql: Vec<ExpandedReponseColumn> = vec![];
+        let mut response_columns_rs: Vec<ResponseColumn> = vec![];
         let mut create_columns: Vec<String> = vec![];
         let joins: Vec<String> = vec![
             fmt2::fmt! { { str } => "FROM " {db.name} "." {table.name} " AS " {query_table_name} },
         ];
 
         for column in &table.columns {
-            match &column.virtual_ty {
+            match &column.ty.virtual_ty {
                 stage2::VirtualTy::Real(real_ty) => {
                     let sql_ty = real_ty.sql_ty();
                     create_columns.push(fmt2::fmt! { { str } =>
@@ -187,13 +188,13 @@ impl Table {
                         table_name: query_table_name.clone(),
                     };
                     let response_column =
-                        expanded_response_column.to_response_column(column.rs_ty.clone());
-                    expanded_response_columns.push(expanded_response_column);
-                    response_columns.push(response_column);
+                        expanded_response_column.to_response_column(column.ty.rs_ty.clone());
+                    response_columns_sql.push(expanded_response_column);
+                    response_columns_rs.push(response_column);
 
-                    request_columns.push(RequestColumn {
+                    request_columns_rs.push(RequestColumn {
                         name: column.request_ident.clone(),
-                        ty: column.rs_ty.clone(),
+                        ty: column.ty.rs_ty.clone(),
                     });
                 }
                 stage2::VirtualTy::Id => {
@@ -207,9 +208,9 @@ impl Table {
                         table_name: query_table_name.clone(),
                     };
                     let response_column =
-                        expanded_response_column.to_response_column(column.rs_ty.clone());
-                    expanded_response_columns.push(expanded_response_column);
-                    response_columns.push(response_column);
+                        expanded_response_column.to_response_column(column.ty.rs_ty.clone());
+                    response_columns_sql.push(expanded_response_column);
+                    response_columns_rs.push(response_column);
                 }
                 stage2::VirtualTy::OnCreate(time_ty) => {
                     let sql_ty = time_ty.sql_ty();
@@ -223,8 +224,8 @@ impl Table {
                     };
                     let response_column =
                         expanded_response_column.to_response_column(column.rs_ty.clone());
-                    expanded_response_columns.push(expanded_response_column);
-                    response_columns.push(response_column);
+                    response_columns_sql.push(expanded_response_column);
+                    response_columns_rs.push(response_column);
                 }
                 stage2::VirtualTy::OnUpdate(_x) => {}
                 stage2::VirtualTy::Foreign(_foreign_table_ty) => {
@@ -283,7 +284,7 @@ impl Table {
 
         let get_all = fmt2::fmt! { { str } =>
             "SELECT "
-            @..join(expanded_response_columns => "," => |c| {c.get_query()})
+            @..join(response_columns_sql => "," => |c| {c.get_query()})
             @..(joins => |join| " " {join})
         };
         let get_one = fmt2::fmt! { { str } =>
@@ -291,14 +292,14 @@ impl Table {
         };
         let create_one = fmt2::fmt! { { str } =>
             "INSERT INTO " {db.name} "." {table.name} " ("
-                @..join(request_columns.iter() => "," => |c| {c.name;std})
+                @..join(request_columns_rs.iter() => "," => |c| {c.name;std})
             ") VALUES ("
-                @..join(request_columns.iter() => "," => |_c| "?")
+                @..join(request_columns_rs.iter() => "," => |_c| "?")
             ")"
         };
         let update_one = fmt2::fmt! { { str } =>
             "UPDATE " {db.name} "." {table.name} " SET "
-            @..join(request_columns.iter() => "," => |c| {c.name;std} " = ?")
+            @..join(request_columns_rs.iter() => "," => |c| {c.name;std} " = ?")
             " WHERE " {table.id_ident;std} " = ?"
         };
         let delete_one = fmt2::fmt! { { str } =>
@@ -306,20 +307,20 @@ impl Table {
             " WHERE " {table.id_ident;std} " = ?"
         };
 
-        let table_columns = response_columns.iter().map(|c| {
+        let table_columns = response_columns_rs.iter().map(|c| {
             let name = &c.name;
             let ty = &c.ty;
             quote! { #name: #ty }
         });
-        let request_table_columns = request_columns.iter().map(|c| {
+        let request_table_columns = request_columns_rs.iter().map(|c| {
             let name = &c.name;
             let ty = &c.ty;
             quote! { #name: #ty }
         });
 
-        let request_setter_create = RequestColumn::request_setter(&request_columns);
+        let request_setter_create = RequestColumn::request_setter(&request_columns_rs);
         let request_setter_update = request_setter_create.clone();
-        let response_getter = ResponseColumn::response_getter(&response_columns, &table.ident);
+        let response_getter = ResponseColumn::response_getter(&response_columns_rs, &table.ident);
         let table_ty = &table.ident;
         let db_ty = &db.ident;
 
