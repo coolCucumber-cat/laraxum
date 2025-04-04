@@ -12,14 +12,14 @@ const COLUMN_MUST_BE_STRING: &str = "must be string";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "must not be null";
 const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have conflicting types";
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone)]
 pub enum StringScalarTy {
     Varchar(stage1::StringLen),
     Char(stage1::StringLen),
     Text,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone)]
 pub enum TimeScalarTy {
     TimeDateTime,
     TimeOffsetDateTime,
@@ -36,7 +36,7 @@ pub enum TimeScalarTy {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone)]
 pub enum ScalarTy {
     bool,
     u8,
@@ -85,7 +85,7 @@ impl From<stage1::ScalarTy> for ScalarTy {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
@@ -100,32 +100,11 @@ impl From<stage1::RealTy> for RealTy {
     }
 }
 
-// pub struct IdTy;
-//
-// impl TryFrom<RealTy> for IdTy {
-//     type Error = &'static str;
-//     fn try_from(real_ty: RealTy) -> Result<Self, Self::Error> {
-//         let RealTy {
-//             ty: ScalarTy::u64,
-//             optional,
-//         } = real_ty
-//         else {
-//             return Err(ID_MUST_BE_U64);
-//         };
-//         if optional {
-//             return Err(COLUMN_MUST_NOT_BE_OPTIONAL);
-//         }
-//         Ok(Self)
-//     }
-// }
-
-#[derive(Clone, PartialEq, Eq)]
 enum AutoTimeAttr {
     OnCreate,
     OnUpdate,
 }
 
-#[derive(Clone, PartialEq, Eq)]
 enum ColumnAttrNotForeign {
     None,
     Id,
@@ -133,26 +112,15 @@ enum ColumnAttrNotForeign {
     AutoTime(AutoTimeAttr),
 }
 
-impl ColumnAttrNotForeign {
-    const DEFAULT: Self = Self::None;
-}
-impl Default for ColumnAttrNotForeign {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
 enum ColumnAttr {
     Foreign,
     NotForeign(ColumnAttrNotForeign),
 }
 
 impl ColumnAttr {
-    const DEFAULT: Self = Self::NotForeign(ColumnAttrNotForeign::DEFAULT);
-
+    const DEFAULT: Self = Self::NotForeign(ColumnAttrNotForeign::None);
     fn set(&mut self, attr: Self, ident: &Ident) -> syn::Result<()> {
-        if self == &Self::DEFAULT {
+        if matches!(self, Self::NotForeign(ColumnAttrNotForeign::None)) {
             *self = attr;
             Ok(())
         } else {
@@ -163,13 +131,7 @@ impl ColumnAttr {
         }
     }
 }
-impl Default for ColumnAttr {
-    fn default() -> Self {
-        Self::NotForeign(ColumnAttrNotForeign::DEFAULT)
-    }
-}
 
-#[derive(Clone)]
 pub enum VirtualTy {
     Id,
     Real(RealTy),
@@ -178,7 +140,6 @@ pub enum VirtualTy {
     OnUpdate(TimeScalarTy),
 }
 
-#[derive(Clone)]
 pub struct ColumnTy {
     /// the type for the column
     pub virtual_ty: VirtualTy,
@@ -200,9 +161,6 @@ impl ColumnTy {
                 match attr {
                     CANF::None => VirtualTy::Real(RealTy::from(stage1_real_ty)),
                     CANF::Id => {
-                        // let id = IdTy::try_from(stage1_real_ty);
-                        // let id = id.map_err(|err| syn::Error::new(rs_ty.span(), err))?;
-                        // VirtualTy::Id(id)
                         let stage1::RealTy {
                             ty: stage1::ScalarTy::u64,
                             optional,
@@ -243,87 +201,19 @@ impl ColumnTy {
                         }
                     }
                 }
-                // match (attr, stage1_real_ty) {
-                //     (CANF::None, stage1_real_ty) => {
-                //         Ok(VirtualTy::Real(RealTy::from(stage1_real_ty)))
-                //     }
-                //     (
-                //         CANF::Id,
-                //         stage1::RealTy {
-                //             ty: stage1::ScalarTy::u64,
-                //             optional: false,
-                //         },
-                //     ) => Ok(VirtualTy::Id),
-                //     (
-                //         CANF::Id,
-                //         stage1::RealTy {
-                //             ty: stage1::ScalarTy::u64,
-                //             optional: true,
-                //         },
-                //     ) => Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL)),
-                //     (CANF::Id, _) => Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64)),
-                //     (
-                //         CANF::AutoTime(event),
-                //         stage1::RealTy {
-                //             ty: stage1_scalar_ty,
-                //             optional: false,
-                //         },
-                //     ) => {
-                //         let scalar_ty = ScalarTy::from(stage1_scalar_ty);
-                //         match event {
-                //             AutoTimeAttr::OnCreate => Ok(VirtualTy::OnCreate(scalar_ty)),
-                //             AutoTimeAttr::OnUpdate => Ok(VirtualTy::OnUpdate(scalar_ty)),
-                //         }
-                //     }
-                //     (CANF::AutoTime(_), _) => {
-                //         Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL))
-                //     }
-                //     (
-                //         CANF::Varchar(len),
-                //         stage1::RealTy {
-                //             ty: stage1::ScalarTy::String,
-                //             optional,
-                //         },
-                //     ) => Ok(VirtualTy::Real(RealTy {
-                //         ty: ScalarTy::Varchar(len),
-                //         optional,
-                //     })),
-                //     (
-                //         CANF::Char(len),
-                //         stage1::RealTy {
-                //             ty: stage1::ScalarTy::String,
-                //             optional,
-                //         },
-                //     ) => Ok(VirtualTy::Real(RealTy {
-                //         ty: ScalarTy::Char(len),
-                //         optional,
-                //     })),
-                //     (
-                //         CANF::Text,
-                //         stage1::RealTy {
-                //             ty: stage1::ScalarTy::String,
-                //             optional,
-                //         },
-                //     ) => Ok(VirtualTy::Real(RealTy {
-                //         ty: ScalarTy::Text,
-                //         optional,
-                //     })),
-                //     (CANF::Varchar(_) | CANF::Char(_) | CANF::Text, _) => {
-                //         Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING))
-                //     }
-                // }
             }
         };
         Ok(Self { virtual_ty, rs_ty })
     }
 }
 
-#[derive(Clone)]
 pub struct Column {
     /// the name for the column in the response
     pub response_ident: Ident,
     /// the name for the column in the request
     pub request_ident: Ident,
+    /// the name for the column in the database
+    pub sql_name: String,
     /// the type of the column
     pub ty: ColumnTy,
 }
@@ -337,7 +227,13 @@ impl TryFrom<stage1::Column> for Column {
             attrs: stage1_attrs,
         } = stage1_column;
 
-        let request_ident = stage1_attrs.name.unwrap_or_else(|| response_ident.clone());
+        let request_ident = stage1_attrs
+            .request_ident
+            .unwrap_or_else(|| response_ident.clone());
+
+        let sql_name = stage1_attrs
+            .sql_name
+            .unwrap_or_else(|| request_ident.to_string());
 
         let mut attr = ColumnAttr::DEFAULT;
         if stage1_attrs.id {
@@ -385,6 +281,7 @@ impl TryFrom<stage1::Column> for Column {
         Ok(Self {
             response_ident,
             request_ident,
+            sql_name,
             ty,
         })
     }
@@ -398,7 +295,7 @@ pub struct Table {
     /// the columns in the database
     pub columns: Vec<Column>,
     /// the name for the id of the table, for example `CustomerId`
-    pub id_ident: Ident,
+    pub id_ident: String,
     /// automatically implement the controller as well as the model, using the db as the state
     pub auto_impl_controller: bool,
     /// vis
@@ -414,7 +311,7 @@ impl TryFrom<stage1::Table> for Table {
             attrs:
                 stage1::TableAttrs {
                     auto_impl_controller,
-                    name,
+                    sql_name: name,
                     attrs: _,
                 },
             vis,
@@ -432,7 +329,7 @@ impl TryFrom<stage1::Table> for Table {
                         TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
                     ));
                 }
-                id_ident = Some(column.response_ident.clone());
+                id_ident = Some(column.sql_name.clone());
             }
             Ok(column)
         });

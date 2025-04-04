@@ -2,16 +2,14 @@ mod kw {
     syn::custom_keyword! { Option }
 }
 
-use super::{EXPECTED_IDENT, cow_try_and_then_is_some};
-
-use std::borrow::Cow;
-
 use syn::{
     GenericArgument, Ident, Path, PathSegment, Token, Type, TypePath,
     parse::{ParseBuffer, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
 };
+
+const EXPECTED_IDENT: &str = "expected identifier";
 
 pub fn parse_curly_brackets(input: ParseStream) -> syn::Result<ParseBuffer> {
     Ok(syn::__private::parse_braces(input)?.content)
@@ -108,7 +106,7 @@ pub fn parse_option_from_ty(ty: &Type) -> Option<&Type> {
 pub fn is_type_optional(ty: &Type) -> (&Type, bool) {
     super::map_is_some(ty, parse_option_from_ty)
 }
-
-pub fn is_type_optional_cow<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
-    cow_try_and_then_is_some(ty, |ty| parse_option_from_ty(ty).map(Cow::Borrowed))
-}
+//
+// pub fn is_type_optional_cow<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
+//     cow_try_and_then_is_some(ty, |ty| parse_option_from_ty(ty).map(Cow::Borrowed))
+// }

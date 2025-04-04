@@ -153,9 +153,11 @@ pub struct ColumnAttrs {
     pub varchar: Option<StringLen>,
     pub char: Option<StringLen>,
     pub text: bool,
-    // name
-    pub name: Option<Ident>,
-    // response
+
+    pub request_ident: Option<Ident>,
+
+    pub sql_name: Option<String>,
+
     pub response: Option<Expr>,
 
     // forwarded attrs
@@ -205,7 +207,7 @@ impl TryFrom<Field> for Column {
 pub struct TableAttrs {
     #[darling(default, rename = "auto")]
     pub auto_impl_controller: bool,
-    pub name: Option<String>,
+    pub sql_name: Option<String>,
 
     pub attrs: Vec<Attribute>,
 }
@@ -327,7 +329,7 @@ mod tests {
             TableAttrs {
                 attrs: vec![],
                 auto_impl_controller: false,
-                name: Some("groups".into())
+                sql_name: Some("groups".into())
             }
         );
     }
