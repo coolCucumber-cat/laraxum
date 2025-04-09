@@ -5,74 +5,88 @@ use syn::{Ident, Type};
 
 use std::borrow::Cow;
 
+fn not_null(sql_ty: Cow<str>) -> String {
+    let mut sql_ty = sql_ty.into_owned();
+    fmt2::fmt! { (sql_ty) => " NOT NULL" };
+    sql_ty
+}
+
+fn rs_ty_foreign_id() -> Type {
+    syn::parse_quote!(u64)
+}
+
 impl stage2::StringScalarTy {
     fn sql_ty(self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
-        {
-            match self {
-                Self::Varchar(len) => Cow::Owned(fmt2::fmt! { { str } => "VARCHAR(" {len} ")" }),
-                Self::Char(len) => Cow::Owned(fmt2::fmt! { { str } => "CHAR(" {len} ")" }),
-                Self::Text => Cow::Borrowed("TEXT"),
-            }
+        match self {
+            Self::Varchar(len) => Cow::Owned(fmt2::fmt! { { str } => "VARCHAR(" {len} ")" }),
+            Self::Char(len) => Cow::Owned(fmt2::fmt! { { str } => "CHAR(" {len} ")" }),
+            Self::Text => Cow::Borrowed("TEXT"),
         }
     }
-}
-
-struct TimeScalarSqlTy {
-    ty: &'static str,
-    current_time: &'static str,
 }
 
 impl stage2::TimeScalarTy {
     fn sql_ty(self) -> &'static str {
-        #[cfg(feature = "mysql")]
-        {
-            match self {
-                Self::TimeDateTime => "DATETIME",
-                Self::TimeOffsetDateTime => "TIMESTAMP",
-                Self::TimeDate => "DATE",
-                Self::TimeTime => "TIME",
-                Self::TimeDuration => "TIME",
+        TimeScalarTy::from(self).sql_ty
+    }
 
-                Self::ChronoDateTimeUtc => "TIMESTAMP",
-                Self::ChronoDateTimeLocal => "TIMESTAMP",
-                Self::ChronoNaiveDateTime => "DATETIME",
-                Self::ChronoNaiveDate => "DATE",
-                Self::ChronoNaiveTime => "TIME",
-                Self::ChronoTimeDelta => "TIME",
-            }
+    fn sql_ty_on_create(self) -> String {
+        let time_scalar_ty = TimeScalarTy::from(self);
+        fmt2::fmt! { { str } =>
+            {time_scalar_ty.sql_ty} " NOT NULL"
+            " DEFAULT " {time_scalar_ty.sql_current_time_func}
         }
     }
 
-    fn current_time_function(self) -> &'static str {
-        #[cfg(feature = "mysql")]
-        {
-            match self {
-                Self::TimeDateTime => "DATETIME",
-                Self::TimeOffsetDateTime => "TIMESTAMP",
-                Self::TimeDate => "DATE",
-                Self::TimeTime => "TIME",
-                Self::TimeDuration => "TIME",
+    fn sql_ty_on_update(self) -> String {
+        let time_scalar_ty = TimeScalarTy::from(self);
+        fmt2::fmt! { { str } =>
+            {time_scalar_ty.sql_ty} " NOT NULL"
+            " DEFAULT " {time_scalar_ty.sql_current_time_func}
+            " ON UPDATE " {time_scalar_ty.sql_current_time_func}
+        }
+    }
+}
 
-                Self::ChronoDateTimeUtc => "TIMESTAMP",
-                Self::ChronoDateTimeLocal => "TIMESTAMP",
-                Self::ChronoNaiveDateTime => "DATETIME",
-                Self::ChronoNaiveDate => "DATE",
-                Self::ChronoNaiveTime => "TIME",
-                Self::ChronoTimeDelta => "TIME",
-            }
+struct TimeScalarTy {
+    sql_ty: &'static str,
+    sql_current_time_func: &'static str,
+}
+impl From<stage2::TimeScalarTy> for TimeScalarTy {
+    fn from(stage2_time_scalar_ty: stage2::TimeScalarTy) -> Self {
+        #[cfg(feature = "mysql")]
+        match stage2_time_scalar_ty {
+            stage2::TimeScalarTy::ChronoDateTimeUtc => Self {
+                sql_ty: "TIMESTAMP",
+                sql_current_time_func: "UTC_TIMESTAMP()",
+            },
+            stage2::TimeScalarTy::ChronoDateTimeLocal
+            | stage2::TimeScalarTy::TimeOffsetDateTime => Self {
+                sql_ty: "TIMESTAMP",
+                sql_current_time_func: "CURRENT_TIMESTAMP()",
+            },
+            stage2::TimeScalarTy::ChronoNaiveDateTime
+            | stage2::TimeScalarTy::TimePrimitiveDateTime => Self {
+                sql_ty: "DATETIME",
+                sql_current_time_func: "CURRENT_TIMESTAMP()",
+            },
+            stage2::TimeScalarTy::ChronoNaiveDate | stage2::TimeScalarTy::TimeDate => Self {
+                sql_ty: "DATE",
+                sql_current_time_func: "CURRENT_DATE()",
+            },
+            stage2::TimeScalarTy::ChronoNaiveTime
+            | stage2::TimeScalarTy::TimeTime
+            | stage2::TimeScalarTy::ChronoTimeDelta
+            | stage2::TimeScalarTy::TimeDuration => Self {
+                sql_ty: "TIME",
+                sql_current_time_func: "CURRENT_TIME()",
+            },
         }
     }
 }
 
 impl stage2::ScalarTy {
-    const SQL_TY_ID: &str = {
-        #[cfg(feature = "mysql")]
-        {
-            "BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT"
-        }
-    };
-
     fn sql_ty(self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
         {
@@ -129,6 +143,13 @@ impl stage2::ScalarTy {
         //     }
         // }
     }
+
+    const SQL_TY_ID: &str = {
+        #[cfg(feature = "mysql")]
+        {
+            "BIGINT UNSIGNED NOT NULL UNIQUE PRIMARY KEY AUTO_INCREMENT"
+        }
+    };
 }
 
 impl stage2::RealTy {
@@ -198,8 +219,8 @@ impl Table {
 
         let mut request_columns_rs: Vec<proc_macro2::TokenStream> = vec![];
         let mut request_columns_setter: Vec<proc_macro2::TokenStream> = vec![];
-        let mut request_columns_sql_create: Vec<(&str, &'static str)> = vec![];
-        let mut request_columns_sql_update: Vec<(&str, &'static str)> = vec![];
+        let mut request_columns_sql_create_update: Vec<(&str, &'static str)> = vec![];
+        // let mut request_columns_sql_update: Vec<(&str, &'static str)> = vec![];
 
         let mut response_columns_rs: Vec<proc_macro2::TokenStream> = vec![];
         let mut response_columns_getter: Vec<proc_macro2::TokenStream> = vec![];
@@ -225,9 +246,10 @@ impl Table {
 
                     request_columns_rs.push(request_column_rs(request_ident, rs_ty));
                     request_columns_setter.push(request_column_setter(request_ident));
-                    let request_column_sql = (sql_name, "?");
-                    request_columns_sql_create.push(request_column_sql);
-                    request_columns_sql_update.push(request_column_sql);
+                    request_columns_sql_create_update.push((sql_name, "?"));
+                    // let request_column_sql = (sql_name, "?");
+                    // request_columns_sql_create_update.push(request_column_sql);
+                    // request_columns_sql_update.push(request_column_sql);
 
                     response_columns_rs.push(response_column_rs(response_ident, rs_ty));
                     response_columns_getter
@@ -236,52 +258,46 @@ impl Table {
                 }
                 stage2::VirtualTy::Id => {
                     let sql_ty = stage2::ScalarTy::SQL_TY_ID;
-                    create_columns.push((sql_name, sql_ty.into()));
+                    create_columns.push((sql_name, Cow::Borrowed(sql_ty)));
 
                     response_columns_rs.push(response_column_rs(response_ident, rs_ty));
                     response_columns_getter
                         .push(response_column_getter(response_ident, &column_alias_sql));
                     response_columns_sql.push(column_ident_sql);
                 }
-                stage2::VirtualTy::OnCreate(time_ty) => {}
-                stage2::VirtualTy::OnUpdate(time_ty) => {}
+                stage2::VirtualTy::OnCreate(time_ty) => {
+                    let sql_ty = time_ty.sql_ty_on_create();
+                    create_columns.push((sql_name, Cow::Owned(sql_ty)));
+
+                    response_columns_rs.push(response_column_rs(response_ident, rs_ty));
+                    response_columns_getter
+                        .push(response_column_getter(response_ident, &column_alias_sql));
+                    response_columns_sql.push(column_ident_sql);
+                }
+                stage2::VirtualTy::OnUpdate(time_ty) => {
+                    let sql_ty = time_ty.sql_ty_on_update();
+                    create_columns.push((sql_name, Cow::Owned(sql_ty)));
+
+                    response_columns_rs.push(response_column_rs(response_ident, rs_ty));
+                    response_columns_getter
+                        .push(response_column_getter(response_ident, &column_alias_sql));
+                    response_columns_sql.push(column_ident_sql);
+                }
                 stage2::VirtualTy::Foreign(table_ty) => {
-                    // let foreign_table = tables
-                    //     .iter()
-                    //     .find(|&ft| &ft.self_type == foreign_table_type)
-                    //     .expect("table does not exist");
-                    // let foreign_table_name = &*foreign_table.name;
-                    // let foreign_table_id_name = &foreign_table.id_name;
-                    // if column_nullable {
-                    //     column_responses.push(quote! {
-                    //         #column_response_name: ::core::option::Option<#foreign_table_type>
-                    //     });
-                    //     column_requests.push(quote! {
-                    //         #column_name: ::core::option::Option<::laraxum::Id>
-                    //     });
-                    //     sql_create.push(fmt2::fmt! { { str } =>
-                    //         {column_response_name;std} " BIGINT FOREIGN KEY REFERENCES " {foreign_table_name;std} "(" {foreign_table_id_name;std} ")"
-                    //     });
-                    // } else {
-                    //     column_responses.push(quote! {
-                    //         #column_response_name: #foreign_table_type
-                    //     });
-                    //     column_requests.push(quote! {
-                    //         #column_name: ::laraxum::Id
-                    //     });
-                    //     sql_create.push(fmt2::fmt! { { str } =>
-                    //         {column_response_name;std} " BIGINT NOT NULL FOREIGN KEY REFERENCES " {foreign_table_name;std} "(" {foreign_table_id_name;std} ")"
-                    //     });
-                    // }
-                    // for foreign_column in &foreign_table.columns {
-                    //     sql_response_columns.push(fmt2::fmt! { { str } =>
-                    //         {foreign_table_name;std}"."{foreign_column.name;std}
-                    //         " as __"{self.name;std}"__"{foreign_table_name;std}"__"{foreign_column.name;std}
-                    //     });
-                    //     sql_joins.push(fmt2::fmt! { { str } =>
-                    //         "LEFT JOIN " {foreign_table_name}
-                    //     });
-                    // }
+                    let foreign_table = db
+                        .tables
+                        .iter()
+                        .find(|&foreign_table| foreign_table.ident == table_ty.ident)
+                        .expect("table does not exist");
+
+                    request_columns_rs.push(request_column_rs(request_ident, &rs_ty_foreign_id()));
+                    request_columns_setter.push(request_column_setter(request_ident));
+                    request_columns_sql_create_update.push((sql_name, "?"));
+                    // let request_column_sql = (sql_name, "?");
+                    // request_columns_sql_create_update.push(request_column_sql);
+                    // request_columns_sql_update.push(request_column_sql);
+
+                    // for foreign_column in &foreign_table.columns {}
                 }
             }
         }
@@ -307,14 +323,15 @@ impl Table {
 
         let create_one = fmt2::fmt! { { str } =>
             "INSERT INTO " {db.name} "." {table.name} " ("
-                @..join(&request_columns_sql_create => "," => |c| {c.0})
+                @..join(&request_columns_sql_create_update => "," => |c| {c.0})
             ") VALUES ("
-                @..join(&request_columns_sql_create => "," => |c| {c.1})
+                @..join(&request_columns_sql_create_update => "," => |c| {c.1})
             ")"
         };
         let update_one = fmt2::fmt! { { str } =>
             "UPDATE " {table_ident_sql} " SET "
-            @..join(&request_columns_sql_update => "," => |c| {c.0} "=" {c.1})
+            @..join(&request_columns_sql_create_update => "," => |c| {c.0} "=" {c.1})
+            // @..join(&request_columns_sql_update => "," => |c| {c.0} "=" {c.1})
             " WHERE " {table.id_ident;std} "=?"
         };
         let delete_one = fmt2::fmt! { { str } =>

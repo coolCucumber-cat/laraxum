@@ -129,7 +129,7 @@ impl TryFrom<&Type> for RealTy {
 
 #[derive(Clone)]
 pub struct ForeignTy {
-    pub ty: Ident,
+    pub ident: Ident,
     pub optional: bool,
 }
 
@@ -137,8 +137,8 @@ impl TryFrom<&Type> for ForeignTy {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(rs_ty);
-        let ty = parse_ident_from_ty(ty)?.clone();
-        Ok(Self { ty, optional })
+        let ident = parse_ident_from_ty(ty)?.clone();
+        Ok(Self { ident, optional })
     }
 }
 

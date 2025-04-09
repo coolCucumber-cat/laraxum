@@ -21,18 +21,18 @@ pub enum StringScalarTy {
 
 #[derive(Copy, Clone)]
 pub enum TimeScalarTy {
-    TimeDateTime,
-    TimeOffsetDateTime,
-    TimeDate,
-    TimeTime,
-    TimeDuration,
-
     ChronoDateTimeUtc,
     ChronoDateTimeLocal,
     ChronoNaiveDateTime,
     ChronoNaiveDate,
     ChronoNaiveTime,
     ChronoTimeDelta,
+
+    TimeOffsetDateTime,
+    TimePrimitiveDateTime,
+    TimeDate,
+    TimeTime,
+    TimeDuration,
 }
 
 #[allow(non_camel_case_types)]
@@ -70,17 +70,18 @@ impl From<stage1::ScalarTy> for ScalarTy {
 
             stage1::ScalarTy::String => Self::String(StringScalarTy::Varchar(255)),
 
-            stage1::ScalarTy::TimeDateTime => Self::Time(TimeScalarTy::TimeDateTime),
-            stage1::ScalarTy::TimeOffsetDateTime => Self::Time(TimeScalarTy::TimeOffsetDateTime),
-            stage1::ScalarTy::TimeDate => Self::Time(TimeScalarTy::TimeDate),
-            stage1::ScalarTy::TimeTime => Self::Time(TimeScalarTy::TimeTime),
-            stage1::ScalarTy::TimeDuration => Self::Time(TimeScalarTy::TimeDuration),
             stage1::ScalarTy::ChronoDateTimeUtc => Self::Time(TimeScalarTy::ChronoDateTimeUtc),
             stage1::ScalarTy::ChronoDateTimeLocal => Self::Time(TimeScalarTy::ChronoDateTimeLocal),
             stage1::ScalarTy::ChronoNaiveDateTime => Self::Time(TimeScalarTy::ChronoNaiveDateTime),
             stage1::ScalarTy::ChronoNaiveDate => Self::Time(TimeScalarTy::ChronoNaiveDate),
             stage1::ScalarTy::ChronoNaiveTime => Self::Time(TimeScalarTy::ChronoNaiveTime),
             stage1::ScalarTy::ChronoTimeDelta => Self::Time(TimeScalarTy::ChronoTimeDelta),
+
+            stage1::ScalarTy::TimeDateTime => Self::Time(TimeScalarTy::TimePrimitiveDateTime),
+            stage1::ScalarTy::TimeOffsetDateTime => Self::Time(TimeScalarTy::TimeOffsetDateTime),
+            stage1::ScalarTy::TimeDate => Self::Time(TimeScalarTy::TimeDate),
+            stage1::ScalarTy::TimeTime => Self::Time(TimeScalarTy::TimeTime),
+            stage1::ScalarTy::TimeDuration => Self::Time(TimeScalarTy::TimeDuration),
         }
     }
 }
