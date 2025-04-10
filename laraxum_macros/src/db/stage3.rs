@@ -156,9 +156,9 @@ impl stage2::RealTy {
     fn sql_ty(self) -> Cow<'static, str> {
         let sql_ty = self.ty.sql_ty();
         if self.optional {
-            Cow::Owned(fmt2::fmt! { { str } => {sql_ty} " NOT NULL" })
-        } else {
             sql_ty
+        } else {
+            Cow::Owned(not_null(sql_ty))
         }
     }
 }
@@ -171,8 +171,11 @@ struct Table {
 
 impl Table {
     fn from_table_and_db(table: &stage2::Table, db: &stage2::Db) -> Self {
-        fn column_alias_sql((table_alias_sql, column_name_sql): (&str, &str)) -> Ident {
-            quote::format_ident!("{table_alias_sql}__{column_name_sql}")
+        fn make_alias((parent, child): (&str, &str)) -> String {
+            fmt2::fmt! { { str } => {parent} "__" {child} }
+        }
+        fn make_alias_rs_ident(ident: (&str, &str)) -> Ident {
+            quote::format_ident!("{}", make_alias(ident))
         }
 
         fn request_column_rs(request_ident: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
@@ -193,8 +196,9 @@ impl Table {
         }
         fn response_column_getter(
             response_ident: &Ident,
-            column_alias_sql: &Ident,
+            column_ident_sql: (&str, &str),
         ) -> proc_macro2::TokenStream {
+            let column_alias_sql = make_alias_rs_ident(column_ident_sql);
             quote! {
                 #response_ident: response.#column_alias_sql
             }
@@ -213,7 +217,8 @@ impl Table {
         let table_request_struct_ident = quote::format_ident!("{}Request", table.ident);
 
         let table_ident_sql = fmt2::fmt! { { str } => {db.name} "." {table.name} };
-        let table_alias_sql = fmt2::fmt! { { str } => "__" {db.name} "__" {table.name} };
+        let db_alias_sql = make_alias(("", &*db.name));
+        let table_alias_sql = make_alias((&*db_alias_sql, &*table.name));
 
         let mut create_columns: Vec<(&str, Cow<str>)> = vec![];
 
@@ -237,7 +242,6 @@ impl Table {
             } = column;
             let sql_name = &**sql_name;
             let column_ident_sql = (&*table_alias_sql, sql_name);
-            let column_alias_sql = column_alias_sql(column_ident_sql);
 
             match virtual_ty {
                 stage2::VirtualTy::Real(real_ty) => {
@@ -253,7 +257,7 @@ impl Table {
 
                     response_columns_rs.push(response_column_rs(response_ident, rs_ty));
                     response_columns_getter
-                        .push(response_column_getter(response_ident, &column_alias_sql));
+                        .push(response_column_getter(response_ident, column_ident_sql));
                     response_columns_sql.push(column_ident_sql);
                 }
                 stage2::VirtualTy::Id => {
@@ -262,7 +266,7 @@ impl Table {
 
                     response_columns_rs.push(response_column_rs(response_ident, rs_ty));
                     response_columns_getter
-                        .push(response_column_getter(response_ident, &column_alias_sql));
+                        .push(response_column_getter(response_ident, column_ident_sql));
                     response_columns_sql.push(column_ident_sql);
                 }
                 stage2::VirtualTy::OnCreate(time_ty) => {
@@ -271,7 +275,7 @@ impl Table {
 
                     response_columns_rs.push(response_column_rs(response_ident, rs_ty));
                     response_columns_getter
-                        .push(response_column_getter(response_ident, &column_alias_sql));
+                        .push(response_column_getter(response_ident, column_ident_sql));
                     response_columns_sql.push(column_ident_sql);
                 }
                 stage2::VirtualTy::OnUpdate(time_ty) => {
@@ -280,7 +284,7 @@ impl Table {
 
                     response_columns_rs.push(response_column_rs(response_ident, rs_ty));
                     response_columns_getter
-                        .push(response_column_getter(response_ident, &column_alias_sql));
+                        .push(response_column_getter(response_ident, column_ident_sql));
                     response_columns_sql.push(column_ident_sql);
                 }
                 stage2::VirtualTy::Foreign(table_ty) => {
@@ -302,6 +306,8 @@ impl Table {
             }
         }
 
+        let response_table_getter = response_table_getter(&table.ident, &response_columns_getter);
+
         let migration_up = fmt2::fmt! { { str } =>
             "CREATE TABLE IF NOT EXISTS " {table_ident_sql} " ("
                 @..join(create_columns => "," => |c| {c.0} " " {c.1})
@@ -322,7 +328,7 @@ impl Table {
         };
 
         let create_one = fmt2::fmt! { { str } =>
-            "INSERT INTO " {db.name} "." {table.name} " ("
+            "INSERT INTO " {table_ident_sql} " ("
                 @..join(&request_columns_sql_create_update => "," => |c| {c.0})
             ") VALUES ("
                 @..join(&request_columns_sql_create_update => "," => |c| {c.1})
@@ -339,9 +345,7 @@ impl Table {
             " WHERE " {table.id_ident;std} "=?"
         };
 
-        let response_table_getter = response_table_getter(&table.ident, &response_columns_getter);
-
-        let doc = fmt2::fmt! { { str } => "`" {db.name} "." {table.name} "`"};
+        let doc = fmt2::fmt! { { str } => "`" {table_ident_sql} "`"};
 
         let table_ident = &table.ident;
         let db_ident = &db.ident;
