@@ -382,8 +382,8 @@ impl Db {
             vis,
         })
     }
+}
 
-    pub fn find_table(&self, ident: &Ident) -> Option<&Table> {
-        self.tables.iter().find(|table| &table.ident == ident)
-    }
+pub fn find_table<'a>(tables: &'a [Table], ident: &Ident) -> Option<&'a Table> {
+    tables.iter().find(|table| &table.ident == ident)
 }

@@ -269,15 +269,9 @@ impl Table {
         let (sql_table_ident, table_alias) = make_ident_and_alias((&*db.name, &*table.name));
 
         let mut create_columns: Vec<(&str, Cow<str>)> = vec![];
-
         let mut request_columns: Vec<RequestColumn> = vec![];
-
         let mut response_columns: Vec<ResponseColumn> = vec![];
         let mut expanded_response_columns: Vec<ExpandedResponseColumn> = vec![];
-        // let mut response_columns_rs: Vec<proc_macro2::TokenStream> = vec![];
-        // let mut response_columns_getter: Vec<proc_macro2::TokenStream> = vec![];
-        // let mut response_columns_sql: Vec<(&str, &str)> = vec![];
-
         let mut joins: Vec<String> = vec![];
 
         for column in &table.columns {
@@ -300,60 +294,56 @@ impl Table {
                         sql_setter: sql_name,
                     });
 
-                    response_columns.push(ResponseColumn {
-                        field: response_column_rs(response_ident, rs_ty),
-                        rs_getter: response_column_getter(response_ident, &*column_alias),
-                    });
-                    expanded_response_columns.push(ExpandedResponseColumn {
-                        sql_getter_ident: sql_column_ident,
-                        sql_getter_alias: column_alias,
-                    });
+                    // response_columns.push(ResponseColumn {
+                    //     field: response_column_rs(response_ident, rs_ty),
+                    //     rs_getter: response_column_getter(response_ident, &*column_alias),
+                    // });
+                    // expanded_response_columns.push(ExpandedResponseColumn {
+                    //     sql_getter_ident: sql_column_ident,
+                    //     sql_getter_alias: column_alias,
+                    // });
                 }
                 stage2::VirtualTy::Id => {
                     create_columns.push((sql_name, Cow::Borrowed(stage2::ScalarTy::SQL_TY_ID)));
 
-                    response_columns.push(ResponseColumn {
-                        field: response_column_rs(response_ident, rs_ty),
-                        rs_getter: response_column_getter(response_ident, &*column_alias),
-                    });
-                    expanded_response_columns.push(ExpandedResponseColumn {
-                        sql_getter_ident: sql_column_ident,
-                        sql_getter_alias: column_alias,
-                    });
+                    // response_columns.push(ResponseColumn {
+                    //     field: response_column_rs(response_ident, rs_ty),
+                    //     rs_getter: response_column_getter(response_ident, &*column_alias),
+                    // });
+                    // expanded_response_columns.push(ExpandedResponseColumn {
+                    //     sql_getter_ident: sql_column_ident,
+                    //     sql_getter_alias: column_alias,
+                    // });
                 }
                 stage2::VirtualTy::OnCreate(time_ty) => {
                     create_columns.push((sql_name, Cow::Owned(time_ty.sql_ty_on_create())));
 
-                    response_columns.push(ResponseColumn {
-                        field: response_column_rs(response_ident, rs_ty),
-                        rs_getter: response_column_getter(response_ident, &*column_alias),
-                    });
-                    expanded_response_columns.push(ExpandedResponseColumn {
-                        sql_getter_ident: sql_column_ident,
-                        sql_getter_alias: column_alias,
-                    });
+                    // response_columns.push(ResponseColumn {
+                    //     field: response_column_rs(response_ident, rs_ty),
+                    //     rs_getter: response_column_getter(response_ident, &*column_alias),
+                    // });
+                    // expanded_response_columns.push(ExpandedResponseColumn {
+                    //     sql_getter_ident: sql_column_ident,
+                    //     sql_getter_alias: column_alias,
+                    // });
                 }
                 stage2::VirtualTy::OnUpdate(time_ty) => {
                     create_columns.push((sql_name, Cow::Owned(time_ty.sql_ty_on_update())));
 
-                    response_columns.push(ResponseColumn {
-                        field: response_column_rs(response_ident, rs_ty),
-                        rs_getter: response_column_getter(response_ident, &*column_alias),
-                    });
-                    expanded_response_columns.push(ExpandedResponseColumn {
-                        sql_getter_ident: sql_column_ident,
-                        sql_getter_alias: column_alias,
-                    });
+                    // response_columns.push(ResponseColumn {
+                    //     field: response_column_rs(response_ident, rs_ty),
+                    //     rs_getter: response_column_getter(response_ident, &*column_alias),
+                    // });
+                    // expanded_response_columns.push(ExpandedResponseColumn {
+                    //     sql_getter_ident: sql_column_ident,
+                    //     sql_getter_alias: column_alias,
+                    // });
                 }
                 stage2::VirtualTy::Foreign(foreign_ty) => {
-                    let foreign_table = db
-                        .find_table(&foreign_ty.ident)
+                    let foreign_table = stage2::find_table(&db.tables, &foreign_ty.ident)
                         .expect("table does not exist");
 
-                    let sql_ty = foreign_ty.sql_ty(
-                        &make_ident((&*db.name, &*foreign_table.name)),
-                        &*foreign_table.id_ident,
-                    );
+                    let sql_ty = foreign_ty.sql_ty(&*foreign_table.name, &*foreign_table.id_ident);
                     create_columns.push((sql_name, Cow::Owned(sql_ty)));
 
                     request_columns.push(RequestColumn {
@@ -361,8 +351,39 @@ impl Table {
                         rs_setter: request_column_setter(request_ident),
                         sql_setter: sql_name,
                     });
+                }
+            }
+        }
 
-                    // for foreign_column in &foreign_table.columns {}
+        fn traverse_columns(table: &stage2::Table, db_tables: &[stage2::Table]) {
+            let mut response_columns: Vec<ResponseColumn> = vec![];
+            let mut expanded_response_columns: Vec<ExpandedResponseColumn> = vec![];
+
+            for column in &table.columns {
+                let stage2::Column {
+                    response_ident,
+                    request_ident: _,
+                    sql_name,
+                    ty: stage2::ColumnTy { virtual_ty, rs_ty },
+                } = column;
+                let sql_name = &**sql_name;
+                let (sql_column_ident, column_alias) =
+                    make_ident_and_alias((&*table_alias, sql_name));
+                match virtual_ty {
+                    stage2::VirtualTy::Foreign(foreign_ty) => {
+                        let foreign_table = stage2::find_table(db_tables, &foreign_ty.ident)
+                            .expect("table does not exist");
+                    }
+                    _ => {
+                        response_columns.push(ResponseColumn {
+                            field: response_column_rs(response_ident, rs_ty),
+                            rs_getter: response_column_getter(response_ident, &*column_alias),
+                        });
+                        expanded_response_columns.push(ExpandedResponseColumn {
+                            sql_getter_ident: sql_column_ident,
+                            sql_getter_alias: column_alias,
+                        });
+                    }
                 }
             }
         }
