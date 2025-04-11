@@ -1,4 +1,4 @@
-use crate::utils::parse::{is_type_optional, parse_ident_from_ty};
+use crate::utils::syn::{is_type_optional, parse_ident_from_ty};
 
 use darling::{FromAttributes, FromMeta};
 use syn::{

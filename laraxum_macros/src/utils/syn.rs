@@ -11,6 +11,10 @@ use syn::{
 
 const EXPECTED_IDENT: &str = "expected identifier";
 
+pub fn from_str_to_rs_ident(s: &str) -> Ident {
+    quote::format_ident!("{s}")
+}
+
 pub fn parse_curly_brackets(input: ParseStream) -> syn::Result<ParseBuffer> {
     Ok(syn::__private::parse_braces(input)?.content)
 }

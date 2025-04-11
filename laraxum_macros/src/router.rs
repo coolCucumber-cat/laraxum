@@ -1,4 +1,4 @@
-use crate::utils::parse::parse_curly_brackets;
+use crate::utils::syn::parse_curly_brackets;
 
 use quote::quote;
 use syn::{

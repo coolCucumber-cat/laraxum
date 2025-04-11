@@ -1,3 +1,5 @@
+use crate::utils::syn::from_str_to_rs_ident;
+
 use super::stage2;
 
 use quote::quote;
@@ -5,14 +7,72 @@ use syn::{Ident, Type};
 
 use std::borrow::Cow;
 
-fn not_null(sql_ty: Cow<str>) -> String {
+fn make_alias((parent, child): (&str, &str)) -> String {
+    fmt2::fmt! { { str } => {parent} "__" {child} }
+}
+fn make_alias_rs_ident(ident: (&str, &str)) -> Ident {
+    from_str_to_rs_ident(&*make_alias(ident))
+}
+fn make_ident((parent, child): (&str, &str)) -> String {
+    fmt2::fmt! { { str } => {parent} "." {child} }
+}
+fn make_ident_and_alias(ident: (&str, &str)) -> (String, String) {
+    (make_ident(ident), make_alias(ident))
+}
+
+fn request_column_rs(request_ident: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
+    quote! {
+        pub #request_ident: #rs_ty
+    }
+}
+fn request_column_setter(request_ident: &Ident) -> proc_macro2::TokenStream {
+    quote! {
+        request.#request_ident
+    }
+}
+
+fn response_column_rs(response_ident: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
+    quote! {
+        pub #response_ident: #rs_ty
+    }
+}
+fn response_column_getter(response_ident: &Ident, column_alias: &str) -> proc_macro2::TokenStream {
+    let column_alias = from_str_to_rs_ident(column_alias);
+    quote! {
+        #response_ident: response.#column_alias
+    }
+}
+fn response_table_getter(
+    table_ident: &Ident,
+    columns: &[proc_macro2::TokenStream],
+) -> proc_macro2::TokenStream {
+    quote! {
+        #table_ident {
+            #(#columns),*
+        }
+    }
+}
+
+fn not_optional(sql_ty: Cow<str>) -> String {
     let mut sql_ty = sql_ty.into_owned();
     fmt2::fmt! { (sql_ty) => " NOT NULL" };
     sql_ty
 }
 
-fn rs_ty_foreign_id() -> Type {
-    syn::parse_quote!(u64)
+fn maybe_optional(sql_ty: Cow<str>, optional: bool) -> Cow<str> {
+    if optional {
+        sql_ty
+    } else {
+        Cow::Owned(not_optional(sql_ty))
+    }
+}
+
+fn rs_ty_foreign_id(optional: bool) -> Type {
+    if optional {
+        syn::parse_quote!(Option<u64>)
+    } else {
+        syn::parse_quote!(u64)
+    }
 }
 
 impl stage2::StringScalarTy {
@@ -87,6 +147,13 @@ impl From<stage2::TimeScalarTy> for TimeScalarTy {
 }
 
 impl stage2::ScalarTy {
+    const SQL_TY_ID: &str = {
+        #[cfg(feature = "mysql")]
+        {
+            "BIGINT UNSIGNED NOT NULL UNIQUE PRIMARY KEY AUTO_INCREMENT"
+        }
+    };
+
     fn sql_ty(self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
         {
@@ -143,24 +210,50 @@ impl stage2::ScalarTy {
         //     }
         // }
     }
-
-    const SQL_TY_ID: &str = {
-        #[cfg(feature = "mysql")]
-        {
-            "BIGINT UNSIGNED NOT NULL UNIQUE PRIMARY KEY AUTO_INCREMENT"
-        }
-    };
 }
 
 impl stage2::RealTy {
     fn sql_ty(self) -> Cow<'static, str> {
         let sql_ty = self.ty.sql_ty();
-        if self.optional {
+        maybe_optional(sql_ty, self.optional)
+    }
+}
+
+impl stage2::ForeignTy {
+    fn sql_ty(&self, sql_column_alias: &str, id_ident: &str) -> String {
+        #[cfg(feature = "mysql")]
+        {
+            let sql_ty = maybe_optional(Cow::Borrowed("BIGINT UNSIGNED"), self.optional);
+            let mut sql_ty = sql_ty.into_owned();
+            fmt2::fmt! { (sql_ty) => " FOREIGN KEY REFERENCES " {sql_column_alias} "(" {id_ident} ")" }
             sql_ty
-        } else {
-            Cow::Owned(not_null(sql_ty))
         }
     }
+}
+
+struct RequestColumn<'sql_name> {
+    field: proc_macro2::TokenStream,
+    rs_setter: proc_macro2::TokenStream,
+    sql_setter: &'sql_name str,
+}
+impl<'sql_name> RequestColumn<'sql_name> {
+    fn new(request_ident: &Ident, rs_ty: &Type, sql_name: &'sql_name str) -> Self {
+        Self {
+            field: request_column_rs(request_ident, rs_ty),
+            rs_setter: request_column_setter(request_ident),
+            sql_setter: sql_name,
+        }
+    }
+}
+
+struct ResponseColumn {
+    field: proc_macro2::TokenStream,
+    rs_getter: proc_macro2::TokenStream,
+}
+
+struct ExpandedResponseColumn {
+    sql_getter_ident: String,
+    sql_getter_alias: String,
 }
 
 struct Table {
@@ -171,65 +264,19 @@ struct Table {
 
 impl Table {
     fn from_table_and_db(table: &stage2::Table, db: &stage2::Db) -> Self {
-        fn make_alias((parent, child): (&str, &str)) -> String {
-            fmt2::fmt! { { str } => {parent} "__" {child} }
-        }
-        fn make_alias_rs_ident(ident: (&str, &str)) -> Ident {
-            quote::format_ident!("{}", make_alias(ident))
-        }
-
-        fn request_column_rs(request_ident: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
-            quote! {
-                pub #request_ident: #rs_ty
-            }
-        }
-        fn request_column_setter(request_ident: &Ident) -> proc_macro2::TokenStream {
-            quote! {
-                request.#request_ident
-            }
-        }
-
-        fn response_column_rs(response_ident: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
-            quote! {
-                pub #response_ident: #rs_ty
-            }
-        }
-        fn response_column_getter(
-            response_ident: &Ident,
-            column_ident_sql: (&str, &str),
-        ) -> proc_macro2::TokenStream {
-            let column_alias_sql = make_alias_rs_ident(column_ident_sql);
-            quote! {
-                #response_ident: response.#column_alias_sql
-            }
-        }
-        fn response_table_getter(
-            table_ident: &Ident,
-            columns: &[proc_macro2::TokenStream],
-        ) -> proc_macro2::TokenStream {
-            quote! {
-                #table_ident {
-                    #(#columns),*
-                }
-            }
-        }
-
         let table_request_struct_ident = quote::format_ident!("{}Request", table.ident);
 
-        let table_ident_sql = fmt2::fmt! { { str } => {db.name} "." {table.name} };
-        let db_alias_sql = make_alias(("", &*db.name));
-        let table_alias_sql = make_alias((&*db_alias_sql, &*table.name));
+        let (sql_table_ident, table_alias) = make_ident_and_alias((&*db.name, &*table.name));
 
         let mut create_columns: Vec<(&str, Cow<str>)> = vec![];
 
-        let mut request_columns_rs: Vec<proc_macro2::TokenStream> = vec![];
-        let mut request_columns_setter: Vec<proc_macro2::TokenStream> = vec![];
-        let mut request_columns_sql_create_update: Vec<(&str, &'static str)> = vec![];
-        // let mut request_columns_sql_update: Vec<(&str, &'static str)> = vec![];
+        let mut request_columns: Vec<RequestColumn> = vec![];
 
-        let mut response_columns_rs: Vec<proc_macro2::TokenStream> = vec![];
-        let mut response_columns_getter: Vec<proc_macro2::TokenStream> = vec![];
-        let mut response_columns_sql: Vec<(&str, &str)> = vec![];
+        let mut response_columns: Vec<ResponseColumn> = vec![];
+        let mut expanded_response_columns: Vec<ExpandedResponseColumn> = vec![];
+        // let mut response_columns_rs: Vec<proc_macro2::TokenStream> = vec![];
+        // let mut response_columns_getter: Vec<proc_macro2::TokenStream> = vec![];
+        // let mut response_columns_sql: Vec<(&str, &str)> = vec![];
 
         let mut joins: Vec<String> = vec![];
 
@@ -241,65 +288,79 @@ impl Table {
                 ty: stage2::ColumnTy { virtual_ty, rs_ty },
             } = column;
             let sql_name = &**sql_name;
-            let column_ident_sql = (&*table_alias_sql, sql_name);
+            let (sql_column_ident, column_alias) = make_ident_and_alias((&*table_alias, sql_name));
 
             match virtual_ty {
                 stage2::VirtualTy::Real(real_ty) => {
-                    let sql_ty = real_ty.sql_ty();
-                    create_columns.push((sql_name, sql_ty));
+                    create_columns.push((sql_name, real_ty.sql_ty()));
 
-                    request_columns_rs.push(request_column_rs(request_ident, rs_ty));
-                    request_columns_setter.push(request_column_setter(request_ident));
-                    request_columns_sql_create_update.push((sql_name, "?"));
-                    // let request_column_sql = (sql_name, "?");
-                    // request_columns_sql_create_update.push(request_column_sql);
-                    // request_columns_sql_update.push(request_column_sql);
+                    request_columns.push(RequestColumn {
+                        field: request_column_rs(request_ident, rs_ty),
+                        rs_setter: request_column_setter(request_ident),
+                        sql_setter: sql_name,
+                    });
 
-                    response_columns_rs.push(response_column_rs(response_ident, rs_ty));
-                    response_columns_getter
-                        .push(response_column_getter(response_ident, column_ident_sql));
-                    response_columns_sql.push(column_ident_sql);
+                    response_columns.push(ResponseColumn {
+                        field: response_column_rs(response_ident, rs_ty),
+                        rs_getter: response_column_getter(response_ident, &*column_alias),
+                    });
+                    expanded_response_columns.push(ExpandedResponseColumn {
+                        sql_getter_ident: sql_column_ident,
+                        sql_getter_alias: column_alias,
+                    });
                 }
                 stage2::VirtualTy::Id => {
-                    let sql_ty = stage2::ScalarTy::SQL_TY_ID;
-                    create_columns.push((sql_name, Cow::Borrowed(sql_ty)));
+                    create_columns.push((sql_name, Cow::Borrowed(stage2::ScalarTy::SQL_TY_ID)));
 
-                    response_columns_rs.push(response_column_rs(response_ident, rs_ty));
-                    response_columns_getter
-                        .push(response_column_getter(response_ident, column_ident_sql));
-                    response_columns_sql.push(column_ident_sql);
+                    response_columns.push(ResponseColumn {
+                        field: response_column_rs(response_ident, rs_ty),
+                        rs_getter: response_column_getter(response_ident, &*column_alias),
+                    });
+                    expanded_response_columns.push(ExpandedResponseColumn {
+                        sql_getter_ident: sql_column_ident,
+                        sql_getter_alias: column_alias,
+                    });
                 }
                 stage2::VirtualTy::OnCreate(time_ty) => {
-                    let sql_ty = time_ty.sql_ty_on_create();
-                    create_columns.push((sql_name, Cow::Owned(sql_ty)));
+                    create_columns.push((sql_name, Cow::Owned(time_ty.sql_ty_on_create())));
 
-                    response_columns_rs.push(response_column_rs(response_ident, rs_ty));
-                    response_columns_getter
-                        .push(response_column_getter(response_ident, column_ident_sql));
-                    response_columns_sql.push(column_ident_sql);
+                    response_columns.push(ResponseColumn {
+                        field: response_column_rs(response_ident, rs_ty),
+                        rs_getter: response_column_getter(response_ident, &*column_alias),
+                    });
+                    expanded_response_columns.push(ExpandedResponseColumn {
+                        sql_getter_ident: sql_column_ident,
+                        sql_getter_alias: column_alias,
+                    });
                 }
                 stage2::VirtualTy::OnUpdate(time_ty) => {
-                    let sql_ty = time_ty.sql_ty_on_update();
-                    create_columns.push((sql_name, Cow::Owned(sql_ty)));
+                    create_columns.push((sql_name, Cow::Owned(time_ty.sql_ty_on_update())));
 
-                    response_columns_rs.push(response_column_rs(response_ident, rs_ty));
-                    response_columns_getter
-                        .push(response_column_getter(response_ident, column_ident_sql));
-                    response_columns_sql.push(column_ident_sql);
+                    response_columns.push(ResponseColumn {
+                        field: response_column_rs(response_ident, rs_ty),
+                        rs_getter: response_column_getter(response_ident, &*column_alias),
+                    });
+                    expanded_response_columns.push(ExpandedResponseColumn {
+                        sql_getter_ident: sql_column_ident,
+                        sql_getter_alias: column_alias,
+                    });
                 }
-                stage2::VirtualTy::Foreign(table_ty) => {
+                stage2::VirtualTy::Foreign(foreign_ty) => {
                     let foreign_table = db
-                        .tables
-                        .iter()
-                        .find(|&foreign_table| foreign_table.ident == table_ty.ident)
+                        .find_table(&foreign_ty.ident)
                         .expect("table does not exist");
 
-                    request_columns_rs.push(request_column_rs(request_ident, &rs_ty_foreign_id()));
-                    request_columns_setter.push(request_column_setter(request_ident));
-                    request_columns_sql_create_update.push((sql_name, "?"));
-                    // let request_column_sql = (sql_name, "?");
-                    // request_columns_sql_create_update.push(request_column_sql);
-                    // request_columns_sql_update.push(request_column_sql);
+                    let sql_ty = foreign_ty.sql_ty(
+                        &make_ident((&*db.name, &*foreign_table.name)),
+                        &*foreign_table.id_ident,
+                    );
+                    create_columns.push((sql_name, Cow::Owned(sql_ty)));
+
+                    request_columns.push(RequestColumn {
+                        field: request_column_rs(request_ident, rs_ty),
+                        rs_setter: request_column_setter(request_ident),
+                        sql_setter: sql_name,
+                    });
 
                     // for foreign_column in &foreign_table.columns {}
                 }
@@ -308,47 +369,51 @@ impl Table {
 
         let response_table_getter = response_table_getter(&table.ident, &response_columns_getter);
 
+        let sql_table_id_ident = make_ident((&*table_alias, &*table.id_ident));
+
         let migration_up = fmt2::fmt! { { str } =>
-            "CREATE TABLE IF NOT EXISTS " {table_ident_sql} " ("
+            "CREATE TABLE IF NOT EXISTS " {sql_table_ident} " ("
                 @..join(create_columns => "," => |c| {c.0} " " {c.1})
             ");"
         };
         let migration_down = fmt2::fmt! { { str } =>
-            "DROP TABLE " {table_ident_sql} ";"
+            "DROP TABLE " {sql_table_ident} ";"
         };
 
         let get_all = fmt2::fmt! { { str } =>
             "SELECT "
-            @..join(response_columns_sql => "," => |c| {c.0} "." {c.1} " AS " {c.0} "__" {c.1})
-            " FROM " {table_ident_sql} " AS " {table_alias_sql}
+            @..join(expanded_response_columns => "," => |c| {c.sql_getter_ident} " AS " {c.sql_getter_alias})
+            " FROM " {sql_table_ident} " AS " {table_alias}
             @..(joins => |join| " " {join})
         };
         let get_one = fmt2::fmt! { { str } =>
-            {get_all} " WHERE " {table_alias_sql} "." {table.id_ident;std} "=?"
+            {get_all} " WHERE " {sql_table_id_ident} "=?"
         };
 
         let create_one = fmt2::fmt! { { str } =>
-            "INSERT INTO " {table_ident_sql} " ("
-                @..join(&request_columns_sql_create_update => "," => |c| {c.0})
+            "INSERT INTO " {sql_table_ident} " ("
+                @..join(&request_columns => "," => |c| {c.sql_setter})
             ") VALUES ("
-                @..join(&request_columns_sql_create_update => "," => |c| {c.1})
+                @..join(&request_columns => "," => |_c| "?")
             ")"
         };
         let update_one = fmt2::fmt! { { str } =>
-            "UPDATE " {table_ident_sql} " SET "
-            @..join(&request_columns_sql_create_update => "," => |c| {c.0} "=" {c.1})
-            // @..join(&request_columns_sql_update => "," => |c| {c.0} "=" {c.1})
-            " WHERE " {table.id_ident;std} "=?"
+            "UPDATE " {sql_table_ident} " SET "
+            @..join(&request_columns => "," => |c| {c.sql_setter} "=?")
+            " WHERE " {table.id_ident} "=?"
         };
         let delete_one = fmt2::fmt! { { str } =>
-            "DELETE FROM " {table_ident_sql}
-            " WHERE " {table.id_ident;std} "=?"
+            "DELETE FROM " {sql_table_ident}
+            " WHERE " {table.id_ident} "=?"
         };
 
-        let doc = fmt2::fmt! { { str } => "`" {table_ident_sql} "`"};
+        let doc = fmt2::fmt! { { str } => "`" {sql_table_ident} "`"};
 
         let table_ident = &table.ident;
         let db_ident = &db.ident;
+        let response_columns_fields = response_columns.iter().map(|c| &c.field);
+        let request_columns_fields = request_columns.iter().map(|c| &c.field);
+        let request_columns_setters = request_columns.iter().map(|c| &c.rs_setter);
 
         let controller_ts = if table.auto_impl_controller {
             quote! {
@@ -363,12 +428,12 @@ impl Table {
             #[doc = #doc]
             #[derive(::serde::Serialize)]
             pub struct #table_ident {
-                #(#response_columns_rs),*
+                #(#response_columns_fields),*
             }
 
             #[derive(::serde::Deserialize)]
             pub struct #table_request_struct_ident {
-                #(#request_columns_rs),*
+                #(#request_columns_fields),*
             }
 
             impl ::laraxum::Db<#table_ident> for #db_ident {}
@@ -420,7 +485,7 @@ impl Table {
                 {
                     let response = ::sqlx::query!(
                         #create_one,
-                        #(#request_columns_setter,)*
+                        #(#request_columns_setters,)*
                     )
                         .execute(&db.pool)
                         .await?;
@@ -438,7 +503,7 @@ impl Table {
                 ) -> ::core::result::Result::<(), ::laraxum::Error> {
                     ::sqlx::query!(
                         #update_one,
-                        #(#request_columns_setter,)*
+                        #(#request_columns_setters,)*
                         id,
                     )
                         .execute(&db.pool)
