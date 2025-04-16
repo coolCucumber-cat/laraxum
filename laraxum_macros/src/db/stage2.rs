@@ -101,27 +101,32 @@ impl From<stage1::RealTy> for RealTy {
     }
 }
 
-enum AutoTimeAttr {
+pub enum AutoTimeEvent {
     OnCreate,
     OnUpdate,
 }
 
-enum ColumnAttrNotForeign {
+pub struct AutoTimeTy {
+    pub ty: TimeScalarTy,
+    pub event: AutoTimeEvent,
+}
+
+enum ColumnAttrInner {
     None,
     Id,
     String(StringScalarTy),
-    AutoTime(AutoTimeAttr),
+    AutoTime(AutoTimeEvent),
 }
 
 enum ColumnAttr {
     Foreign,
-    NotForeign(ColumnAttrNotForeign),
+    Inner(ColumnAttrInner),
 }
 
 impl ColumnAttr {
-    const DEFAULT: Self = Self::NotForeign(ColumnAttrNotForeign::None);
+    const DEFAULT: Self = Self::Inner(ColumnAttrInner::None);
     fn set(&mut self, attr: Self, ident: &Ident) -> syn::Result<()> {
-        if matches!(self, Self::NotForeign(ColumnAttrNotForeign::None)) {
+        if matches!(self, Self::Inner(ColumnAttrInner::None)) {
             *self = attr;
             Ok(())
         } else {
@@ -133,12 +138,15 @@ impl ColumnAttr {
     }
 }
 
-pub enum VirtualTy {
+pub enum VirtualTyInner {
     Id,
     Real(RealTy),
+    AutoTime(AutoTimeTy),
+}
+
+pub enum VirtualTy {
     Foreign(ForeignTy),
-    OnCreate(TimeScalarTy),
-    OnUpdate(TimeScalarTy),
+    Inner(VirtualTyInner),
 }
 
 pub struct ColumnTy {
@@ -156,11 +164,13 @@ impl ColumnTy {
                 let foreign_ty = ForeignTy::try_from(&rs_ty)?;
                 VirtualTy::Foreign(foreign_ty)
             }
-            ColumnAttr::NotForeign(attr) => {
-                use ColumnAttrNotForeign as CANF;
+            ColumnAttr::Inner(attr) => {
+                use ColumnAttrInner as CANF;
                 let stage1_real_ty = stage1::RealTy::try_from(&rs_ty)?;
                 match attr {
-                    CANF::None => VirtualTy::Real(RealTy::from(stage1_real_ty)),
+                    CANF::None => {
+                        VirtualTy::Inner(VirtualTyInner::Real(RealTy::from(stage1_real_ty)))
+                    }
                     CANF::Id => {
                         let stage1::RealTy {
                             ty: stage1::ScalarTy::u64,
@@ -172,7 +182,7 @@ impl ColumnTy {
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         };
-                        VirtualTy::Id
+                        VirtualTy::Inner(VirtualTyInner::Id)
                     }
                     CANF::String(ty) => {
                         let stage1::RealTy {
@@ -182,12 +192,12 @@ impl ColumnTy {
                         else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
                         };
-                        VirtualTy::Real(RealTy {
+                        VirtualTy::Inner(VirtualTyInner::Real(RealTy {
                             ty: ScalarTy::String(ty),
                             optional,
-                        })
+                        }))
                     }
-                    CANF::AutoTime(auto_time_attr) => {
+                    CANF::AutoTime(event) => {
                         let stage1::RealTy { ty, optional } = stage1_real_ty;
                         let ty = ScalarTy::from(ty);
                         let ScalarTy::Time(ty) = ty else {
@@ -196,10 +206,7 @@ impl ColumnTy {
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         };
-                        match auto_time_attr {
-                            AutoTimeAttr::OnCreate => VirtualTy::OnCreate(ty),
-                            AutoTimeAttr::OnUpdate => VirtualTy::OnUpdate(ty),
-                        }
+                        VirtualTy::Inner(VirtualTyInner::AutoTime(AutoTimeTy { ty, event }))
                     }
                 }
             }
@@ -238,41 +245,38 @@ impl TryFrom<stage1::Column> for Column {
 
         let mut attr = ColumnAttr::DEFAULT;
         if stage1_attrs.id {
-            attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::Id),
-                &response_ident,
-            )?;
+            attr.set(ColumnAttr::Inner(ColumnAttrInner::Id), &response_ident)?;
         };
         if stage1_attrs.foreign {
             attr.set(ColumnAttr::Foreign, &response_ident)?;
         };
         if stage1_attrs.on_create {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeAttr::OnCreate)),
+                ColumnAttr::Inner(ColumnAttrInner::AutoTime(AutoTimeEvent::OnCreate)),
                 &response_ident,
             )?;
         };
         if stage1_attrs.on_update {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::AutoTime(AutoTimeAttr::OnUpdate)),
+                ColumnAttr::Inner(ColumnAttrInner::AutoTime(AutoTimeEvent::OnUpdate)),
                 &response_ident,
             )?;
         };
         if let Some(len) = stage1_attrs.varchar {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringScalarTy::Varchar(len))),
+                ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Varchar(len))),
                 &response_ident,
             )?;
         };
         if let Some(len) = stage1_attrs.char {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringScalarTy::Char(len))),
+                ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Char(len))),
                 &response_ident,
             )?;
         };
         if stage1_attrs.text {
             attr.set(
-                ColumnAttr::NotForeign(ColumnAttrNotForeign::String(StringScalarTy::Text)),
+                ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Text)),
                 &response_ident,
             )?;
         };
@@ -323,7 +327,7 @@ impl TryFrom<stage1::Table> for Table {
         let mut id_ident = None;
         let columns = columns.into_iter().map(|stage1_column| {
             let column = Column::try_from(stage1_column)?;
-            if matches!(column.ty.virtual_ty, VirtualTy::Id) {
+            if matches!(column.ty.virtual_ty, VirtualTy::Inner(VirtualTyInner::Id)) {
                 if id_ident.is_some() {
                     return Err(syn::Error::new(
                         column.response_ident.span(),
