@@ -69,7 +69,7 @@ macro_rules! ty_enum {
 
 ty_enum! {
     #[allow(non_camel_case_types)]
-    #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(PartialEq, Eq)]
     pub enum ScalarTy {
         String => String,
         bool => bool,
@@ -112,7 +112,6 @@ ty_enum! {
     // pub mod scalar_ty;
 }
 
-#[derive(Clone)]
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
@@ -127,9 +126,8 @@ impl TryFrom<&Type> for RealTy {
     }
 }
 
-#[derive(Clone)]
 pub struct ForeignTy {
-    pub ident: Ident,
+    pub ty: Ident,
     pub optional: bool,
 }
 
@@ -138,7 +136,10 @@ impl TryFrom<&Type> for ForeignTy {
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(rs_ty);
         let ident = parse_ident_from_ty(ty)?.clone();
-        Ok(Self { ident, optional })
+        Ok(Self {
+            ty: ident,
+            optional,
+        })
     }
 }
 
@@ -154,11 +155,9 @@ pub struct ColumnAttrs {
     pub char: Option<StringLen>,
     pub text: bool,
 
-    pub request_ident: Option<Ident>,
-
-    pub sql_name: Option<String>,
-
-    pub response: Option<Expr>,
+    pub rename: Option<String>,
+    pub request_rename: Option<Ident>,
+    pub transform_response: Option<Expr>,
 
     // forwarded attrs
     pub attrs: Vec<Attribute>,
@@ -203,11 +202,13 @@ impl TryFrom<Field> for Column {
 
 #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
 #[derive(darling::FromAttributes)]
-#[darling(attributes(db), forward_attrs(allow, doc, cfg))]
+#[darling(attributes(db), forward_attrs(allow, doc, cfg, serde))]
 pub struct TableAttrs {
-    #[darling(default, rename = "auto")]
-    pub auto_impl_controller: bool,
-    pub sql_name: Option<String>,
+    #[darling(default)]
+    pub model: bool,
+    #[darling(default)]
+    pub controller: bool,
+    pub rename: Option<String>,
 
     pub attrs: Vec<Attribute>,
 }
@@ -254,7 +255,7 @@ impl TryFrom<Item> for Table {
 
 #[derive(darling::FromMeta)]
 pub struct DbAttr {
-    pub name: Option<String>,
+    pub rename: Option<String>,
 }
 
 impl TryFrom<proc_macro2::TokenStream> for DbAttr {
@@ -328,8 +329,9 @@ mod tests {
             table_attr,
             TableAttrs {
                 attrs: vec![],
-                auto_impl_controller: false,
-                sql_name: Some("groups".into())
+                controller: false,
+                model: false,
+                rename: Some("groups".into())
             }
         );
     }

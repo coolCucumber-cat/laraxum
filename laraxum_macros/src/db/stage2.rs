@@ -7,19 +7,20 @@ use super::stage1::{self};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
+const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
 const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "must be string";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "must not be null";
 const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have conflicting types";
 
-#[derive(Copy, Clone)]
+// #[derive(Copy, Clone)]
 pub enum StringScalarTy {
     Varchar(stage1::StringLen),
     Char(stage1::StringLen),
     Text,
 }
 
-#[derive(Copy, Clone)]
+// #[derive(Copy, Clone)]
 pub enum TimeScalarTy {
     ChronoDateTimeUtc,
     ChronoDateTimeLocal,
@@ -36,7 +37,7 @@ pub enum TimeScalarTy {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone)]
+// #[derive(Copy, Clone)]
 pub enum ScalarTy {
     bool,
     u8,
@@ -86,7 +87,7 @@ impl From<stage1::ScalarTy> for ScalarTy {
     }
 }
 
-#[derive(Copy, Clone)]
+// #[derive(Copy, Clone)]
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
@@ -216,12 +217,12 @@ impl ColumnTy {
 }
 
 pub struct Column {
-    /// the name for the column in the response
-    pub response_ident: Ident,
-    /// the name for the column in the request
-    pub request_ident: Ident,
     /// the name for the column in the database
-    pub sql_name: String,
+    pub name: String,
+    /// the name for the column in the response
+    pub response_name: Ident,
+    /// the name for the column in the request
+    pub request_name: Ident,
     /// the type of the column
     pub ty: ColumnTy,
 }
@@ -230,79 +231,81 @@ impl TryFrom<stage1::Column> for Column {
     type Error = syn::Error;
     fn try_from(stage1_column: stage1::Column) -> Result<Self, Self::Error> {
         let stage1::Column {
-            ident: response_ident,
+            ident: response_name,
             ty: rs_ty,
             attrs: stage1_attrs,
         } = stage1_column;
 
-        let request_ident = stage1_attrs
-            .request_ident
-            .unwrap_or_else(|| response_ident.clone());
+        let request_name = stage1_attrs
+            .request_rename
+            .unwrap_or_else(|| response_name.clone());
 
-        let sql_name = stage1_attrs
-            .sql_name
-            .unwrap_or_else(|| request_ident.to_string());
+        let name = stage1_attrs
+            .rename
+            .unwrap_or_else(|| request_name.to_string());
 
         let mut attr = ColumnAttr::DEFAULT;
         if stage1_attrs.id {
-            attr.set(ColumnAttr::Inner(ColumnAttrInner::Id), &response_ident)?;
+            attr.set(ColumnAttr::Inner(ColumnAttrInner::Id), &response_name)?;
         };
         if stage1_attrs.foreign {
-            attr.set(ColumnAttr::Foreign, &response_ident)?;
+            attr.set(ColumnAttr::Foreign, &response_name)?;
         };
         if stage1_attrs.on_create {
             attr.set(
                 ColumnAttr::Inner(ColumnAttrInner::AutoTime(AutoTimeEvent::OnCreate)),
-                &response_ident,
+                &response_name,
             )?;
         };
         if stage1_attrs.on_update {
             attr.set(
                 ColumnAttr::Inner(ColumnAttrInner::AutoTime(AutoTimeEvent::OnUpdate)),
-                &response_ident,
+                &response_name,
             )?;
         };
         if let Some(len) = stage1_attrs.varchar {
             attr.set(
                 ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Varchar(len))),
-                &response_ident,
+                &response_name,
             )?;
         };
         if let Some(len) = stage1_attrs.char {
             attr.set(
                 ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Char(len))),
-                &response_ident,
+                &response_name,
             )?;
         };
         if stage1_attrs.text {
             attr.set(
                 ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Text)),
-                &response_ident,
+                &response_name,
             )?;
         };
 
         let ty = ColumnTy::try_from_attr_and_ty(attr, rs_ty)?;
 
         Ok(Self {
-            response_ident,
-            request_ident,
-            sql_name,
+            response_name,
+            request_name,
+            name,
             ty,
         })
     }
 }
 
 pub struct Table {
-    /// the name for the table struct, for example `Customer`
-    pub ident: Ident,
     /// the name for the sql table, for example `customers`
     pub name: String,
+    /// the name for the table struct, for example `Customer`
+    pub ty: Ident,
     /// the columns in the database
     pub columns: Vec<Column>,
     /// the name for the id of the table, for example `CustomerId`
-    pub id_ident: String,
-    /// automatically implement the controller as well as the model, using the db as the state
-    pub auto_impl_controller: bool,
+    pub id_name: String,
+    /// automatically implement the model
+    pub model: bool,
+    /// automatically implement the controller (model must be implemented), using the db as the state
+    pub controller: bool,
     /// vis
     pub vis: Visibility,
 }
@@ -311,18 +314,23 @@ impl TryFrom<stage1::Table> for Table {
     type Error = syn::Error;
     fn try_from(stage1_table: stage1::Table) -> Result<Self, Self::Error> {
         let stage1::Table {
-            ident,
+            ident: ty,
             columns,
             attrs:
                 stage1::TableAttrs {
-                    auto_impl_controller,
-                    sql_name: name,
+                    controller,
+                    model,
+                    rename: name,
                     attrs: _,
                 },
             vis,
         } = stage1_table;
 
-        let name = name.unwrap_or_else(|| ident.to_string());
+        if controller && !model {
+            return Err(syn::Error::new(ty.span(), TABLE_MUST_IMPLEMENT_MODEL));
+        }
+
+        let name = name.unwrap_or_else(|| ty.to_string());
 
         let mut id_ident = None;
         let columns = columns.into_iter().map(|stage1_column| {
@@ -330,35 +338,36 @@ impl TryFrom<stage1::Table> for Table {
             if matches!(column.ty.virtual_ty, VirtualTy::Inner(VirtualTyInner::Id)) {
                 if id_ident.is_some() {
                     return Err(syn::Error::new(
-                        column.response_ident.span(),
+                        column.response_name.span(),
                         TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
                     ));
                 }
-                id_ident = Some(column.sql_name.clone());
+                id_ident = Some(column.name.clone());
             }
             Ok(column)
         });
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
 
-        let id_ident = id_ident.ok_or_else(|| syn::Error::new(ident.span(), TABLE_MUST_HAVE_ID))?;
+        let id_name = id_ident.ok_or_else(|| syn::Error::new(ty.span(), TABLE_MUST_HAVE_ID))?;
 
         Ok(Self {
-            ident,
             name,
+            ty,
             columns,
-            id_ident,
-            auto_impl_controller,
+            id_name,
+            model,
+            controller,
             vis,
         })
     }
 }
 
 pub struct Db {
-    /// the name for the database module, for example `db`
-    pub ident: Ident,
     /// the name of the database
     pub name: String,
+    /// the name for the database module, for example `db`
+    pub ident: Ident,
     /// the tables in the database
     pub tables: Vec<Table>,
     /// vis
@@ -370,7 +379,7 @@ impl Db {
         stage1_db: stage1::Db,
         stage1_db_attr: stage1::DbAttr,
     ) -> syn::Result<Self> {
-        let stage1::DbAttr { name } = stage1_db_attr;
+        let stage1::DbAttr { rename: name } = stage1_db_attr;
         let stage1::Db { ident, tables, vis } = stage1_db;
 
         let name = name.unwrap_or_else(|| ident.to_string());
@@ -389,5 +398,5 @@ impl Db {
 }
 
 pub fn find_table<'a>(tables: &'a [Table], ident: &Ident) -> Option<&'a Table> {
-    tables.iter().find(|table| &table.ident == ident)
+    tables.iter().find(|table| &table.ty == ident)
 }
