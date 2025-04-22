@@ -2,7 +2,7 @@ use crate::utils::syn::{is_type_optional, parse_ident_from_ty};
 
 use darling::{FromAttributes, FromMeta};
 use syn::{
-    Attribute, Expr, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
+    Attribute, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
     parse::Parse, spanned::Spanned,
 };
 
@@ -155,9 +155,9 @@ pub struct ColumnAttrs {
     pub char: Option<StringLen>,
     pub text: bool,
 
-    pub rename: Option<String>,
-    pub request_rename: Option<Ident>,
-    pub transform_response: Option<Expr>,
+    pub name: Option<String>,
+    pub request_name: Option<Ident>,
+    // pub transform_response: Option<Expr>,
 
     // forwarded attrs
     pub attrs: Vec<Attribute>,
@@ -208,7 +208,7 @@ pub struct TableAttrs {
     pub model: bool,
     #[darling(default)]
     pub controller: bool,
-    pub rename: Option<String>,
+    pub name: Option<String>,
 
     pub attrs: Vec<Attribute>,
 }
@@ -255,7 +255,7 @@ impl TryFrom<Item> for Table {
 
 #[derive(darling::FromMeta)]
 pub struct DbAttr {
-    pub rename: Option<String>,
+    pub name: Option<String>,
 }
 
 impl TryFrom<proc_macro2::TokenStream> for DbAttr {
@@ -331,7 +331,7 @@ mod tests {
                 attrs: vec![],
                 controller: false,
                 model: false,
-                rename: Some("groups".into())
+                name: Some("groups".into())
             }
         );
     }

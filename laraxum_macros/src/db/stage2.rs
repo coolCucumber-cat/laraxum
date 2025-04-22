@@ -13,14 +13,12 @@ const COLUMN_MUST_BE_STRING: &str = "must be string";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "must not be null";
 const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have conflicting types";
 
-// #[derive(Copy, Clone)]
 pub enum StringScalarTy {
     Varchar(stage1::StringLen),
     Char(stage1::StringLen),
     Text,
 }
 
-// #[derive(Copy, Clone)]
 pub enum TimeScalarTy {
     ChronoDateTimeUtc,
     ChronoDateTimeLocal,
@@ -37,7 +35,6 @@ pub enum TimeScalarTy {
 }
 
 #[allow(non_camel_case_types)]
-// #[derive(Copy, Clone)]
 pub enum ScalarTy {
     bool,
     u8,
@@ -87,7 +84,6 @@ impl From<stage1::ScalarTy> for ScalarTy {
     }
 }
 
-// #[derive(Copy, Clone)]
 pub struct RealTy {
     pub ty: ScalarTy,
     pub optional: bool,
@@ -145,9 +141,24 @@ pub enum VirtualTyInner {
     AutoTime(AutoTimeTy),
 }
 
+impl VirtualTyInner {
+    pub fn optional(&self) -> bool {
+        matches!(self, Self::Real(real_ty) if real_ty.optional)
+    }
+}
+
 pub enum VirtualTy {
     Foreign(ForeignTy),
     Inner(VirtualTyInner),
+}
+
+impl VirtualTy {
+    pub fn optional(&self) -> bool {
+        match self {
+            Self::Foreign(foreign) => foreign.optional,
+            Self::Inner(inner) => inner.optional(),
+        }
+    }
 }
 
 pub struct ColumnTy {
@@ -237,11 +248,11 @@ impl TryFrom<stage1::Column> for Column {
         } = stage1_column;
 
         let request_name = stage1_attrs
-            .request_rename
+            .request_name
             .unwrap_or_else(|| response_name.clone());
 
         let name = stage1_attrs
-            .rename
+            .name
             .unwrap_or_else(|| request_name.to_string());
 
         let mut attr = ColumnAttr::DEFAULT;
@@ -320,7 +331,7 @@ impl TryFrom<stage1::Table> for Table {
                 stage1::TableAttrs {
                     controller,
                     model,
-                    rename: name,
+                    name,
                     attrs: _,
                 },
             vis,
@@ -379,7 +390,7 @@ impl Db {
         stage1_db: stage1::Db,
         stage1_db_attr: stage1::DbAttr,
     ) -> syn::Result<Self> {
-        let stage1::DbAttr { rename: name } = stage1_db_attr;
+        let stage1::DbAttr { name } = stage1_db_attr;
         let stage1::Db { ident, tables, vis } = stage1_db;
 
         let name = name.unwrap_or_else(|| ident.to_string());
