@@ -193,17 +193,39 @@ impl stage2::ForeignTy {
 }
 
 impl stage2::VirtualTyInner {
-    fn transform_response(
-        &self,
-        token_stream: proc_macro2::TokenStream,
-    ) -> Option<proc_macro2::TokenStream> {
-        match self {
+    // fn transform_response_inner(
+    //     &self,
+    //     token_stream: proc_macro2::TokenStream,
+    // ) -> Option<proc_macro2::TokenStream> {
+    //     match self {
+    //         #[cfg(feature = "mysql")]
+    //         Self::Real(stage2::RealTy {
+    //             ty: stage2::ScalarTy::bool,
+    //             optional: _,
+    //         }) => Some(quote! { #token_stream != 0 }),
+    //         _ => None,
+    //     }
+    // }
+    fn transform_response(&self, expr: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let transform = match self {
             #[cfg(feature = "mysql")]
             Self::Real(stage2::RealTy {
                 ty: stage2::ScalarTy::bool,
                 optional: _,
-            }) => Some(quote! { #token_stream != 0 }),
+            }) => Some(|ts| quote! { #ts != 0 }),
             _ => None,
+        };
+
+        if let Some(transform) = transform {
+            if self.optional() {
+                let var_name = quote! { val };
+                let transformed = transform(&var_name);
+                quote! { ::core::option::Option::map(#expr, |#var_name| #transformed) }
+            } else {
+                transform(&expr)
+            }
+        } else {
+            expr
         }
     }
 }
@@ -256,14 +278,13 @@ impl Table {
             name_extern: &str,
             ty: &stage2::VirtualTyInner,
         ) -> proc_macro2::TokenStream {
-            let name_extern = from_str_to_rs_ident(name_extern);
-            quote! { response.#name_extern }
+            ty.transform_response(response_column_getter_inner(name_extern))
         }
         fn response_column_getter_foreign(
             name_extern: &str,
             ty: &stage2::VirtualTyInner,
         ) -> proc_macro2::TokenStream {
-            let getter = response_column_getter(name_extern);
+            let getter = response_column_getter_inner(name_extern);
             if ty.optional() {
                 getter
             } else {
