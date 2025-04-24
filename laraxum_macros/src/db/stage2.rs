@@ -1,16 +1,17 @@
-use syn::{Ident, Type, Visibility, spanned::Spanned};
+use super::stage1;
+pub use super::stage1::ForeignTy;
 
 use crate::utils::collections::TryCollectAll;
 
-pub use super::stage1::ForeignTy;
-use super::stage1::{self};
+use syn::{Ident, Type, Visibility, spanned::Spanned};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
 const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
 const ID_MUST_BE_U64: &str = "id must be u64";
-const COLUMN_MUST_BE_STRING: &str = "must be string";
-const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "must not be null";
+const COLUMN_MUST_BE_STRING: &str = "column must be string";
+const COLUMN_MUST_BE_TIME: &str = "column must be time";
+const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
 const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have conflicting types";
 
 pub enum StringScalarTy {
@@ -213,7 +214,7 @@ impl ColumnTy {
                         let stage1::RealTy { ty, optional } = stage1_real_ty;
                         let ty = ScalarTy::from(ty);
                         let ScalarTy::Time(ty) = ty else {
-                            return Err(syn::Error::new(rs_ty.span(), ""));
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_TIME));
                         };
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));

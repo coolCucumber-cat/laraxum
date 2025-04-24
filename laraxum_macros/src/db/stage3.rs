@@ -284,13 +284,14 @@ impl Table {
             name_extern: &str,
             ty: &stage2::VirtualTyInner,
         ) -> proc_macro2::TokenStream {
-            let getter = response_column_getter_inner(name_extern);
+            let expr = response_column_getter_inner(name_extern);
             if ty.optional() {
-                getter
+                ty.transform_response(expr)
             } else {
+                let transform = ty.transform_response(quote! { val });
                 quote! {
-                    if let ::core::option::Option::Some(val) = #getter {
-                        val
+                    if let ::core::option::Option::Some(val) = #expr {
+                        #transform
                     } else {
                         break 'response_block ::core::option::Option::None;
                     }
@@ -356,10 +357,8 @@ impl Table {
 
                 let response_column_getter = match virtual_ty {
                     stage2::VirtualTy::Inner(virtual_ty_inner) => {
-                        let response_column_getter = response_column_getter_foreign(
-                            &column_name_extern,
-                            virtual_ty_inner.optional(),
-                        );
+                        let response_column_getter =
+                            response_column_getter_foreign(&column_name_extern, virtual_ty_inner);
 
                         response_columns_names.push(ResponseColumnName {
                             name_intern: column_name_intern,
@@ -447,8 +446,10 @@ impl Table {
                     }
 
                     response_columns_fields.push(response_column_field(response_ident, rs_ty));
-                    response_columns_getters
-                        .push((response_ident, response_column_getter(&column_name_extern)));
+                    response_columns_getters.push((
+                        response_ident,
+                        response_column_getter(&column_name_extern, virtual_ty_inner),
+                    ));
                     response_columns_names.push(ResponseColumnName {
                         name_intern: column_name_intern,
                         name_extern: column_name_extern,
@@ -533,7 +534,7 @@ impl Table {
                 // "`"
             )
             " FROM " {table_name_intern} " AS " {table_name_extern}
-            @..(joins => |join|
+            @..(joins.iter().rev() => |join|
                 " LEFT JOIN "
                 {join.foreign_table_name_intern} " AS " {join.foreign_table_name_extern}
                 " ON "
@@ -565,7 +566,6 @@ impl Table {
 
         let table_ident = &table.ty;
         let db_ident = &db.ident;
-        // let response_columns_fields = response_columns.iter().map(|c| &c.field);
         let request_columns_fields = request_columns.iter().map(|c| &c.field);
         let request_columns_setters = request_columns.iter().map(|c| &c.setter);
         let request_columns_setter = quote! { #(#request_columns_setters,)* };
