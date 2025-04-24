@@ -12,6 +12,7 @@ const DB_MOD_MUST_NOT_HAVE_ATTRS: &str = "db mod must not have attrs";
 const DB_MOD_MUST_NOT_BE_UNSAFE: &str = "db mod must not be unsafe";
 const TABLE_MUST_BE_STRUCT: &str = "item must be struct";
 const TABLE_MUST_BE_FIELD_STRUCT: &str = "table must be field struct";
+const GENERICS_ARE_NOT_ALLOWED: &str = "generics are not allowed";
 const FIELD_MUST_NOT_HAVE_VIS: &str = "field must not have visibility";
 const FIELD_MUST_NOT_BE_MUT: &str = "field must not be mutable";
 const UNKNOWN_TYPE: &str = "unknown type";
@@ -55,22 +56,13 @@ macro_rules! ty_enum {
                 ::core::result::Result::Err(::syn::Error::new(span, UNKNOWN_TYPE))
             }
         }
-
-        // $(#[$mod_meta])*
-        // $mod_vis mod $mod_ident {
-        //     $(
-        //         $(#[$variant_meta])*
-        //         struct $ident;
-        //
-        //     )*
-        // }
     };
 }
 
 ty_enum! {
     #[allow(non_camel_case_types)]
     #[derive(PartialEq, Eq)]
-    pub enum ScalarTy {
+    pub enum AtomicTy {
         String => String,
         bool => bool,
         u8 => u8,
@@ -108,67 +100,68 @@ ty_enum! {
         /// TIME
         ChronoTimeDelta => chrono::TimeDelta,
     }
-    // ;
-    // pub mod scalar_ty;
 }
 
-pub struct RealTy {
-    pub ty: ScalarTy,
+pub struct ValueTy {
+    pub ty: AtomicTy,
     pub optional: bool,
 }
-
-impl TryFrom<&Type> for RealTy {
+impl TryFrom<&Type> for ValueTy {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(rs_ty);
-        let ty = ScalarTy::try_from(ty)?;
+        let ty = AtomicTy::try_from(ty)?;
         Ok(Self { ty, optional })
     }
 }
 
-pub struct ForeignTy {
+pub struct TyCompound {
     pub ty: Ident,
     pub optional: bool,
 }
-
-impl TryFrom<&Type> for ForeignTy {
+impl TryFrom<&Type> for TyCompound {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
         let (ty, optional) = is_type_optional(rs_ty);
-        let ident = parse_ident_from_ty(ty)?.clone();
-        Ok(Self {
-            ty: ident,
-            optional,
-        })
+        let ty = parse_ident_from_ty(ty)?.clone();
+        Ok(Self { ty, optional })
     }
+}
+
+#[derive(darling::FromMeta)]
+#[darling(default)]
+pub enum ColumnAttrTy {
+    #[darling(rename = "id")]
+    Id,
+    #[darling(rename = "foreign")]
+    Foreign,
+    #[darling(rename = "on_create")]
+    OnCreate,
+    #[darling(rename = "on_update")]
+    OnUpdate,
+    #[darling(rename = "varchar")]
+    Varchar(StringLen),
+    #[darling(rename = "char")]
+    Char(StringLen),
+    #[darling(rename = "text")]
+    Text,
 }
 
 #[derive(darling::FromAttributes, Default)]
 #[darling(attributes(db), forward_attrs(cfg, doc, allow), default)]
-pub struct ColumnAttrs {
-    // type
-    pub id: bool,
-    pub on_update: bool,
-    pub on_create: bool,
-    pub foreign: bool,
-    pub varchar: Option<StringLen>,
-    pub char: Option<StringLen>,
-    pub text: bool,
-
+pub struct ColumnAttr {
+    pub ty: Option<ColumnAttrTy>,
     pub name: Option<String>,
     pub request_name: Option<Ident>,
-    // pub transform_response: Option<Expr>,
 
-    // forwarded attrs
     pub attrs: Vec<Attribute>,
 }
 
 pub struct Column {
     pub ident: Ident,
     pub ty: Type,
-    pub attrs: ColumnAttrs,
+    pub attr: ColumnAttr,
 }
-
 impl TryFrom<Field> for Column {
     type Error = syn::Error;
     fn try_from(field: Field) -> Result<Self, Self::Error> {
@@ -185,25 +178,22 @@ impl TryFrom<Field> for Column {
         let Some(ident) = ident else {
             return Err(syn::Error::new(span, TABLE_MUST_BE_FIELD_STRUCT));
         };
-
         if !matches!(vis, Visibility::Inherited) {
             return Err(syn::Error::new(vis.span(), FIELD_MUST_NOT_HAVE_VIS));
         }
-
         if !matches!(mutability, FieldMutability::None) {
             return Err(syn::Error::new(span, FIELD_MUST_NOT_BE_MUT));
         }
 
-        let attrs = ColumnAttrs::from_attributes(&attrs)?;
-
-        Ok(Self { ident, ty, attrs })
+        let attr = ColumnAttr::from_attributes(&attrs)?;
+        Ok(Self { ident, ty, attr })
     }
 }
 
 #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
 #[derive(darling::FromAttributes)]
 #[darling(attributes(db), forward_attrs(allow, doc, cfg, serde))]
-pub struct TableAttrs {
+pub struct TableAttr {
     #[darling(default)]
     pub model: bool,
     #[darling(default)]
@@ -216,7 +206,7 @@ pub struct TableAttrs {
 pub struct Table {
     pub ident: Ident,
     pub columns: Vec<Column>,
-    pub attrs: TableAttrs,
+    pub attr: TableAttr,
     pub vis: Visibility,
 }
 
@@ -231,14 +221,25 @@ impl TryFrom<Item> for Table {
             vis,
             struct_token: _,
             ident,
-            generics: _,
+            generics,
             fields,
             semi_token: _,
         } = item_struct;
 
-        let attrs = TableAttrs::from_attributes(&attrs)?;
+        let attr = TableAttr::from_attributes(&attrs)?;
 
-        // TODO: check theres no generics
+        if !generics.params.is_empty() {
+            return Err(syn::Error::new(
+                generics.params.span(),
+                GENERICS_ARE_NOT_ALLOWED,
+            ));
+        }
+        if let Some(where_clause) = generics.where_clause {
+            return Err(syn::Error::new(
+                where_clause.span(),
+                GENERICS_ARE_NOT_ALLOWED,
+            ));
+        }
 
         let columns = fields.into_iter().map(Column::try_from);
         let columns: Result<Vec<Column>, syn::Error> = columns.collect();
@@ -247,7 +248,7 @@ impl TryFrom<Item> for Table {
         Ok(Self {
             ident,
             columns,
-            attrs,
+            attr,
             vis,
         })
     }
@@ -262,8 +263,8 @@ impl TryFrom<proc_macro2::TokenStream> for DbAttr {
     type Error = syn::Error;
     fn try_from(input: proc_macro2::TokenStream) -> Result<Self, Self::Error> {
         let metas = darling::ast::NestedMeta::parse_meta_list(input)?;
-        let db_attr = Self::from_list(&metas)?;
-        Ok(db_attr)
+        let attr = Self::from_list(&metas)?;
+        Ok(attr)
     }
 }
 
@@ -319,15 +320,13 @@ impl Parse for Db {
 mod tests {
     use super::*;
 
-    use syn::Attribute;
-
     #[test]
     fn table_attr() {
         let attr: Attribute = syn::parse_quote!(#[db(name = "groups")]);
-        let table_attr = TableAttrs::from_attributes(&[attr]).unwrap();
+        let table_attr = TableAttr::from_attributes(&[attr]).unwrap();
         assert_eq!(
             table_attr,
-            TableAttrs {
+            TableAttr {
                 attrs: vec![],
                 controller: false,
                 model: false,

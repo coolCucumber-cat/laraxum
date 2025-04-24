@@ -38,7 +38,7 @@ fn rs_ty_foreign_id(optional: bool) -> Type {
     }
 }
 
-impl stage2::StringScalarTy {
+impl stage2::AtomicTyString {
     fn sql_ty(&self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
         match self {
@@ -49,7 +49,7 @@ impl stage2::StringScalarTy {
     }
 }
 
-impl stage2::TimeScalarTy {
+impl stage2::AtomicTyTime {
     fn sql_ty(&self) -> &'static str {
         TimeScalarTy::from(self).sql_ty
     }
@@ -59,32 +59,32 @@ struct TimeScalarTy {
     sql_ty: &'static str,
     sql_current_time_func: &'static str,
 }
-impl From<&stage2::TimeScalarTy> for TimeScalarTy {
-    fn from(stage2_time_scalar_ty: &stage2::TimeScalarTy) -> Self {
+impl From<&stage2::AtomicTyTime> for TimeScalarTy {
+    fn from(stage2_time_scalar_ty: &stage2::AtomicTyTime) -> Self {
         #[cfg(feature = "mysql")]
         match stage2_time_scalar_ty {
-            stage2::TimeScalarTy::ChronoDateTimeUtc => Self {
+            stage2::AtomicTyTime::ChronoDateTimeUtc => Self {
                 sql_ty: "TIMESTAMP",
                 sql_current_time_func: "UTC_TIMESTAMP()",
             },
-            stage2::TimeScalarTy::ChronoDateTimeLocal
-            | stage2::TimeScalarTy::TimeOffsetDateTime => Self {
+            stage2::AtomicTyTime::ChronoDateTimeLocal
+            | stage2::AtomicTyTime::TimeOffsetDateTime => Self {
                 sql_ty: "TIMESTAMP",
                 sql_current_time_func: "CURRENT_TIMESTAMP()",
             },
-            stage2::TimeScalarTy::ChronoNaiveDateTime
-            | stage2::TimeScalarTy::TimePrimitiveDateTime => Self {
+            stage2::AtomicTyTime::ChronoNaiveDateTime
+            | stage2::AtomicTyTime::TimePrimitiveDateTime => Self {
                 sql_ty: "DATETIME",
                 sql_current_time_func: "CURRENT_TIMESTAMP()",
             },
-            stage2::TimeScalarTy::ChronoNaiveDate | stage2::TimeScalarTy::TimeDate => Self {
+            stage2::AtomicTyTime::ChronoNaiveDate | stage2::AtomicTyTime::TimeDate => Self {
                 sql_ty: "DATE",
                 sql_current_time_func: "CURRENT_DATE()",
             },
-            stage2::TimeScalarTy::ChronoNaiveTime
-            | stage2::TimeScalarTy::TimeTime
-            | stage2::TimeScalarTy::ChronoTimeDelta
-            | stage2::TimeScalarTy::TimeDuration => Self {
+            stage2::AtomicTyTime::ChronoNaiveTime
+            | stage2::AtomicTyTime::TimeTime
+            | stage2::AtomicTyTime::ChronoTimeDelta
+            | stage2::AtomicTyTime::TimeDuration => Self {
                 sql_ty: "TIME",
                 sql_current_time_func: "CURRENT_TIME()",
             },
@@ -92,7 +92,7 @@ impl From<&stage2::TimeScalarTy> for TimeScalarTy {
     }
 }
 
-impl stage2::ScalarTy {
+impl stage2::AtomicTy {
     fn sql_ty(&self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
         {
@@ -150,14 +150,14 @@ impl stage2::ScalarTy {
     }
 }
 
-impl stage2::RealTy {
+impl stage2::TyElementValue {
     fn sql_ty(&self) -> Cow<'static, str> {
         let sql_ty = self.ty.sql_ty();
         make_maybe_optional(sql_ty, self.optional)
     }
 }
 
-impl stage2::AutoTimeTy {
+impl stage2::TyElementAutoTime {
     fn sql_ty(&self) -> String {
         let time_scalar_ty = TimeScalarTy::from(&self.ty);
         let mut auto_time_ty = make_not_optional(time_scalar_ty.sql_ty);
@@ -180,7 +180,7 @@ const SQL_TY_ID: &str = {
     }
 };
 
-impl stage2::ForeignTy {
+impl stage2::TyCompound {
     fn sql_ty(&self, table_name: &str, table_id_name: &str) -> String {
         #[cfg(feature = "mysql")]
         {
@@ -192,25 +192,12 @@ impl stage2::ForeignTy {
     }
 }
 
-impl stage2::VirtualTyInner {
-    // fn transform_response_inner(
-    //     &self,
-    //     token_stream: proc_macro2::TokenStream,
-    // ) -> Option<proc_macro2::TokenStream> {
-    //     match self {
-    //         #[cfg(feature = "mysql")]
-    //         Self::Real(stage2::RealTy {
-    //             ty: stage2::ScalarTy::bool,
-    //             optional: _,
-    //         }) => Some(quote! { #token_stream != 0 }),
-    //         _ => None,
-    //     }
-    // }
+impl stage2::TyElement {
     fn transform_response(&self, expr: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let transform = match self {
             #[cfg(feature = "mysql")]
-            Self::Real(stage2::RealTy {
-                ty: stage2::ScalarTy::bool,
+            Self::Value(stage2::TyElementValue {
+                ty: stage2::AtomicTy::bool,
                 optional: _,
             }) => Some(|ts| quote! { #ts != 0 }),
             _ => None,
@@ -276,13 +263,13 @@ impl Table {
         }
         fn response_column_getter(
             name_extern: &str,
-            ty: &stage2::VirtualTyInner,
+            ty: &stage2::TyElement,
         ) -> proc_macro2::TokenStream {
             ty.transform_response(response_column_getter_inner(name_extern))
         }
         fn response_column_getter_foreign(
             name_extern: &str,
-            ty: &stage2::VirtualTyInner,
+            ty: &stage2::TyElement,
         ) -> proc_macro2::TokenStream {
             let expr = response_column_getter_inner(name_extern);
             if ty.optional() {
@@ -356,7 +343,7 @@ impl Table {
                     name_intern_extern((table_name_extern, column_name));
 
                 let response_column_getter = match virtual_ty {
-                    stage2::VirtualTy::Inner(virtual_ty_inner) => {
+                    stage2::Ty::Element(virtual_ty_inner) => {
                         let response_column_getter =
                             response_column_getter_foreign(&column_name_extern, virtual_ty_inner);
 
@@ -367,7 +354,7 @@ impl Table {
 
                         response_column_getter
                     }
-                    stage2::VirtualTy::Foreign(foreign_ty) => {
+                    stage2::Ty::Compund(foreign_ty) => {
                         let foreign_table = stage2::find_table(db_tables, &foreign_ty.ty)
                             .expect("table does not exist");
 
@@ -426,9 +413,9 @@ impl Table {
                 name_intern_extern((&*table_name_extern, column_name));
 
             match virtual_ty {
-                stage2::VirtualTy::Inner(virtual_ty_inner) => {
+                stage2::Ty::Element(virtual_ty_inner) => {
                     match virtual_ty_inner {
-                        stage2::VirtualTyInner::Real(real_ty) => {
+                        stage2::TyElement::Value(real_ty) => {
                             create_columns.push((column_name, real_ty.sql_ty()));
 
                             request_columns.push(RequestColumn {
@@ -437,10 +424,10 @@ impl Table {
                                 name: column_name,
                             });
                         }
-                        stage2::VirtualTyInner::Id => {
+                        stage2::TyElement::Id => {
                             create_columns.push((column_name, Cow::Borrowed(SQL_TY_ID)));
                         }
-                        stage2::VirtualTyInner::AutoTime(auto_time_ty) => {
+                        stage2::TyElement::AutoTime(auto_time_ty) => {
                             create_columns.push((column_name, Cow::Owned(auto_time_ty.sql_ty())));
                         }
                     }
@@ -455,7 +442,7 @@ impl Table {
                         name_extern: column_name_extern,
                     });
                 }
-                stage2::VirtualTy::Foreign(foreign_ty) => {
+                stage2::Ty::Compund(foreign_ty) => {
                     // let Some(foreign_table) = stage2::find_table(&db.tables, &foreign_ty.ident)
                     // else {
                     //     continue;

@@ -1,5 +1,5 @@
 use super::stage1;
-pub use super::stage1::ForeignTy;
+pub use super::stage1::TyCompound;
 
 use crate::utils::collections::TryCollectAll;
 
@@ -12,15 +12,14 @@ const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
-const COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES: &str = "column must not have conflicting types";
 
-pub enum StringScalarTy {
+pub enum AtomicTyString {
     Varchar(stage1::StringLen),
     Char(stage1::StringLen),
     Text,
 }
 
-pub enum TimeScalarTy {
+pub enum AtomicTyTime {
     ChronoDateTimeUtc,
     ChronoDateTimeLocal,
     ChronoNaiveDateTime,
@@ -36,7 +35,7 @@ pub enum TimeScalarTy {
 }
 
 #[allow(non_camel_case_types)]
-pub enum ScalarTy {
+pub enum AtomicTy {
     bool,
     u8,
     i8,
@@ -48,53 +47,53 @@ pub enum ScalarTy {
     i64,
     f32,
     f64,
-    String(StringScalarTy),
-    Time(TimeScalarTy),
+    String(AtomicTyString),
+    Time(AtomicTyTime),
 }
 
-impl From<stage1::ScalarTy> for ScalarTy {
-    fn from(stage1_scalar_ty: stage1::ScalarTy) -> Self {
-        match stage1_scalar_ty {
-            stage1::ScalarTy::bool => Self::bool,
-            stage1::ScalarTy::u8 => Self::u8,
-            stage1::ScalarTy::i8 => Self::i8,
-            stage1::ScalarTy::u16 => Self::u16,
-            stage1::ScalarTy::i16 => Self::i16,
-            stage1::ScalarTy::u32 => Self::u32,
-            stage1::ScalarTy::i32 => Self::i32,
-            stage1::ScalarTy::u64 => Self::u64,
-            stage1::ScalarTy::i64 => Self::i64,
-            stage1::ScalarTy::f32 => Self::f32,
-            stage1::ScalarTy::f64 => Self::f64,
+impl From<stage1::AtomicTy> for AtomicTy {
+    fn from(atomic_ty: stage1::AtomicTy) -> Self {
+        match atomic_ty {
+            stage1::AtomicTy::bool => Self::bool,
+            stage1::AtomicTy::u8 => Self::u8,
+            stage1::AtomicTy::i8 => Self::i8,
+            stage1::AtomicTy::u16 => Self::u16,
+            stage1::AtomicTy::i16 => Self::i16,
+            stage1::AtomicTy::u32 => Self::u32,
+            stage1::AtomicTy::i32 => Self::i32,
+            stage1::AtomicTy::u64 => Self::u64,
+            stage1::AtomicTy::i64 => Self::i64,
+            stage1::AtomicTy::f32 => Self::f32,
+            stage1::AtomicTy::f64 => Self::f64,
 
-            stage1::ScalarTy::String => Self::String(StringScalarTy::Varchar(255)),
+            stage1::AtomicTy::String => Self::String(AtomicTyString::Varchar(255)),
 
-            stage1::ScalarTy::ChronoDateTimeUtc => Self::Time(TimeScalarTy::ChronoDateTimeUtc),
-            stage1::ScalarTy::ChronoDateTimeLocal => Self::Time(TimeScalarTy::ChronoDateTimeLocal),
-            stage1::ScalarTy::ChronoNaiveDateTime => Self::Time(TimeScalarTy::ChronoNaiveDateTime),
-            stage1::ScalarTy::ChronoNaiveDate => Self::Time(TimeScalarTy::ChronoNaiveDate),
-            stage1::ScalarTy::ChronoNaiveTime => Self::Time(TimeScalarTy::ChronoNaiveTime),
-            stage1::ScalarTy::ChronoTimeDelta => Self::Time(TimeScalarTy::ChronoTimeDelta),
+            stage1::AtomicTy::ChronoDateTimeUtc => Self::Time(AtomicTyTime::ChronoDateTimeUtc),
+            stage1::AtomicTy::ChronoDateTimeLocal => Self::Time(AtomicTyTime::ChronoDateTimeLocal),
+            stage1::AtomicTy::ChronoNaiveDateTime => Self::Time(AtomicTyTime::ChronoNaiveDateTime),
+            stage1::AtomicTy::ChronoNaiveDate => Self::Time(AtomicTyTime::ChronoNaiveDate),
+            stage1::AtomicTy::ChronoNaiveTime => Self::Time(AtomicTyTime::ChronoNaiveTime),
+            stage1::AtomicTy::ChronoTimeDelta => Self::Time(AtomicTyTime::ChronoTimeDelta),
 
-            stage1::ScalarTy::TimeDateTime => Self::Time(TimeScalarTy::TimePrimitiveDateTime),
-            stage1::ScalarTy::TimeOffsetDateTime => Self::Time(TimeScalarTy::TimeOffsetDateTime),
-            stage1::ScalarTy::TimeDate => Self::Time(TimeScalarTy::TimeDate),
-            stage1::ScalarTy::TimeTime => Self::Time(TimeScalarTy::TimeTime),
-            stage1::ScalarTy::TimeDuration => Self::Time(TimeScalarTy::TimeDuration),
+            stage1::AtomicTy::TimeDateTime => Self::Time(AtomicTyTime::TimePrimitiveDateTime),
+            stage1::AtomicTy::TimeOffsetDateTime => Self::Time(AtomicTyTime::TimeOffsetDateTime),
+            stage1::AtomicTy::TimeDate => Self::Time(AtomicTyTime::TimeDate),
+            stage1::AtomicTy::TimeTime => Self::Time(AtomicTyTime::TimeTime),
+            stage1::AtomicTy::TimeDuration => Self::Time(AtomicTyTime::TimeDuration),
         }
     }
 }
 
-pub struct RealTy {
-    pub ty: ScalarTy,
+pub struct TyElementValue {
+    pub ty: AtomicTy,
     pub optional: bool,
 }
 
-impl From<stage1::RealTy> for RealTy {
-    fn from(stage1_real_ty: stage1::RealTy) -> Self {
+impl From<stage1::ValueTy> for TyElementValue {
+    fn from(value_ty: stage1::ValueTy) -> Self {
         Self {
-            ty: ScalarTy::from(stage1_real_ty.ty),
-            optional: stage1_real_ty.optional,
+            ty: AtomicTy::from(value_ty.ty),
+            optional: value_ty.optional,
         }
     }
 }
@@ -104,128 +103,78 @@ pub enum AutoTimeEvent {
     OnUpdate,
 }
 
-pub struct AutoTimeTy {
-    pub ty: TimeScalarTy,
+pub struct TyElementAutoTime {
+    pub ty: AtomicTyTime,
     pub event: AutoTimeEvent,
 }
 
-enum ColumnAttrInner {
+enum ColumnTyAttrElement {
     None,
     Id,
-    String(StringScalarTy),
+    String(AtomicTyString),
     AutoTime(AutoTimeEvent),
 }
 
-enum ColumnAttr {
-    Foreign,
-    Inner(ColumnAttrInner),
+enum ColumnTyAttr {
+    Compound,
+    Element(ColumnTyAttrElement),
 }
 
-impl ColumnAttr {
-    const DEFAULT: Self = Self::Inner(ColumnAttrInner::None);
-    fn set(&mut self, attr: Self, ident: &Ident) -> syn::Result<()> {
-        if matches!(self, Self::Inner(ColumnAttrInner::None)) {
-            *self = attr;
-            Ok(())
-        } else {
-            Err(syn::Error::new(
-                ident.span(),
-                COLUMN_MUST_NOT_HAVE_CONFLICTING_TYPES,
-            ))
+impl From<Option<stage1::ColumnAttrTy>> for ColumnTyAttr {
+    fn from(attr: Option<stage1::ColumnAttrTy>) -> Self {
+        use stage1::ColumnAttrTy as CTA;
+        match attr {
+            Some(CTA::Foreign) => Self::Compound,
+            Some(CTA::Id) => Self::Element(ColumnTyAttrElement::Id),
+            Some(CTA::OnCreate) => {
+                Self::Element(ColumnTyAttrElement::AutoTime(AutoTimeEvent::OnCreate))
+            }
+            Some(CTA::OnUpdate) => {
+                Self::Element(ColumnTyAttrElement::AutoTime(AutoTimeEvent::OnUpdate))
+            }
+            Some(CTA::Varchar(len)) => {
+                Self::Element(ColumnTyAttrElement::String(AtomicTyString::Varchar(len)))
+            }
+            Some(CTA::Char(len)) => {
+                Self::Element(ColumnTyAttrElement::String(AtomicTyString::Char(len)))
+            }
+            Some(CTA::Text) => Self::Element(ColumnTyAttrElement::String(AtomicTyString::Text)),
+            None => Self::Element(ColumnTyAttrElement::None),
         }
     }
 }
 
-pub enum VirtualTyInner {
+pub enum TyElement {
     Id,
-    Real(RealTy),
-    AutoTime(AutoTimeTy),
+    Value(TyElementValue),
+    AutoTime(TyElementAutoTime),
 }
 
-impl VirtualTyInner {
+impl TyElement {
     pub fn optional(&self) -> bool {
-        matches!(self, Self::Real(real_ty) if real_ty.optional)
+        matches!(self, Self::Value(real_ty) if real_ty.optional)
     }
 }
 
-pub enum VirtualTy {
-    Foreign(ForeignTy),
-    Inner(VirtualTyInner),
+pub enum Ty {
+    Compund(TyCompound),
+    Element(TyElement),
 }
 
-impl VirtualTy {
+impl Ty {
     pub fn optional(&self) -> bool {
         match self {
-            Self::Foreign(foreign) => foreign.optional,
-            Self::Inner(inner) => inner.optional(),
+            Self::Compund(foreign) => foreign.optional,
+            Self::Element(inner) => inner.optional(),
         }
     }
 }
 
 pub struct ColumnTy {
     /// the type for the column
-    pub virtual_ty: VirtualTy,
+    pub virtual_ty: Ty,
     /// the parsed rust type for the column
     pub rs_ty: Type,
-}
-
-impl ColumnTy {
-    fn try_from_attr_and_ty(attr: ColumnAttr, rs_ty: Type) -> syn::Result<Self> {
-        // turn combination of attrs and types into valid type
-        let virtual_ty = match attr {
-            ColumnAttr::Foreign => {
-                let foreign_ty = ForeignTy::try_from(&rs_ty)?;
-                VirtualTy::Foreign(foreign_ty)
-            }
-            ColumnAttr::Inner(attr) => {
-                use ColumnAttrInner as CANF;
-                let stage1_real_ty = stage1::RealTy::try_from(&rs_ty)?;
-                match attr {
-                    CANF::None => {
-                        VirtualTy::Inner(VirtualTyInner::Real(RealTy::from(stage1_real_ty)))
-                    }
-                    CANF::Id => {
-                        let stage1::RealTy {
-                            ty: stage1::ScalarTy::u64,
-                            optional,
-                        } = stage1_real_ty
-                        else {
-                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
-                        };
-                        if optional {
-                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
-                        };
-                        VirtualTy::Inner(VirtualTyInner::Id)
-                    }
-                    CANF::String(ty) => {
-                        let stage1::RealTy {
-                            ty: stage1::ScalarTy::String,
-                            optional,
-                        } = stage1_real_ty
-                        else {
-                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
-                        };
-                        VirtualTy::Inner(VirtualTyInner::Real(RealTy {
-                            ty: ScalarTy::String(ty),
-                            optional,
-                        }))
-                    }
-                    CANF::AutoTime(event) => {
-                        let stage1::RealTy { ty, optional } = stage1_real_ty;
-                        let ty = ScalarTy::from(ty);
-                        let ScalarTy::Time(ty) = ty else {
-                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_TIME));
-                        };
-                        if optional {
-                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
-                        };
-                        VirtualTy::Inner(VirtualTyInner::AutoTime(AutoTimeTy { ty, event }))
-                    }
-                }
-            }
-        };
-        Ok(Self { virtual_ty, rs_ty })
-    }
 }
 
 pub struct Column {
@@ -245,62 +194,72 @@ impl TryFrom<stage1::Column> for Column {
         let stage1::Column {
             ident: response_name,
             ty: rs_ty,
-            attrs: stage1_attrs,
+            attr,
         } = stage1_column;
 
-        let request_name = stage1_attrs
-            .request_name
-            .unwrap_or_else(|| response_name.clone());
+        let request_name = attr.request_name.unwrap_or_else(|| response_name.clone());
 
-        let name = stage1_attrs
-            .name
-            .unwrap_or_else(|| request_name.to_string());
+        let name = attr.name.unwrap_or_else(|| request_name.to_string());
 
-        let mut attr = ColumnAttr::DEFAULT;
-        if stage1_attrs.id {
-            attr.set(ColumnAttr::Inner(ColumnAttrInner::Id), &response_name)?;
+        let attr_ty = ColumnTyAttr::from(attr.ty);
+        let virtual_ty = match attr_ty {
+            ColumnTyAttr::Compound => {
+                let foreign_ty = TyCompound::try_from(&rs_ty)?;
+                Ty::Compund(foreign_ty)
+            }
+            ColumnTyAttr::Element(attr) => {
+                use ColumnTyAttrElement as CAI;
+                let stage1_real_ty = stage1::ValueTy::try_from(&rs_ty)?;
+                match attr {
+                    CAI::None => {
+                        Ty::Element(TyElement::Value(TyElementValue::from(stage1_real_ty)))
+                    }
+                    CAI::Id => {
+                        let stage1::ValueTy {
+                            ty: stage1::AtomicTy::u64,
+                            optional,
+                        } = stage1_real_ty
+                        else {
+                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+                        };
+                        if optional {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
+                        };
+                        Ty::Element(TyElement::Id)
+                    }
+                    CAI::String(ty) => {
+                        let stage1::ValueTy {
+                            ty: stage1::AtomicTy::String,
+                            optional,
+                        } = stage1_real_ty
+                        else {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
+                        };
+                        Ty::Element(TyElement::Value(TyElementValue {
+                            ty: AtomicTy::String(ty),
+                            optional,
+                        }))
+                    }
+                    CAI::AutoTime(event) => {
+                        let stage1::ValueTy { ty, optional } = stage1_real_ty;
+                        let ty = AtomicTy::from(ty);
+                        let AtomicTy::Time(ty) = ty else {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_TIME));
+                        };
+                        if optional {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
+                        };
+                        Ty::Element(TyElement::AutoTime(TyElementAutoTime { ty, event }))
+                    }
+                }
+            }
         };
-        if stage1_attrs.foreign {
-            attr.set(ColumnAttr::Foreign, &response_name)?;
-        };
-        if stage1_attrs.on_create {
-            attr.set(
-                ColumnAttr::Inner(ColumnAttrInner::AutoTime(AutoTimeEvent::OnCreate)),
-                &response_name,
-            )?;
-        };
-        if stage1_attrs.on_update {
-            attr.set(
-                ColumnAttr::Inner(ColumnAttrInner::AutoTime(AutoTimeEvent::OnUpdate)),
-                &response_name,
-            )?;
-        };
-        if let Some(len) = stage1_attrs.varchar {
-            attr.set(
-                ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Varchar(len))),
-                &response_name,
-            )?;
-        };
-        if let Some(len) = stage1_attrs.char {
-            attr.set(
-                ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Char(len))),
-                &response_name,
-            )?;
-        };
-        if stage1_attrs.text {
-            attr.set(
-                ColumnAttr::Inner(ColumnAttrInner::String(StringScalarTy::Text)),
-                &response_name,
-            )?;
-        };
-
-        let ty = ColumnTy::try_from_attr_and_ty(attr, rs_ty)?;
 
         Ok(Self {
             response_name,
             request_name,
             name,
-            ty,
+            ty: ColumnTy { virtual_ty, rs_ty },
         })
     }
 }
@@ -328,8 +287,8 @@ impl TryFrom<stage1::Table> for Table {
         let stage1::Table {
             ident: ty,
             columns,
-            attrs:
-                stage1::TableAttrs {
+            attr:
+                stage1::TableAttr {
                     controller,
                     model,
                     name,
@@ -347,7 +306,7 @@ impl TryFrom<stage1::Table> for Table {
         let mut id_ident = None;
         let columns = columns.into_iter().map(|stage1_column| {
             let column = Column::try_from(stage1_column)?;
-            if matches!(column.ty.virtual_ty, VirtualTy::Inner(VirtualTyInner::Id)) {
+            if matches!(column.ty.virtual_ty, Ty::Element(TyElement::Id)) {
                 if id_ident.is_some() {
                     return Err(syn::Error::new(
                         column.response_name.span(),
