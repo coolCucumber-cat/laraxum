@@ -3,7 +3,7 @@ use crate::utils::syn::from_str_to_rs_ident;
 use super::stage2;
 
 use quote::quote;
-use syn::{Ident, Type};
+use syn::{Attribute, Ident, Type};
 
 use std::borrow::Cow;
 
@@ -51,18 +51,18 @@ impl stage2::AtomicTyString {
 
 impl stage2::AtomicTyTime {
     fn sql_ty(&self) -> &'static str {
-        TimeScalarTy::from(self).sql_ty
+        AtomicTyTime::from(self).sql_ty
     }
 }
 
-struct TimeScalarTy {
+struct AtomicTyTime {
     sql_ty: &'static str,
     sql_current_time_func: &'static str,
 }
-impl From<&stage2::AtomicTyTime> for TimeScalarTy {
-    fn from(stage2_time_scalar_ty: &stage2::AtomicTyTime) -> Self {
+impl From<&stage2::AtomicTyTime> for AtomicTyTime {
+    fn from(ty: &stage2::AtomicTyTime) -> Self {
         #[cfg(feature = "mysql")]
-        match stage2_time_scalar_ty {
+        match ty {
             stage2::AtomicTyTime::ChronoDateTimeUtc => Self {
                 sql_ty: "TIMESTAMP",
                 sql_current_time_func: "UTC_TIMESTAMP()",
@@ -159,7 +159,7 @@ impl stage2::TyElementValue {
 
 impl stage2::TyElementAutoTime {
     fn sql_ty(&self) -> String {
-        let time_scalar_ty = TimeScalarTy::from(&self.ty);
+        let time_scalar_ty = AtomicTyTime::from(&self.ty);
         let mut auto_time_ty = make_not_optional(time_scalar_ty.sql_ty);
         fmt2::fmt! { (auto_time_ty) =>
             " DEFAULT " {time_scalar_ty.sql_current_time_func}
@@ -194,7 +194,10 @@ impl stage2::TyCompound {
 
 impl stage2::TyElement {
     fn transform_response(&self, expr: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        let transform = match self {
+        type TransformFn = fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream;
+
+        #[allow(clippy::match_single_binding)]
+        let transform: Option<TransformFn> = match self {
             #[cfg(feature = "mysql")]
             Self::Value(stage2::TyElementValue {
                 ty: stage2::AtomicTy::bool,
@@ -205,9 +208,9 @@ impl stage2::TyElement {
 
         if let Some(transform) = transform {
             if self.optional() {
-                let var_name = quote! { val };
-                let transformed = transform(&var_name);
-                quote! { ::core::option::Option::map(#expr, |#var_name| #transformed) }
+                let val_name = quote! { val };
+                let transformed = transform(&val_name);
+                quote! { ::core::option::Option::map(#expr, |#val_name| #transformed) }
             } else {
                 transform(&expr)
             }
@@ -242,7 +245,7 @@ struct Table {
 }
 
 impl Table {
-    fn from_table_and_db(table: &stage2::Table, db: &stage2::Db) -> Self {
+    fn new(table: &stage2::Table, db: &stage2::Db) -> Self {
         fn request_column_field(request_name: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
             quote! {
                 pub #request_name: #rs_ty
@@ -252,8 +255,13 @@ impl Table {
             quote! { request.#request_name }
         }
 
-        fn response_column_field(response_name: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
+        fn response_column_field(
+            response_name: &Ident,
+            rs_ty: &Type,
+            attrs: &[Attribute],
+        ) -> proc_macro2::TokenStream {
             quote! {
+                #(#attrs)*
                 pub #response_name: #rs_ty
             }
         }
@@ -331,16 +339,17 @@ impl Table {
                 let stage2::Column {
                     response_name,
                     request_name: _,
-                    name: column_name,
+                    name,
                     ty:
                         stage2::ColumnTy {
-                            virtual_ty,
+                            ty: virtual_ty,
                             rs_ty: _,
                         },
+                    attrs: _,
                 } = column;
-                let column_name = &**column_name;
+                let name = &**name;
                 let (column_name_intern, column_name_extern) =
-                    name_intern_extern((table_name_extern, column_name));
+                    name_intern_extern((table_name_extern, name));
 
                 let response_column_getter = match virtual_ty {
                     stage2::Ty::Element(virtual_ty_inner) => {
@@ -403,39 +412,45 @@ impl Table {
 
         for column in &table.columns {
             let stage2::Column {
-                response_name: response_ident,
-                request_name: request_ident,
-                name: column_name,
-                ty: stage2::ColumnTy { virtual_ty, rs_ty },
+                response_name,
+                request_name,
+                name,
+                ty: stage2::ColumnTy { ty, rs_ty },
+                attrs,
             } = column;
-            let column_name = &**column_name;
+            let name = &**name;
+            let attrs = &**attrs;
             let (column_name_intern, column_name_extern) =
-                name_intern_extern((&*table_name_extern, column_name));
+                name_intern_extern((&*table_name_extern, name));
 
-            match virtual_ty {
-                stage2::Ty::Element(virtual_ty_inner) => {
-                    match virtual_ty_inner {
+            match ty {
+                stage2::Ty::Element(ty_element) => {
+                    match ty_element {
                         stage2::TyElement::Value(real_ty) => {
-                            create_columns.push((column_name, real_ty.sql_ty()));
+                            create_columns.push((name, real_ty.sql_ty()));
 
                             request_columns.push(RequestColumn {
-                                field: request_column_field(request_ident, rs_ty),
-                                setter: request_column_setter(request_ident),
-                                name: column_name,
+                                field: request_column_field(request_name, rs_ty),
+                                setter: request_column_setter(request_name),
+                                name,
                             });
                         }
                         stage2::TyElement::Id => {
-                            create_columns.push((column_name, Cow::Borrowed(SQL_TY_ID)));
+                            create_columns.push((name, Cow::Borrowed(SQL_TY_ID)));
                         }
                         stage2::TyElement::AutoTime(auto_time_ty) => {
-                            create_columns.push((column_name, Cow::Owned(auto_time_ty.sql_ty())));
+                            create_columns.push((name, Cow::Owned(auto_time_ty.sql_ty())));
                         }
                     }
 
-                    response_columns_fields.push(response_column_field(response_ident, rs_ty));
+                    response_columns_fields.push(response_column_field(
+                        response_name,
+                        rs_ty,
+                        attrs,
+                    ));
                     response_columns_getters.push((
-                        response_ident,
-                        response_column_getter(&column_name_extern, virtual_ty_inner),
+                        response_name,
+                        response_column_getter(&column_name_extern, ty_element),
                     ));
                     response_columns_names.push(ResponseColumnName {
                         name_intern: column_name_intern,
@@ -451,15 +466,15 @@ impl Table {
                         .expect("table does not exist");
 
                     let sql_ty = foreign_ty.sql_ty(&foreign_table.name, &foreign_table.id_name);
-                    create_columns.push((column_name, Cow::Owned(sql_ty)));
+                    create_columns.push((name, Cow::Owned(sql_ty)));
 
                     request_columns.push(RequestColumn {
                         field: request_column_field(
-                            request_ident,
+                            request_name,
                             &rs_ty_foreign_id(foreign_ty.optional),
                         ),
-                        setter: request_column_setter(request_ident),
-                        name: column_name,
+                        setter: request_column_setter(request_name),
+                        name,
                     });
 
                     let foreign_table_name_intern = name_intern((&db.name, &foreign_table.name));
@@ -481,7 +496,7 @@ impl Table {
                         response_columns_getter,
                         foreign_ty.optional,
                     );
-                    response_columns_getters.push((response_ident, response_table_getter));
+                    response_columns_getters.push((response_name, response_table_getter));
 
                     joins.push(Join {
                         foreign_table_name_intern,
@@ -490,7 +505,11 @@ impl Table {
                         column_name_intern,
                     });
 
-                    response_columns_fields.push(response_column_field(response_ident, rs_ty));
+                    response_columns_fields.push(response_column_field(
+                        response_name,
+                        rs_ty,
+                        attrs,
+                    ));
                 }
             }
         }
@@ -552,6 +571,7 @@ impl Table {
         let doc = fmt2::fmt! { { str } => "`" {table_name_intern} "`"};
 
         let table_ident = &table.ty;
+        let table_attrs = &*table.attrs;
         let db_ident = &db.ident;
         let request_columns_fields = request_columns.iter().map(|c| &c.field);
         let request_columns_setters = request_columns.iter().map(|c| &c.setter);
@@ -570,6 +590,7 @@ impl Table {
         let table_token_stream = quote! {
             #[doc = #doc]
             #[derive(::serde::Serialize)]
+            #(#table_attrs)*
             pub struct #table_ident {
                 #(#response_columns_fields),*
             }
@@ -688,7 +709,7 @@ impl From<stage2::Db> for Db {
         let tables = db
             .tables
             .iter()
-            .map(|table| Table::from_table_and_db(table, &db))
+            .map(|table| Table::new(table, &db))
             .collect::<Vec<_>>();
 
         let tables_token_stream = tables.iter().map(|table| &table.token_stream);

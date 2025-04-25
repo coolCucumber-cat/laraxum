@@ -57,7 +57,7 @@ pub fn parse_ident_from_path_segments(
     }
 }
 
-pub fn parse_ident_from_ty(ty: &Type) -> Result<&Ident, syn::Error> {
+pub fn parse_ident_from_type(ty: &Type) -> Result<&Ident, syn::Error> {
     let path_segments = if let Type::Path(path) = ty {
         parse_path_segments_from_type_path(path)
     } else {
@@ -107,10 +107,10 @@ pub fn parse_option_from_ty(ty: &Type) -> Option<&Type> {
     parse_option_from_path_segments(path_segments)
 }
 
-pub fn is_type_optional(ty: &Type) -> (&Type, bool) {
+pub fn is_optional_type(ty: &Type) -> (&Type, bool) {
     super::map_is_some(ty, parse_option_from_ty)
 }
-//
-// pub fn is_type_optional_cow<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
+
+// pub fn is_optional_type_cow<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
 //     cow_try_and_then_is_some(ty, |ty| parse_option_from_ty(ty).map(Cow::Borrowed))
 // }

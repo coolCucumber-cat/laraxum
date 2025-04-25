@@ -1,4 +1,4 @@
-use crate::utils::syn::{is_type_optional, parse_ident_from_ty};
+use crate::utils::syn::{is_optional_type, parse_ident_from_type};
 
 use darling::{FromAttributes, FromMeta};
 use syn::{
@@ -102,14 +102,14 @@ ty_enum! {
     }
 }
 
-pub struct ValueTy {
+pub struct TyElementValue {
     pub ty: AtomicTy,
     pub optional: bool,
 }
-impl TryFrom<&Type> for ValueTy {
+impl TryFrom<&Type> for TyElementValue {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_type_optional(rs_ty);
+        let (ty, optional) = is_optional_type(rs_ty);
         let ty = AtomicTy::try_from(ty)?;
         Ok(Self { ty, optional })
     }
@@ -122,8 +122,8 @@ pub struct TyCompound {
 impl TryFrom<&Type> for TyCompound {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_type_optional(rs_ty);
-        let ty = parse_ident_from_ty(ty)?.clone();
+        let (ty, optional) = is_optional_type(rs_ty);
+        let ty = parse_ident_from_type(ty)?.clone();
         Ok(Self { ty, optional })
     }
 }
@@ -165,7 +165,7 @@ pub struct Column {
 impl TryFrom<Field> for Column {
     type Error = syn::Error;
     fn try_from(field: Field) -> Result<Self, Self::Error> {
-        let span = field.span();
+        let field_span = field.span();
         let Field {
             attrs,
             vis,
@@ -176,13 +176,13 @@ impl TryFrom<Field> for Column {
         } = field;
 
         let Some(ident) = ident else {
-            return Err(syn::Error::new(span, TABLE_MUST_BE_FIELD_STRUCT));
+            return Err(syn::Error::new(field_span, TABLE_MUST_BE_FIELD_STRUCT));
         };
         if !matches!(vis, Visibility::Inherited) {
             return Err(syn::Error::new(vis.span(), FIELD_MUST_NOT_HAVE_VIS));
         }
         if !matches!(mutability, FieldMutability::None) {
-            return Err(syn::Error::new(span, FIELD_MUST_NOT_BE_MUT));
+            return Err(syn::Error::new(field_span, FIELD_MUST_NOT_BE_MUT));
         }
 
         let attr = ColumnAttr::from_attributes(&attrs)?;
@@ -209,7 +209,6 @@ pub struct Table {
     pub attr: TableAttr,
     pub vis: Visibility,
 }
-
 impl TryFrom<Item> for Table {
     type Error = syn::Error;
     fn try_from(item: Item) -> Result<Self, Self::Error> {
@@ -225,8 +224,6 @@ impl TryFrom<Item> for Table {
             fields,
             semi_token: _,
         } = item_struct;
-
-        let attr = TableAttr::from_attributes(&attrs)?;
 
         if !generics.params.is_empty() {
             return Err(syn::Error::new(
@@ -245,6 +242,8 @@ impl TryFrom<Item> for Table {
         let columns: Result<Vec<Column>, syn::Error> = columns.collect();
         let columns = columns?;
 
+        let attr = TableAttr::from_attributes(&attrs)?;
+
         Ok(Self {
             ident,
             columns,
@@ -258,7 +257,6 @@ impl TryFrom<Item> for Table {
 pub struct DbAttr {
     pub name: Option<String>,
 }
-
 impl TryFrom<proc_macro2::TokenStream> for DbAttr {
     type Error = syn::Error;
     fn try_from(input: proc_macro2::TokenStream) -> Result<Self, Self::Error> {
@@ -273,11 +271,15 @@ pub struct Db {
     pub tables: Vec<Table>,
     pub vis: Visibility,
 }
-
+impl Parse for Db {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        input.parse::<Item>().and_then(Db::try_from)
+    }
+}
 impl TryFrom<Item> for Db {
     type Error = syn::Error;
     fn try_from(item: Item) -> Result<Self, Self::Error> {
-        let span = item.span();
+        let item_span = item.span();
         let Item::Mod(ItemMod {
             attrs,
             vis,
@@ -291,28 +293,21 @@ impl TryFrom<Item> for Db {
             return Err(syn::Error::new(item.span(), DB_ITEM_MUST_BE_MOD));
         };
 
+        if !attrs.is_empty() {
+            return Err(syn::Error::new(item_span, DB_MOD_MUST_NOT_HAVE_ATTRS));
+        }
+        if let Some(unsafety) = unsafety {
+            return Err(syn::Error::new(unsafety.span(), DB_MOD_MUST_NOT_BE_UNSAFE));
+        };
+
         let Some((_, items)) = content else {
-            return Err(syn::Error::new(span, DB_MOD_MUST_HAVE_CONTENT));
+            return Err(syn::Error::new(item_span, DB_MOD_MUST_HAVE_CONTENT));
         };
         let tables = items.into_iter().map(Table::try_from);
         let tables: Result<Vec<Table>, syn::Error> = tables.collect();
         let tables = tables?;
 
-        if !attrs.is_empty() {
-            return Err(syn::Error::new(span, DB_MOD_MUST_NOT_HAVE_ATTRS));
-        }
-
-        if let Some(unsafety) = unsafety {
-            return Err(syn::Error::new(unsafety.span(), DB_MOD_MUST_NOT_BE_UNSAFE));
-        };
-
         Ok(Self { ident, tables, vis })
-    }
-}
-
-impl Parse for Db {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        input.parse::<Item>().and_then(Db::try_from)
     }
 }
 
@@ -334,13 +329,4 @@ mod tests {
             }
         );
     }
-
-    // #[test]
-    // fn db_attr() {
-    //     let attr: Attribute = syn::parse_quote!(#[name = "dossier"]);
-    //     let meta = attr.meta;
-    //     let db_attr: DbAttr = DbAttr::from_meta(&meta).unwrap();
-    //     // let name = db_attr.name.as_deref();
-    //     assert_eq!(db_attr.name.as_deref(), Some("dossier"));
-    // }
 }

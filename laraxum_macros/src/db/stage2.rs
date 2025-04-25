@@ -3,7 +3,7 @@ pub use super::stage1::TyCompound;
 
 use crate::utils::collections::TryCollectAll;
 
-use syn::{Ident, Type, Visibility, spanned::Spanned};
+use syn::{Attribute, Ident, Type, Visibility, spanned::Spanned};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
@@ -50,7 +50,6 @@ pub enum AtomicTy {
     String(AtomicTyString),
     Time(AtomicTyTime),
 }
-
 impl From<stage1::AtomicTy> for AtomicTy {
     fn from(atomic_ty: stage1::AtomicTy) -> Self {
         match atomic_ty {
@@ -88,12 +87,11 @@ pub struct TyElementValue {
     pub ty: AtomicTy,
     pub optional: bool,
 }
-
-impl From<stage1::ValueTy> for TyElementValue {
-    fn from(value_ty: stage1::ValueTy) -> Self {
+impl From<stage1::TyElementValue> for TyElementValue {
+    fn from(ty_element_value: stage1::TyElementValue) -> Self {
         Self {
-            ty: AtomicTy::from(value_ty.ty),
-            optional: value_ty.optional,
+            ty: AtomicTy::from(ty_element_value.ty),
+            optional: ty_element_value.optional,
         }
     }
 }
@@ -108,38 +106,32 @@ pub struct TyElementAutoTime {
     pub event: AutoTimeEvent,
 }
 
-enum ColumnTyAttrElement {
+enum ColumnAttrTyElement {
     None,
     Id,
     String(AtomicTyString),
     AutoTime(AutoTimeEvent),
 }
 
-enum ColumnTyAttr {
+enum ColumnAttrTy {
     Compound,
-    Element(ColumnTyAttrElement),
+    Element(ColumnAttrTyElement),
 }
+impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
+    fn from(column_attr_ty: Option<stage1::ColumnAttrTy>) -> Self {
+        use ColumnAttrTyElement as CATE;
+        use stage1::ColumnAttrTy as S1CAT;
+        match column_attr_ty {
+            None => Self::Element(CATE::None),
+            Some(S1CAT::Foreign) => Self::Compound,
+            Some(S1CAT::Id) => Self::Element(CATE::Id),
 
-impl From<Option<stage1::ColumnAttrTy>> for ColumnTyAttr {
-    fn from(attr: Option<stage1::ColumnAttrTy>) -> Self {
-        use stage1::ColumnAttrTy as CTA;
-        match attr {
-            Some(CTA::Foreign) => Self::Compound,
-            Some(CTA::Id) => Self::Element(ColumnTyAttrElement::Id),
-            Some(CTA::OnCreate) => {
-                Self::Element(ColumnTyAttrElement::AutoTime(AutoTimeEvent::OnCreate))
-            }
-            Some(CTA::OnUpdate) => {
-                Self::Element(ColumnTyAttrElement::AutoTime(AutoTimeEvent::OnUpdate))
-            }
-            Some(CTA::Varchar(len)) => {
-                Self::Element(ColumnTyAttrElement::String(AtomicTyString::Varchar(len)))
-            }
-            Some(CTA::Char(len)) => {
-                Self::Element(ColumnTyAttrElement::String(AtomicTyString::Char(len)))
-            }
-            Some(CTA::Text) => Self::Element(ColumnTyAttrElement::String(AtomicTyString::Text)),
-            None => Self::Element(ColumnTyAttrElement::None),
+            Some(S1CAT::OnCreate) => Self::Element(CATE::AutoTime(AutoTimeEvent::OnCreate)),
+            Some(S1CAT::OnUpdate) => Self::Element(CATE::AutoTime(AutoTimeEvent::OnUpdate)),
+
+            Some(S1CAT::Varchar(len)) => Self::Element(CATE::String(AtomicTyString::Varchar(len))),
+            Some(S1CAT::Char(len)) => Self::Element(CATE::String(AtomicTyString::Char(len))),
+            Some(S1CAT::Text) => Self::Element(CATE::String(AtomicTyString::Text)),
         }
     }
 }
@@ -149,10 +141,9 @@ pub enum TyElement {
     Value(TyElementValue),
     AutoTime(TyElementAutoTime),
 }
-
 impl TyElement {
     pub fn optional(&self) -> bool {
-        matches!(self, Self::Value(real_ty) if real_ty.optional)
+        matches!(self, Self::Value(value) if value.optional)
     }
 }
 
@@ -160,19 +151,18 @@ pub enum Ty {
     Compund(TyCompound),
     Element(TyElement),
 }
-
 impl Ty {
     pub fn optional(&self) -> bool {
         match self {
-            Self::Compund(foreign) => foreign.optional,
-            Self::Element(inner) => inner.optional(),
+            Self::Compund(compound) => compound.optional,
+            Self::Element(element) => element.optional(),
         }
     }
 }
 
 pub struct ColumnTy {
     /// the type for the column
-    pub virtual_ty: Ty,
+    pub ty: Ty,
     /// the parsed rust type for the column
     pub rs_ty: Type,
 }
@@ -186,70 +176,65 @@ pub struct Column {
     pub request_name: Ident,
     /// the type of the column
     pub ty: ColumnTy,
+    /// visibility
+    pub attrs: Vec<Attribute>,
 }
-
 impl TryFrom<stage1::Column> for Column {
     type Error = syn::Error;
-    fn try_from(stage1_column: stage1::Column) -> Result<Self, Self::Error> {
+    fn try_from(column: stage1::Column) -> Result<Self, Self::Error> {
         let stage1::Column {
             ident: response_name,
             ty: rs_ty,
             attr,
-        } = stage1_column;
+        } = column;
 
         let request_name = attr.request_name.unwrap_or_else(|| response_name.clone());
-
         let name = attr.name.unwrap_or_else(|| request_name.to_string());
 
-        let attr_ty = ColumnTyAttr::from(attr.ty);
-        let virtual_ty = match attr_ty {
-            ColumnTyAttr::Compound => {
-                let foreign_ty = TyCompound::try_from(&rs_ty)?;
-                Ty::Compund(foreign_ty)
+        let column_attr_ty = ColumnAttrTy::from(attr.ty);
+        let ty = match column_attr_ty {
+            ColumnAttrTy::Compound => {
+                let ty_compound = TyCompound::try_from(&rs_ty)?;
+                Ty::Compund(ty_compound)
             }
-            ColumnTyAttr::Element(attr) => {
-                use ColumnTyAttrElement as CAI;
-                let stage1_real_ty = stage1::ValueTy::try_from(&rs_ty)?;
-                match attr {
-                    CAI::None => {
-                        Ty::Element(TyElement::Value(TyElementValue::from(stage1_real_ty)))
-                    }
-                    CAI::Id => {
-                        let stage1::ValueTy {
-                            ty: stage1::AtomicTy::u64,
-                            optional,
-                        } = stage1_real_ty
-                        else {
+            ColumnAttrTy::Element(column_attr_ty_element) => {
+                use ColumnAttrTyElement as CATE;
+                let ty_element_value = stage1::TyElementValue::try_from(&rs_ty)?;
+                let ty_element_value = TyElementValue::from(ty_element_value);
+                match column_attr_ty_element {
+                    CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
+                    CATE::Id => {
+                        let TyElementValue { ty, optional } = ty_element_value;
+                        let AtomicTy::u64 = ty else {
                             return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
                         };
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
-                        };
+                        }
                         Ty::Element(TyElement::Id)
                     }
-                    CAI::String(ty) => {
-                        let stage1::ValueTy {
-                            ty: stage1::AtomicTy::String,
-                            optional,
-                        } = stage1_real_ty
-                        else {
+                    CATE::String(atomic_ty_string) => {
+                        let TyElementValue { ty, optional } = ty_element_value;
+                        let AtomicTy::String(_) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
                         };
                         Ty::Element(TyElement::Value(TyElementValue {
-                            ty: AtomicTy::String(ty),
+                            ty: AtomicTy::String(atomic_ty_string),
                             optional,
                         }))
                     }
-                    CAI::AutoTime(event) => {
-                        let stage1::ValueTy { ty, optional } = stage1_real_ty;
-                        let ty = AtomicTy::from(ty);
+                    CATE::AutoTime(auto_time_event) => {
+                        let TyElementValue { ty, optional } = ty_element_value;
                         let AtomicTy::Time(ty) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_TIME));
                         };
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         };
-                        Ty::Element(TyElement::AutoTime(TyElementAutoTime { ty, event }))
+                        Ty::Element(TyElement::AutoTime(TyElementAutoTime {
+                            ty,
+                            event: auto_time_event,
+                        }))
                     }
                 }
             }
@@ -259,7 +244,8 @@ impl TryFrom<stage1::Column> for Column {
             response_name,
             request_name,
             name,
-            ty: ColumnTy { virtual_ty, rs_ty },
+            ty: ColumnTy { ty, rs_ty },
+            attrs: attr.attrs,
         })
     }
 }
@@ -277,13 +263,14 @@ pub struct Table {
     pub model: bool,
     /// automatically implement the controller (model must be implemented), using the db as the state
     pub controller: bool,
-    /// vis
+    /// visibility
     pub vis: Visibility,
+    /// attributes
+    pub attrs: Vec<Attribute>,
 }
-
 impl TryFrom<stage1::Table> for Table {
     type Error = syn::Error;
-    fn try_from(stage1_table: stage1::Table) -> Result<Self, Self::Error> {
+    fn try_from(table: stage1::Table) -> Result<Self, Self::Error> {
         let stage1::Table {
             ident: ty,
             columns,
@@ -292,10 +279,10 @@ impl TryFrom<stage1::Table> for Table {
                     controller,
                     model,
                     name,
-                    attrs: _,
+                    attrs,
                 },
             vis,
-        } = stage1_table;
+        } = table;
 
         if controller && !model {
             return Err(syn::Error::new(ty.span(), TABLE_MUST_IMPLEMENT_MODEL));
@@ -303,24 +290,23 @@ impl TryFrom<stage1::Table> for Table {
 
         let name = name.unwrap_or_else(|| ty.to_string());
 
-        let mut id_ident = None;
-        let columns = columns.into_iter().map(|stage1_column| {
-            let column = Column::try_from(stage1_column)?;
-            if matches!(column.ty.virtual_ty, Ty::Element(TyElement::Id)) {
-                if id_ident.is_some() {
+        let mut id_name = None;
+        let columns = columns.into_iter().map(|column| {
+            let column = Column::try_from(column)?;
+            if let Ty::Element(TyElement::Id) = column.ty.ty {
+                if id_name.is_some() {
                     return Err(syn::Error::new(
                         column.response_name.span(),
                         TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
                     ));
                 }
-                id_ident = Some(column.name.clone());
+                id_name = Some(column.name.clone());
             }
             Ok(column)
         });
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
-
-        let id_name = id_ident.ok_or_else(|| syn::Error::new(ty.span(), TABLE_MUST_HAVE_ID))?;
+        let id_name = id_name.ok_or_else(|| syn::Error::new(ty.span(), TABLE_MUST_HAVE_ID))?;
 
         Ok(Self {
             name,
@@ -330,6 +316,7 @@ impl TryFrom<stage1::Table> for Table {
             model,
             controller,
             vis,
+            attrs,
         })
     }
 }
@@ -341,17 +328,13 @@ pub struct Db {
     pub ident: Ident,
     /// the tables in the database
     pub tables: Vec<Table>,
-    /// vis
+    /// visibility
     pub vis: Visibility,
 }
-
 impl Db {
-    pub fn try_from_db_and_attr(
-        stage1_db: stage1::Db,
-        stage1_db_attr: stage1::DbAttr,
-    ) -> syn::Result<Self> {
-        let stage1::DbAttr { name } = stage1_db_attr;
-        let stage1::Db { ident, tables, vis } = stage1_db;
+    pub fn try_new(db: stage1::Db, attr: stage1::DbAttr) -> syn::Result<Self> {
+        let stage1::DbAttr { name } = attr;
+        let stage1::Db { ident, tables, vis } = db;
 
         let name = name.unwrap_or_else(|| ident.to_string());
 

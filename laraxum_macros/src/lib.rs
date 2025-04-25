@@ -26,7 +26,7 @@ fn db_syn(
     let stage1_db_attr = db::stage1::DbAttr::try_from(attr)?;
     let stage1_db = syn::parse2::<db::stage1::Db>(input)?;
     // stage 2: frontend -> checking
-    let stage2_db = db::stage2::Db::try_from_db_and_attr(stage1_db, stage1_db_attr)?;
+    let stage2_db = db::stage2::Db::try_new(stage1_db, stage1_db_attr)?;
 
     // stage 3: backend -> codegen
     let stage3_db = db::stage3::Db::from(stage2_db);
