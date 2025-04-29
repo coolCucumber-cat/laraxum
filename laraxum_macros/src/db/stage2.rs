@@ -108,6 +108,7 @@ pub struct TyElementAutoTime {
 
 enum ColumnAttrTyElement {
     None,
+    Value(Type),
     Id,
     String(AtomicTyString),
     AutoTime(AutoTimeEvent),
@@ -122,16 +123,18 @@ impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
         use ColumnAttrTyElement as CATE;
         use stage1::ColumnAttrTy as S1CAT;
         match column_attr_ty {
-            None => Self::Element(CATE::None),
             Some(S1CAT::Foreign) => Self::Compound,
-            Some(S1CAT::Id) => Self::Element(CATE::Id),
 
-            Some(S1CAT::OnCreate) => Self::Element(CATE::AutoTime(AutoTimeEvent::OnCreate)),
-            Some(S1CAT::OnUpdate) => Self::Element(CATE::AutoTime(AutoTimeEvent::OnUpdate)),
+            None => Self::Element(CATE::None),
+            Some(S1CAT::Value(rs_ty)) => Self::Element(CATE::Value(rs_ty)),
+            Some(S1CAT::Id) => Self::Element(CATE::Id),
 
             Some(S1CAT::Varchar(len)) => Self::Element(CATE::String(AtomicTyString::Varchar(len))),
             Some(S1CAT::Char(len)) => Self::Element(CATE::String(AtomicTyString::Char(len))),
             Some(S1CAT::Text) => Self::Element(CATE::String(AtomicTyString::Text)),
+
+            Some(S1CAT::OnCreate) => Self::Element(CATE::AutoTime(AutoTimeEvent::OnCreate)),
+            Some(S1CAT::OnUpdate) => Self::Element(CATE::AutoTime(AutoTimeEvent::OnUpdate)),
         }
     }
 }
@@ -199,10 +202,14 @@ impl TryFrom<stage1::Column> for Column {
             }
             ColumnAttrTy::Element(column_attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
-                let ty_element_value = stage1::TyElementValue::try_from(&rs_ty)?;
+                let rs_ty = match column_attr_ty_element {
+                    CATE::Value(ref rs_ty) => rs_ty,
+                    _ => &rs_ty,
+                };
+                let ty_element_value = stage1::TyElementValue::try_from(rs_ty)?;
                 let ty_element_value = TyElementValue::from(ty_element_value);
                 match column_attr_ty_element {
-                    CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
+                    CATE::None | CATE::Value(_) => Ty::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
                         let TyElementValue { ty, optional } = ty_element_value;
                         let AtomicTy::u64 = ty else {

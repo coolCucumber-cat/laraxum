@@ -88,9 +88,9 @@ ty_enum! {
         TimeDuration => time::Duration,
 
         /// TIMESTAMP
-        ChronoDateTimeUtc => chrono::DateTime<chrono::offset::Utc>,
+        ChronoDateTimeUtc => chrono::DateTime<chrono::Utc>,
         /// TIMESTAMP
-        ChronoDateTimeLocal => chrono::DateTime<chrono::offset::Local>,
+        ChronoDateTimeLocal => chrono::DateTime<chrono::Local>,
         /// DATETIME
         ChronoNaiveDateTime => chrono::NaiveDateTime,
         /// DATE
@@ -131,6 +131,8 @@ impl TryFrom<&Type> for TyCompound {
 #[derive(darling::FromMeta)]
 #[darling(default)]
 pub enum ColumnAttrTy {
+    #[darling(rename = "value")]
+    Value(Type),
     #[darling(rename = "id")]
     Id,
     #[darling(rename = "foreign")]
@@ -148,7 +150,7 @@ pub enum ColumnAttrTy {
 }
 
 #[derive(darling::FromAttributes, Default)]
-#[darling(attributes(db), forward_attrs(cfg, doc, allow), default)]
+#[darling(attributes(db), forward_attrs(doc, allow), default)]
 pub struct ColumnAttr {
     pub ty: Option<ColumnAttrTy>,
     pub name: Option<String>,
@@ -192,7 +194,7 @@ impl TryFrom<Field> for Column {
 
 #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
 #[derive(darling::FromAttributes)]
-#[darling(attributes(db), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(db), forward_attrs(allow, doc))]
 pub struct TableAttr {
     #[darling(default)]
     pub model: bool,

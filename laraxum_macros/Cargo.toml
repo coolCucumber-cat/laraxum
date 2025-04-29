@@ -7,9 +7,9 @@ edition = "2024"
 proc-macro = true
 
 [dependencies]
-syn = { version = "2.0.100", features = ["full", "extra-traits"] }
+syn = { version = "2.0.101", features = ["full", "extra-traits"] }
 quote = "1.0.40"
-proc-macro2 = "1.0.94"
+proc-macro2 = "1.0.95"
 fmt2 = "0.3.4"
 darling = "0.20.11"
 
@@ -23,3 +23,6 @@ dev_default = ["mysql"]
 mysql = []
 postgres = []
 sqlite = []
+
+nightly = ["try_blocks"]
+try_blocks = []

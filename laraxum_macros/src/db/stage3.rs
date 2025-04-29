@@ -2,13 +2,17 @@ use crate::utils::syn::from_str_to_rs_ident;
 
 use super::stage2;
 
-use quote::quote;
-use syn::{Attribute, Ident, Type};
+use proc_macro2::Span;
+use quote::{quote, quote_spanned};
+use syn::{Attribute, Expr, Ident, Type, parse_quote_spanned, spanned::Spanned};
 
 use std::borrow::Cow;
 
 fn name_extern((parent, child): (&str, &str)) -> String {
     fmt2::fmt! { { str } => {parent} "__" {child} }
+}
+fn name_extern_triple((grandparent, parent, child): (&str, &str, &str)) -> String {
+    fmt2::fmt! { { str } => {grandparent} "__" {parent} "__" {child} }
 }
 fn name_intern((parent, child): (&str, &str)) -> String {
     fmt2::fmt! { { str } => {parent} "." {child} }
@@ -159,26 +163,36 @@ impl stage2::TyElementValue {
 
 impl stage2::TyElementAutoTime {
     fn sql_ty(&self) -> String {
-        let time_scalar_ty = AtomicTyTime::from(&self.ty);
-        let mut auto_time_ty = make_not_optional(time_scalar_ty.sql_ty);
-        fmt2::fmt! { (auto_time_ty) =>
-            " DEFAULT " {time_scalar_ty.sql_current_time_func}
+        let atomic_ty_time = AtomicTyTime::from(&self.ty);
+        let mut sql_ty = make_not_optional(atomic_ty_time.sql_ty);
+        fmt2::fmt! { (sql_ty) =>
+            " DEFAULT " {atomic_ty_time.sql_current_time_func}
         }
         if matches!(self.event, stage2::AutoTimeEvent::OnUpdate) {
-            fmt2::fmt! { (auto_time_ty) =>
-                " ON UPDATE " {time_scalar_ty.sql_current_time_func}
+            fmt2::fmt! { (sql_ty) =>
+                " ON UPDATE " {atomic_ty_time.sql_current_time_func}
             }
         }
-        auto_time_ty
+        sql_ty
     }
 }
 
-const SQL_TY_ID: &str = {
-    #[cfg(feature = "mysql")]
-    {
-        "BIGINT UNSIGNED NOT NULL UNIQUE PRIMARY KEY AUTO_INCREMENT"
+impl stage2::TyElement {
+    const SQL_TY_ID: &str = {
+        #[cfg(feature = "mysql")]
+        {
+            "BIGINT UNSIGNED NOT NULL UNIQUE PRIMARY KEY AUTO_INCREMENT"
+        }
+    };
+
+    fn sql_ty(&self) -> Cow<str> {
+        match self {
+            Self::Value(value) => value.sql_ty(),
+            Self::Id => Cow::Borrowed(Self::SQL_TY_ID),
+            Self::AutoTime(auto_time) => Cow::Owned(auto_time.sql_ty()),
+        }
     }
-};
+}
 
 impl stage2::TyCompound {
     fn sql_ty(&self, table_name: &str, table_id_name: &str) -> String {
@@ -265,21 +279,28 @@ impl Table {
                 pub #response_name: #rs_ty
             }
         }
-        fn response_column_getter_inner(name_extern: &str) -> proc_macro2::TokenStream {
-            let name_extern = from_str_to_rs_ident(name_extern);
+        fn response_column_getter_inner(name_extern: &str, span: Span) -> proc_macro2::TokenStream {
+            let mut name_extern = from_str_to_rs_ident(name_extern);
+            name_extern.set_span(span);
             quote! { response.#name_extern }
         }
+        // fn response_column_getter_inner(name_extern: &str) -> proc_macro2::TokenStream {
+        //     let name_extern = from_str_to_rs_ident(name_extern);
+        //     quote! { response.#name_extern }
+        // }
         fn response_column_getter(
             name_extern: &str,
             ty: &stage2::TyElement,
+            span: Span,
         ) -> proc_macro2::TokenStream {
-            ty.transform_response(response_column_getter_inner(name_extern))
+            ty.transform_response(response_column_getter_inner(name_extern, span))
         }
         fn response_column_getter_foreign(
             name_extern: &str,
             ty: &stage2::TyElement,
+            span: Span,
         ) -> proc_macro2::TokenStream {
-            let expr = response_column_getter_inner(name_extern);
+            let expr = response_column_getter_inner(name_extern, span);
             if ty.optional() {
                 ty.transform_response(expr)
             } else {
@@ -299,7 +320,24 @@ impl Table {
             optional: bool,
         ) -> proc_macro2::TokenStream {
             let columns = columns.into_iter().map(|(response_name, expr)| {
+                //                 let response_name_span = response_name.span();
+                //
+                //                 // let expr: Expr = parse_quote_spanned! { response_name_span=> (#expr) };
+                //                 // let expr = quote_spanned!(response_name_span=> (#expr));
+                //                 let expr = quote_spanned!(response_name_span=> { #expr });
+                //                 // let expr = quote_spanned!(response_name_span=> #expr);
+                //                 let expr_span = expr.span();
+                //                 let expr_source_text = expr_span.source_text();
+                //                 let response_name_source_text = response_name_span.source_text();
+                //                 println!(
+                //                     "response_name:{:?}, expr:{:?}",
+                //                     response_name_source_text,
+                //                     expr_source_text //
+                //                                      // response_name_span,
+                //                                      // expr_span
+                //                 );
                 quote! {
+                    // #[doc = #expr_source_text]
                     #response_name: #expr
                 }
             });
@@ -321,7 +359,9 @@ impl Table {
             quote! {
                 match #token_stream {
                     ::core::option::Option::Some(val) => ::core::result::Result::Ok(val),
-                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::RowNotFound),
+                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::ColumnNotFound("sussy".into())),
+                    // ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::WorkerCrashed),
+                    // ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::RowNotFound),
                     // ::core::option::Option::None => ::core::result::Result::Err(::laraxum::Error::Server),
                 }
             }
@@ -340,21 +380,20 @@ impl Table {
                     response_name,
                     request_name: _,
                     name,
-                    ty:
-                        stage2::ColumnTy {
-                            ty: virtual_ty,
-                            rs_ty: _,
-                        },
+                    ty: stage2::ColumnTy { ty, rs_ty: _ },
                     attrs: _,
                 } = column;
                 let name = &**name;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((table_name_extern, name));
 
-                let response_column_getter = match virtual_ty {
-                    stage2::Ty::Element(virtual_ty_inner) => {
-                        let response_column_getter =
-                            response_column_getter_foreign(&column_name_extern, virtual_ty_inner);
+                let response_column_getter = match ty {
+                    stage2::Ty::Element(ty_element) => {
+                        let response_column_getter = response_column_getter_foreign(
+                            &column_name_extern,
+                            ty_element,
+                            response_name.span(),
+                        );
 
                         response_columns_names.push(ResponseColumnName {
                             name_intern: column_name_intern,
@@ -363,13 +402,13 @@ impl Table {
 
                         response_column_getter
                     }
-                    stage2::Ty::Compund(foreign_ty) => {
-                        let foreign_table = stage2::find_table(db_tables, &foreign_ty.ty)
+                    stage2::Ty::Compund(ty_compound) => {
+                        let foreign_table = stage2::find_table(db_tables, &ty_compound.ty)
                             .expect("table does not exist");
 
                         let foreign_table_name_intern = name_intern((db_name, &foreign_table.name));
                         let foreign_table_name_extern =
-                            name_extern((table_name_extern, &foreign_table.name));
+                            name_extern_triple((table_name_extern, &foreign_table.name, name));
                         let foreign_table_id_name_intern =
                             name_intern((&*foreign_table_name_extern, &foreign_table.id_name));
 
@@ -384,7 +423,7 @@ impl Table {
                         let response_table_getter = response_table_getter(
                             &foreign_table.ty,
                             response_columns_getters,
-                            foreign_ty.optional,
+                            ty_compound.optional,
                         );
 
                         joins.push(Join {
@@ -425,22 +464,15 @@ impl Table {
 
             match ty {
                 stage2::Ty::Element(ty_element) => {
-                    match ty_element {
-                        stage2::TyElement::Value(real_ty) => {
-                            create_columns.push((name, real_ty.sql_ty()));
+                    let sql_ty = ty_element.sql_ty();
+                    create_columns.push((name, sql_ty));
 
-                            request_columns.push(RequestColumn {
-                                field: request_column_field(request_name, rs_ty),
-                                setter: request_column_setter(request_name),
-                                name,
-                            });
-                        }
-                        stage2::TyElement::Id => {
-                            create_columns.push((name, Cow::Borrowed(SQL_TY_ID)));
-                        }
-                        stage2::TyElement::AutoTime(auto_time_ty) => {
-                            create_columns.push((name, Cow::Owned(auto_time_ty.sql_ty())));
-                        }
+                    if let stage2::TyElement::Value(_) = ty_element {
+                        request_columns.push(RequestColumn {
+                            field: request_column_field(request_name, rs_ty),
+                            setter: request_column_setter(request_name),
+                            name,
+                        });
                     }
 
                     response_columns_fields.push(response_column_field(
@@ -450,28 +482,32 @@ impl Table {
                     ));
                     response_columns_getters.push((
                         response_name,
-                        response_column_getter(&column_name_extern, ty_element),
+                        response_column_getter(
+                            &column_name_extern,
+                            ty_element,
+                            response_name.span(),
+                        ),
                     ));
                     response_columns_names.push(ResponseColumnName {
                         name_intern: column_name_intern,
                         name_extern: column_name_extern,
                     });
                 }
-                stage2::Ty::Compund(foreign_ty) => {
-                    // let Some(foreign_table) = stage2::find_table(&db.tables, &foreign_ty.ident)
+                stage2::Ty::Compund(ty_compound) => {
+                    // let Some(foreign_table) = stage2::find_table(&db.tables, &ty_compound.ident)
                     // else {
                     //     continue;
                     // };
-                    let foreign_table = stage2::find_table(&db.tables, &foreign_ty.ty)
+                    let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
                         .expect("table does not exist");
 
-                    let sql_ty = foreign_ty.sql_ty(&foreign_table.name, &foreign_table.id_name);
+                    let sql_ty = ty_compound.sql_ty(&foreign_table.name, &foreign_table.id_name);
                     create_columns.push((name, Cow::Owned(sql_ty)));
 
                     request_columns.push(RequestColumn {
                         field: request_column_field(
                             request_name,
-                            &rs_ty_foreign_id(foreign_ty.optional),
+                            &rs_ty_foreign_id(ty_compound.optional),
                         ),
                         setter: request_column_setter(request_name),
                         name,
@@ -479,7 +515,7 @@ impl Table {
 
                     let foreign_table_name_intern = name_intern((&db.name, &foreign_table.name));
                     let foreign_table_name_extern =
-                        name_extern((&table_name_extern, &foreign_table.name));
+                        name_extern_triple((&table_name_extern, &foreign_table.name, name));
                     let foreign_table_id_name_intern =
                         name_intern((&*foreign_table_name_extern, &foreign_table.id_name));
 
@@ -494,7 +530,7 @@ impl Table {
                     let response_table_getter = response_table_getter(
                         &foreign_table.ty,
                         response_columns_getter,
-                        foreign_ty.optional,
+                        ty_compound.optional,
                     );
                     response_columns_getters.push((response_name, response_table_getter));
 

@@ -46,11 +46,11 @@ impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
         match error {
             sqlx::Error::RowNotFound => Self::NotFound,
-            #[cfg(debug_assertions)]
-            error => {
-                panic!("sql error: {error:?}");
-            }
-            #[cfg(not(debug_assertions))]
+            // #[cfg(debug_assertions)]
+            // error => {
+            //     panic!("sql error: {error:?}");
+            // }
+            // #[cfg(not(debug_assertions))]
             _ => Self::Server,
         }
     }
