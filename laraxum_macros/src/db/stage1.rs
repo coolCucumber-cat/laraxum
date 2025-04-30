@@ -129,7 +129,7 @@ impl TryFrom<&Type> for TyCompound {
 }
 
 #[derive(darling::FromMeta)]
-#[darling(default)]
+// #[darling(default)]
 pub enum ColumnAttrTy {
     #[darling(rename = "value")]
     Value(Type),
@@ -149,12 +149,31 @@ pub enum ColumnAttrTy {
     Text,
 }
 
+#[derive(darling::FromMeta, Default)]
+#[darling(default)]
+pub struct ColumnAttrResponse {
+    pub name: Option<String>,
+    pub ty: Option<Type>,
+    #[darling(default)]
+    pub skip: bool,
+}
+
+#[derive(darling::FromMeta, Default)]
+#[darling(default)]
+pub struct ColumnAttrRequest {
+    pub name: Option<String>,
+    pub ty: Option<Type>,
+    #[darling(default)]
+    pub skip: bool,
+}
+
 #[derive(darling::FromAttributes, Default)]
 #[darling(attributes(db), forward_attrs(doc, allow), default)]
 pub struct ColumnAttr {
-    pub ty: Option<ColumnAttrTy>,
     pub name: Option<String>,
-    pub request_name: Option<Ident>,
+    pub ty: Option<ColumnAttrTy>,
+    pub response: ColumnAttrResponse,
+    pub request: ColumnAttrRequest,
 
     pub attrs: Vec<Attribute>,
 }

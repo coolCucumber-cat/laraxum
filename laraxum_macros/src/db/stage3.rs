@@ -1,12 +1,11 @@
-use crate::utils::syn::from_str_to_rs_ident;
-
 use super::stage2;
 
-use proc_macro2::Span;
-use quote::{quote, quote_spanned};
-use syn::{Attribute, Expr, Ident, Type, parse_quote_spanned, spanned::Spanned};
+use crate::utils::syn::from_str_to_rs_ident;
 
 use std::borrow::Cow;
+
+use quote::quote;
+use syn::{Attribute, Ident, Type};
 
 fn name_extern((parent, child): (&str, &str)) -> String {
     fmt2::fmt! { { str } => {parent} "__" {child} }
@@ -279,9 +278,8 @@ impl Table {
                 pub #response_name: #rs_ty
             }
         }
-        fn response_column_getter_inner(name_extern: &str, span: Span) -> proc_macro2::TokenStream {
-            let mut name_extern = from_str_to_rs_ident(name_extern);
-            name_extern.set_span(span);
+        fn response_column_getter_inner(name_extern: &str) -> proc_macro2::TokenStream {
+            let name_extern = from_str_to_rs_ident(name_extern);
             quote! { response.#name_extern }
         }
         // fn response_column_getter_inner(name_extern: &str) -> proc_macro2::TokenStream {
@@ -291,16 +289,14 @@ impl Table {
         fn response_column_getter(
             name_extern: &str,
             ty: &stage2::TyElement,
-            span: Span,
         ) -> proc_macro2::TokenStream {
-            ty.transform_response(response_column_getter_inner(name_extern, span))
+            ty.transform_response(response_column_getter_inner(name_extern))
         }
         fn response_column_getter_foreign(
             name_extern: &str,
             ty: &stage2::TyElement,
-            span: Span,
         ) -> proc_macro2::TokenStream {
-            let expr = response_column_getter_inner(name_extern, span);
+            let expr = response_column_getter_inner(name_extern);
             if ty.optional() {
                 ty.transform_response(expr)
             } else {
@@ -377,23 +373,19 @@ impl Table {
         ) -> impl Iterator<Item = (&'columns Ident, proc_macro2::TokenStream)> {
             table_columns.iter().map(move |column| {
                 let stage2::Column {
-                    response_name,
-                    request_name: _,
-                    name,
-                    ty: stage2::ColumnTy { ty, rs_ty: _ },
-                    attrs: _,
+                    name: column_name,
+                    rs_name,
+                    ty,
+                    ..
                 } = column;
-                let name = &**name;
+                let column_name = &**column_name;
                 let (column_name_intern, column_name_extern) =
-                    name_intern_extern((table_name_extern, name));
+                    name_intern_extern((table_name_extern, column_name));
 
                 let response_column_getter = match ty {
                     stage2::Ty::Element(ty_element) => {
-                        let response_column_getter = response_column_getter_foreign(
-                            &column_name_extern,
-                            ty_element,
-                            response_name.span(),
-                        );
+                        let response_column_getter =
+                            response_column_getter_foreign(&column_name_extern, ty_element);
 
                         response_columns_names.push(ResponseColumnName {
                             name_intern: column_name_intern,
@@ -407,8 +399,11 @@ impl Table {
                             .expect("table does not exist");
 
                         let foreign_table_name_intern = name_intern((db_name, &foreign_table.name));
-                        let foreign_table_name_extern =
-                            name_extern_triple((table_name_extern, &foreign_table.name, name));
+                        let foreign_table_name_extern = name_extern_triple((
+                            table_name_extern,
+                            &foreign_table.name,
+                            column_name,
+                        ));
                         let foreign_table_id_name_intern =
                             name_intern((&*foreign_table_name_extern, &foreign_table.id_name));
 
@@ -436,7 +431,7 @@ impl Table {
                         response_table_getter
                     }
                 };
-                (response_name, response_column_getter)
+                (rs_name, response_column_getter)
             })
         }
 
@@ -451,42 +446,36 @@ impl Table {
 
         for column in &table.columns {
             let stage2::Column {
-                response_name,
-                request_name,
-                name,
-                ty: stage2::ColumnTy { ty, rs_ty },
+                name: column_name,
+                rs_name,
+                ty,
+                rs_ty,
+                response,
+                request,
                 attrs,
             } = column;
-            let name = &**name;
+            let column_name = &**column_name;
             let attrs = &**attrs;
             let (column_name_intern, column_name_extern) =
-                name_intern_extern((&*table_name_extern, name));
+                name_intern_extern((&*table_name_extern, column_name));
 
             match ty {
                 stage2::Ty::Element(ty_element) => {
                     let sql_ty = ty_element.sql_ty();
-                    create_columns.push((name, sql_ty));
+                    create_columns.push((column_name, sql_ty));
 
                     if let stage2::TyElement::Value(_) = ty_element {
                         request_columns.push(RequestColumn {
-                            field: request_column_field(request_name, rs_ty),
-                            setter: request_column_setter(request_name),
-                            name,
+                            field: request_column_field(rs_name, rs_ty),
+                            setter: request_column_setter(rs_name),
+                            name: column_name,
                         });
                     }
 
-                    response_columns_fields.push(response_column_field(
-                        response_name,
-                        rs_ty,
-                        attrs,
-                    ));
+                    response_columns_fields.push(response_column_field(rs_name, rs_ty, attrs));
                     response_columns_getters.push((
-                        response_name,
-                        response_column_getter(
-                            &column_name_extern,
-                            ty_element,
-                            response_name.span(),
-                        ),
+                        rs_name,
+                        response_column_getter(&column_name_extern, ty_element),
                     ));
                     response_columns_names.push(ResponseColumnName {
                         name_intern: column_name_intern,
@@ -502,20 +491,20 @@ impl Table {
                         .expect("table does not exist");
 
                     let sql_ty = ty_compound.sql_ty(&foreign_table.name, &foreign_table.id_name);
-                    create_columns.push((name, Cow::Owned(sql_ty)));
+                    create_columns.push((column_name, Cow::Owned(sql_ty)));
 
                     request_columns.push(RequestColumn {
                         field: request_column_field(
-                            request_name,
+                            rs_name,
                             &rs_ty_foreign_id(ty_compound.optional),
                         ),
-                        setter: request_column_setter(request_name),
-                        name,
+                        setter: request_column_setter(rs_name),
+                        name: column_name,
                     });
 
                     let foreign_table_name_intern = name_intern((&db.name, &foreign_table.name));
                     let foreign_table_name_extern =
-                        name_extern_triple((&table_name_extern, &foreign_table.name, name));
+                        name_extern_triple((&table_name_extern, &foreign_table.name, column_name));
                     let foreign_table_id_name_intern =
                         name_intern((&*foreign_table_name_extern, &foreign_table.id_name));
 
@@ -532,7 +521,7 @@ impl Table {
                         response_columns_getter,
                         ty_compound.optional,
                     );
-                    response_columns_getters.push((response_name, response_table_getter));
+                    response_columns_getters.push((rs_name, response_table_getter));
 
                     joins.push(Join {
                         foreign_table_name_intern,
@@ -541,11 +530,7 @@ impl Table {
                         column_name_intern,
                     });
 
-                    response_columns_fields.push(response_column_field(
-                        response_name,
-                        rs_ty,
-                        attrs,
-                    ));
+                    response_columns_fields.push(response_column_field(rs_name, rs_ty, attrs));
                 }
             }
         }

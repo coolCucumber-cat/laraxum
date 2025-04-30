@@ -1,5 +1,5 @@
-use super::stage1;
 pub use super::stage1::TyCompound;
+use super::stage1::{self, ColumnAttrRequest, ColumnAttrResponse};
 
 use crate::utils::collections::TryCollectAll;
 
@@ -163,36 +163,31 @@ impl Ty {
     }
 }
 
-pub struct ColumnTy {
+pub struct Column {
+    /// the name for the column in the database
+    pub name: String,
+    /// the name for the column in the struct
+    pub rs_name: Ident,
+    /// the type of the column
     /// the type for the column
     pub ty: Ty,
     /// the parsed rust type for the column
     pub rs_ty: Type,
-}
+    pub response: ColumnAttrResponse,
+    pub request: ColumnAttrRequest,
 
-pub struct Column {
-    /// the name for the column in the database
-    pub name: String,
-    /// the name for the column in the response
-    pub response_name: Ident,
-    /// the name for the column in the request
-    pub request_name: Ident,
-    /// the type of the column
-    pub ty: ColumnTy,
-    /// visibility
     pub attrs: Vec<Attribute>,
 }
 impl TryFrom<stage1::Column> for Column {
     type Error = syn::Error;
     fn try_from(column: stage1::Column) -> Result<Self, Self::Error> {
         let stage1::Column {
-            ident: response_name,
+            ident: rs_name,
             ty: rs_ty,
             attr,
         } = column;
 
-        let request_name = attr.request_name.unwrap_or_else(|| response_name.clone());
-        let name = attr.name.unwrap_or_else(|| request_name.to_string());
+        let name = attr.name.unwrap_or_else(|| rs_name.to_string());
 
         let column_attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match column_attr_ty {
@@ -248,10 +243,12 @@ impl TryFrom<stage1::Column> for Column {
         };
 
         Ok(Self {
-            response_name,
-            request_name,
             name,
-            ty: ColumnTy { ty, rs_ty },
+            rs_name,
+            ty,
+            rs_ty,
+            response: attr.response,
+            request: attr.request,
             attrs: attr.attrs,
         })
     }
@@ -300,10 +297,10 @@ impl TryFrom<stage1::Table> for Table {
         let mut id_name = None;
         let columns = columns.into_iter().map(|column| {
             let column = Column::try_from(column)?;
-            if let Ty::Element(TyElement::Id) = column.ty.ty {
+            if let Ty::Element(TyElement::Id) = column.ty {
                 if id_name.is_some() {
                     return Err(syn::Error::new(
-                        column.response_name.span(),
+                        column.rs_name.span(),
                         TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
                     ));
                 }

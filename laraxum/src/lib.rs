@@ -95,8 +95,8 @@ pub trait AnyDb: Sized {
     async fn connect_with_str(s: &str) -> Result<Self, sqlx::Error>;
     async fn connect() -> Result<Self, sqlx::Error> {
         let url = std::env::var("DATABASE_URL");
-        let url = url.expect("a valid DATABASE_URL");
-        // let url = url.map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+        // let url = url.expect("a valid DATABASE_URL");
+        let url = url.map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
         Self::connect_with_str(&url).await
     }
     fn db(&self) -> &Self::Db;
