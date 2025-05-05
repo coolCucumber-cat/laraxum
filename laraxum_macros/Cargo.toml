@@ -16,9 +16,8 @@ darling = "0.20.11"
 [features]
 default = [
 	# temp
-	"dev_default",
+	"mysql",
 ]
-dev_default = ["mysql"]
 
 mysql = []
 postgres = []

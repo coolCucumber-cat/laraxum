@@ -95,7 +95,6 @@ pub trait AnyDb: Sized {
     async fn connect_with_str(s: &str) -> Result<Self, sqlx::Error>;
     async fn connect() -> Result<Self, sqlx::Error> {
         let url = std::env::var("DATABASE_URL");
-        // let url = url.expect("a valid DATABASE_URL");
         let url = url.map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
         Self::connect_with_str(&url).await
     }
@@ -175,48 +174,121 @@ pub trait Controller: Model {
     }
 }
 
-// pub trait Route<S = (), E = core::convert::Infallible> {
-//     fn method_router() -> MethodRouter<S, E>;
+pub trait Decode {
+    type Decode;
+    fn decode(decode: Self::Decode) -> Self;
+}
+pub trait Encode {
+    type Encode;
+    fn encode(self) -> Self::Encode;
+}
+
+// impl<T> Decode for Option<T>
+// where
+//     T: Decode,
+// {
+//     type Decode = Option<T::Decode>;
+//     #[inline]
+//     fn decode(decode: Self::Decode) -> Self {
+//         decode.map(T::decode)
+//     }
 // }
-// pub trait RouteId<S = (), E = core::convert::Infallible> {
-//     fn method_router_id() -> MethodRouter<S, E>;
+// impl<T> Encode for Option<T>
+// where
+//     T: Encode,
+// {
+//     type Encode = Option<T::Encode>;
+//     #[inline]
+//     fn encode(self) -> Self::Encode {
+//         self.map(T::encode)
+//     }
 // }
 
-// impl<C> Route<C::State> for C
-// where
-//     C: Controller,
-// {
-//     fn method_router() -> MethodRouter<C::State> {
-//         MethodRouter::new().get(C::index).post(C::create)
-//     }
-// }
-// impl<C> RouteId<C::State> for C
-// where
-//     C: Controller,
-// {
-//     fn method_router_id() -> MethodRouter<C::State> {
-//         MethodRouter::new()
-//             .get(C::get)
-//             .patch(C::update)
-//             .delete(C::delete)
-//     }
-// }
-// impl<C, E> Route<C::State, E> for C
-// where
-//     C: Controller,
-// {
-//     fn method_router() -> MethodRouter<C::State, E> {
-//         MethodRouter::new().get(C::index).post(C::create)
-//     }
-// }
-// impl<C, E> RouteId<C::State, E> for C
-// where
-//     C: Controller,
-// {
-//     fn method_router_id() -> MethodRouter<C::State, E> {
-//         MethodRouter::new()
-//             .get(C::get)
-//             .patch(C::update)
-//             .delete(C::delete)
-//     }
-// }
+macro_rules! impl_encode_decode {
+    { $($ty:ty),* $(,)* } => {
+        $(
+            impl Decode for $ty {
+                type Decode = Self;
+                #[inline]
+                fn decode(decode: Self::Decode) -> Self {
+                    decode
+                }
+            }
+            impl Encode for $ty {
+                type Encode = Self;
+                #[inline]
+                fn encode(self) -> Self::Encode {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+impl_encode_decode! {
+    String,
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+    f32,
+    f64,
+}
+#[cfg(feature = "time")]
+impl_encode_decode! {
+    time::OffsetDateTime,
+    time::PrimitiveDateTime,
+    time::Date,
+    time::Time,
+    time::Duration,
+}
+#[cfg(feature = "chrono")]
+impl_encode_decode! {
+    chrono::DateTime::<chrono::Utc>,
+    chrono::DateTime::<chrono::Local>,
+    chrono::NaiveDateTime,
+    chrono::NaiveDate,
+    chrono::NaiveTime,
+    chrono::TimeDelta,
+}
+
+impl Decode for bool {
+    #[cfg(not(feature = "mysql"))]
+    type Decode = Self;
+    #[cfg(feature = "mysql")]
+    type Decode = i8;
+
+    #[inline]
+    fn decode(decode: Self::Decode) -> Self {
+        #[cfg(not(feature = "mysql"))]
+        {
+            decode
+        }
+        #[cfg(feature = "mysql")]
+        {
+            decode != 0
+        }
+    }
+}
+impl Encode for bool {
+    #[cfg(not(feature = "mysql"))]
+    type Encode = Self;
+    #[cfg(feature = "mysql")]
+    type Encode = i8;
+
+    #[inline]
+    fn encode(self) -> Self::Encode {
+        #[cfg(not(feature = "mysql"))]
+        {
+            self
+        }
+        #[cfg(feature = "mysql")]
+        {
+            self as i8
+        }
+    }
+}

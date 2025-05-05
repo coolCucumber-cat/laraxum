@@ -205,33 +205,33 @@ impl stage2::TyCompound {
     }
 }
 
-impl stage2::TyElement {
-    fn transform_response(&self, expr: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        type TransformFn = fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream;
-
-        #[allow(clippy::match_single_binding)]
-        let transform: Option<TransformFn> = match self {
-            #[cfg(feature = "mysql")]
-            Self::Value(stage2::TyElementValue {
-                ty: stage2::AtomicTy::bool,
-                optional: _,
-            }) => Some(|ts| quote! { #ts != 0 }),
-            _ => None,
-        };
-
-        if let Some(transform) = transform {
-            if self.optional() {
-                let val_name = quote! { val };
-                let transformed = transform(&val_name);
-                quote! { ::core::option::Option::map(#expr, |#val_name| #transformed) }
-            } else {
-                transform(&expr)
-            }
-        } else {
-            expr
-        }
-    }
-}
+// impl stage2::TyElement {
+//     fn transform_response(&self, expr: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+//         type TransformFn = fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream;
+//
+//         #[allow(clippy::match_single_binding)]
+//         let transform: Option<TransformFn> = match self {
+//             #[cfg(feature = "mysql")]
+//             Self::Value(stage2::TyElementValue {
+//                 ty: stage2::AtomicTy::bool,
+//                 optional: _,
+//             }) => Some(|ts| quote! { #ts != 0 }),
+//             _ => None,
+//         };
+//
+//         if let Some(transform) = transform {
+//             if self.optional() {
+//                 let val_name = quote! { val };
+//                 let transformed = transform(&val_name);
+//                 quote! { ::core::option::Option::map(#expr, |#val_name| #transformed) }
+//             } else {
+//                 transform(&expr)
+//             }
+//         } else {
+//             expr
+//         }
+//     }
+// }
 
 struct RequestColumn<'name> {
     name: &'name str,
@@ -259,56 +259,131 @@ struct Table {
 
 impl Table {
     fn new(table: &stage2::Table, db: &stage2::Db) -> Self {
-        fn request_column_field(request_name: &Ident, rs_ty: &Type) -> proc_macro2::TokenStream {
+        fn request_column_field(
+            rs_name: &Ident,
+            rs_ty: &Type,
+            attr: &stage2::ColumnAttrRequest,
+            rs_attrs: &[Attribute],
+        ) -> proc_macro2::TokenStream {
+            // let rs_ty: &Type = attr.ty.as_ref().unwrap_or(rs_ty);
+            let serde_skip = attr.skip.then(|| quote! { #[serde(skip)] });
+            let serde_name = attr
+                .name
+                .as_ref()
+                .map(|serde_name| quote! { #[serde(rename = #serde_name)] });
             quote! {
-                pub #request_name: #rs_ty
+                #(#rs_attrs)*
+                #serde_skip
+                #serde_name
+                pub #rs_name: #rs_ty
             }
         }
-        fn request_column_setter(request_name: &Ident) -> proc_macro2::TokenStream {
-            quote! { request.#request_name }
+        fn request_column_setter(
+            rs_name: &Ident,
+            optional: bool,
+            // inner_rs_ty: Option<&Type>,
+        ) -> proc_macro2::TokenStream {
+            // let ts = quote! { request.#name };
+            // if let Some(inner_rs_ty) = inner_rs_ty {
+            //     quote! { <#inner_rs_ty as ::core::convert::From<_>>::from(#ts) }
+            // } else {
+            //     ts
+            // }
+            // quote! { request.#name }
+
+            if optional {
+                quote! { ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode) }
+            } else {
+                quote! { ::laraxum::Encode::encode(request.#rs_name) }
+            }
         }
 
         fn response_column_field(
-            response_name: &Ident,
+            rs_name: &Ident,
             rs_ty: &Type,
-            attrs: &[Attribute],
+            attr: &stage2::ColumnAttrResponse,
+            rs_attrs: &[Attribute],
         ) -> proc_macro2::TokenStream {
+            // let rs_ty: &Type = attr.ty.as_ref().unwrap_or(rs_ty);
+            let serde_skip = attr.skip.then(|| quote! { #[serde(skip)] });
+            let serde_name = attr
+                .name
+                .as_ref()
+                .map(|serde_name| quote! { #[serde(rename = #serde_name)] });
             quote! {
-                #(#attrs)*
-                pub #response_name: #rs_ty
+                #(#rs_attrs)*
+                #serde_skip
+                #serde_name
+                pub #rs_name: #rs_ty
             }
         }
-        fn response_column_getter_inner(name_extern: &str) -> proc_macro2::TokenStream {
+        fn response_column_getter_field_access(name_extern: &str) -> proc_macro2::TokenStream {
             let name_extern = from_str_to_rs_ident(name_extern);
             quote! { response.#name_extern }
         }
-        // fn response_column_getter_inner(name_extern: &str) -> proc_macro2::TokenStream {
-        //     let name_extern = from_str_to_rs_ident(name_extern);
-        //     quote! { response.#name_extern }
-        // }
-        fn response_column_getter(
-            name_extern: &str,
-            ty: &stage2::TyElement,
+        fn response_column_getter_decode(
+            field_access: proc_macro2::TokenStream,
+            optional: bool,
         ) -> proc_macro2::TokenStream {
-            ty.transform_response(response_column_getter_inner(name_extern))
+            if optional {
+                quote! { ::core::option::Option::map(#field_access, ::laraxum::Decode::decode) }
+            } else {
+                quote! { ::laraxum::Decode::decode(#field_access) }
+            }
+        }
+        fn response_column_getter(name_extern: &str, optional: bool) -> proc_macro2::TokenStream {
+            response_column_getter_decode(
+                response_column_getter_field_access(name_extern),
+                optional,
+            )
         }
         fn response_column_getter_foreign(
             name_extern: &str,
-            ty: &stage2::TyElement,
+            optional: bool,
         ) -> proc_macro2::TokenStream {
-            let expr = response_column_getter_inner(name_extern);
-            if ty.optional() {
-                ty.transform_response(expr)
+            let field_access = response_column_getter_field_access(name_extern);
+            if optional {
+                response_column_getter_decode(field_access, true)
             } else {
-                let transform = ty.transform_response(quote! { val });
-                quote! {
-                    if let ::core::option::Option::Some(val) = #expr {
-                        #transform
-                    } else {
-                        break 'response_block ::core::option::Option::None;
+                #[cfg(feature = "try_blocks")]
+                {
+                    response_column_getter_decode(quote! { #field_access? }, false)
+                }
+                #[cfg(not(feature = "try_blocks"))]
+                {
+                    let decode = response_column_getter_decode(quote! { val }, false);
+                    quote! {
+                        match #field_access {
+                            ::core::option::Option::Some(val) => #decode,
+                            ::core::option::Option::None => break 'response_block ::core::option::Option::None,
+                        }
+                        // if let ::core::option::Option::Some(val) = #expr {
+                        //     val
+                        // } else {
+                        //     break 'response_block ::core::option::Option::None;
+                        // }
                     }
                 }
             }
+            // let expr = response_column_getter_inner(name_extern);
+            // if ty.optional() {
+            //     ty.transform_response(expr)
+            // } else {
+            //     let transform = ty.transform_response(quote! { val });
+            //     #[cfg(feature = "try_blocks")]
+            //     quote! {{
+            //         let val = #expr?;
+            //         #transform
+            //     }}
+            //     #[cfg(not(feature = "try_blocks"))]
+            //     quote! {
+            //         if let ::core::option::Option::Some(val) = #expr {
+            //             #transform
+            //         } else {
+            //             break 'response_block ::core::option::Option::None;
+            //         }
+            //     }
+            // }
         }
         fn response_table_getter<'response_name>(
             table_ty: &Ident,
@@ -316,29 +391,17 @@ impl Table {
             optional: bool,
         ) -> proc_macro2::TokenStream {
             let columns = columns.into_iter().map(|(response_name, expr)| {
-                //                 let response_name_span = response_name.span();
-                //
-                //                 // let expr: Expr = parse_quote_spanned! { response_name_span=> (#expr) };
-                //                 // let expr = quote_spanned!(response_name_span=> (#expr));
-                //                 let expr = quote_spanned!(response_name_span=> { #expr });
-                //                 // let expr = quote_spanned!(response_name_span=> #expr);
-                //                 let expr_span = expr.span();
-                //                 let expr_source_text = expr_span.source_text();
-                //                 let response_name_source_text = response_name_span.source_text();
-                //                 println!(
-                //                     "response_name:{:?}, expr:{:?}",
-                //                     response_name_source_text,
-                //                     expr_source_text //
-                //                                      // response_name_span,
-                //                                      // expr_span
-                //                 );
                 quote! {
-                    // #[doc = #expr_source_text]
                     #response_name: #expr
                 }
             });
             let getter = quote! { #table_ty { #( #columns ),* } };
             if optional {
+                #[cfg(feature = "try_blocks")]
+                quote! {
+                    try { #getter }
+                }
+                #[cfg(not(feature = "try_blocks"))]
                 quote! {
                     'response_block: {
                         ::core::option::Option::Some(#getter)
@@ -355,10 +418,7 @@ impl Table {
             quote! {
                 match #token_stream {
                     ::core::option::Option::Some(val) => ::core::result::Result::Ok(val),
-                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::ColumnNotFound("sussy".into())),
-                    // ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::WorkerCrashed),
-                    // ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::RowNotFound),
-                    // ::core::option::Option::None => ::core::result::Result::Err(::laraxum::Error::Server),
+                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::Decode("".into())),
                 }
             }
         }
@@ -384,8 +444,10 @@ impl Table {
 
                 let response_column_getter = match ty {
                     stage2::Ty::Element(ty_element) => {
-                        let response_column_getter =
-                            response_column_getter_foreign(&column_name_extern, ty_element);
+                        let response_column_getter = response_column_getter_foreign(
+                            &column_name_extern,
+                            ty_element.optional(),
+                        );
 
                         response_columns_names.push(ResponseColumnName {
                             name_intern: column_name_intern,
@@ -416,7 +478,7 @@ impl Table {
                             joins,
                         );
                         let response_table_getter = response_table_getter(
-                            &foreign_table.ty,
+                            &foreign_table.rs_name,
                             response_columns_getters,
                             ty_compound.optional,
                         );
@@ -450,9 +512,9 @@ impl Table {
                 rs_name,
                 ty,
                 rs_ty,
-                response,
-                request,
-                attrs,
+                attr_response: response,
+                attr_request: request,
+                rs_attrs: attrs,
             } = column;
             let column_name = &**column_name;
             let attrs = &**attrs;
@@ -466,16 +528,17 @@ impl Table {
 
                     if let stage2::TyElement::Value(_) = ty_element {
                         request_columns.push(RequestColumn {
-                            field: request_column_field(rs_name, rs_ty),
-                            setter: request_column_setter(rs_name),
+                            field: request_column_field(rs_name, rs_ty, request, attrs),
+                            setter: request_column_setter(rs_name, ty_element.optional()),
                             name: column_name,
                         });
                     }
 
-                    response_columns_fields.push(response_column_field(rs_name, rs_ty, attrs));
+                    response_columns_fields
+                        .push(response_column_field(rs_name, rs_ty, response, attrs));
                     response_columns_getters.push((
                         rs_name,
-                        response_column_getter(&column_name_extern, ty_element),
+                        response_column_getter(&column_name_extern, ty_element.optional()),
                     ));
                     response_columns_names.push(ResponseColumnName {
                         name_intern: column_name_intern,
@@ -497,8 +560,10 @@ impl Table {
                         field: request_column_field(
                             rs_name,
                             &rs_ty_foreign_id(ty_compound.optional),
+                            request,
+                            attrs,
                         ),
-                        setter: request_column_setter(rs_name),
+                        setter: request_column_setter(rs_name, ty_compound.optional),
                         name: column_name,
                     });
 
@@ -517,7 +582,7 @@ impl Table {
                         &mut joins,
                     );
                     let response_table_getter = response_table_getter(
-                        &foreign_table.ty,
+                        &foreign_table.rs_name,
                         response_columns_getter,
                         ty_compound.optional,
                     );
@@ -530,13 +595,14 @@ impl Table {
                         column_name_intern,
                     });
 
-                    response_columns_fields.push(response_column_field(rs_name, rs_ty, attrs));
+                    response_columns_fields
+                        .push(response_column_field(rs_name, rs_ty, response, attrs));
                 }
             }
         }
 
         let response_table_getter =
-            response_table_getter(&table.ty, response_columns_getters, true);
+            response_table_getter(&table.rs_name, response_columns_getters, true);
         let response_table_getter = map_option_to_result(response_table_getter);
 
         let id_name_intern = name_intern((&*table_name_extern, &*table.id_name));
@@ -557,7 +623,6 @@ impl Table {
                 " AS "
                 // "`"
                 {c.name_extern}
-                // {if c.optional { "?" } else { "!" }}
                 // "`"
             )
             " FROM " {table_name_intern} " AS " {table_name_extern}
@@ -591,47 +656,47 @@ impl Table {
 
         let doc = fmt2::fmt! { { str } => "`" {table_name_intern} "`"};
 
-        let table_ident = &table.ty;
-        let table_attrs = &*table.attrs;
-        let db_ident = &db.ident;
+        let table_rs_name = &table.rs_name;
+        let table_rs_attrs = &*table.rs_attrs;
+        let db_rs_name = &db.rs_name;
         let request_columns_fields = request_columns.iter().map(|c| &c.field);
         let request_columns_setters = request_columns.iter().map(|c| &c.setter);
         let request_columns_setter = quote! { #(#request_columns_setters,)* };
 
-        let controller_ts = if table.controller {
+        let controller_token_stream = if table.controller {
             quote! {
-                impl ::laraxum::Controller for #table_ident {
-                    type State = #db_ident;
+                impl ::laraxum::Controller for #table_rs_name {
+                    type State = #db_rs_name;
                 }
             }
         } else {
             quote! {}
         };
-        let table_request_struct_ident = quote::format_ident!("{}Request", table.ty);
+        let table_rs_name_request = quote::format_ident!("{}Request", table.rs_name);
         let table_token_stream = quote! {
             #[doc = #doc]
             #[derive(::serde::Serialize)]
-            #(#table_attrs)*
-            pub struct #table_ident {
+            #(#table_rs_attrs)*
+            pub struct #table_rs_name {
                 #(#response_columns_fields),*
             }
 
             #[derive(::serde::Deserialize)]
-            pub struct #table_request_struct_ident {
+            pub struct #table_rs_name_request {
                 #(#request_columns_fields),*
             }
 
-            impl ::laraxum::Db<#table_ident> for #db_ident {}
+            impl ::laraxum::Db<#table_rs_name> for #db_rs_name {}
 
-            impl ::laraxum::Table for #table_ident {
-                type Db = #db_ident;
-                type Response = #table_ident;
-                type Request = #table_request_struct_ident;
+            impl ::laraxum::Table for #table_rs_name {
+                type Db = #db_rs_name;
+                type Response = #table_rs_name;
+                type Request = #table_rs_name_request;
                 type RequestError = ();
                 type RequestQuery = ();
             }
 
-            impl ::laraxum::Model for #table_ident {
+            impl ::laraxum::Model for #table_rs_name {
                 /// `get_all`
                 ///
                 /// ```sql
@@ -669,9 +734,9 @@ impl Table {
                     -> ::core::result::Result::<::laraxum::Id, ::laraxum::Error>
                 {
                     let response = ::sqlx::query!(
-                        #create_one,
-                        #request_columns_setter
-                    )
+                            #create_one,
+                            #request_columns_setter
+                        )
                         .execute(&db.pool)
                         .await?;
                     ::core::result::Result::Ok(response.last_insert_id())
@@ -712,7 +777,7 @@ impl Table {
                 }
             }
 
-            #controller_ts
+            #controller_token_stream
         };
 
         Self {
@@ -762,7 +827,7 @@ impl From<stage2::Db> for Db {
         std::fs::write(root.join("migration_up_full.sql"), &migration_up_full).unwrap();
         std::fs::write(root.join("migration_down_full.sql"), &migration_down_full).unwrap();
 
-        let db_ident = &db.ident;
+        let db_ident = &db.rs_name;
         let db_pool_type = {
             #[cfg(feature = "mysql")]
             {

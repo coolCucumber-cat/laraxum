@@ -109,8 +109,8 @@ pub struct TyElementValue {
 impl TryFrom<&Type> for TyElementValue {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_optional_type(rs_ty);
-        let ty = AtomicTy::try_from(ty)?;
+        let (rs_ty, optional) = is_optional_type(rs_ty);
+        let ty = AtomicTy::try_from(rs_ty)?;
         Ok(Self { ty, optional })
     }
 }
@@ -122,8 +122,8 @@ pub struct TyCompound {
 impl TryFrom<&Type> for TyCompound {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (ty, optional) = is_optional_type(rs_ty);
-        let ty = parse_ident_from_type(ty)?.clone();
+        let (rs_ty, optional) = is_optional_type(rs_ty);
+        let ty = parse_ident_from_type(rs_ty)?.clone();
         Ok(Self { ty, optional })
     }
 }
@@ -172,15 +172,17 @@ pub struct ColumnAttrRequest {
 pub struct ColumnAttr {
     pub name: Option<String>,
     pub ty: Option<ColumnAttrTy>,
-    pub response: ColumnAttrResponse,
-    pub request: ColumnAttrRequest,
+    #[darling(rename = "response")]
+    pub attr_response: ColumnAttrResponse,
+    #[darling(rename = "request")]
+    pub attr_request: ColumnAttrRequest,
 
     pub attrs: Vec<Attribute>,
 }
 
 pub struct Column {
-    pub ident: Ident,
-    pub ty: Type,
+    pub rs_name: Ident,
+    pub rs_ty: Type,
     pub attr: ColumnAttr,
 }
 impl TryFrom<Field> for Column {
@@ -188,15 +190,15 @@ impl TryFrom<Field> for Column {
     fn try_from(field: Field) -> Result<Self, Self::Error> {
         let field_span = field.span();
         let Field {
-            attrs,
+            attrs: rs_attrs,
             vis,
             mutability,
-            ident,
+            ident: rs_name,
             colon_token: _,
-            ty,
+            ty: rs_ty,
         } = field;
 
-        let Some(ident) = ident else {
+        let Some(rs_name) = rs_name else {
             return Err(syn::Error::new(field_span, TABLE_MUST_BE_FIELD_STRUCT));
         };
         if !matches!(vis, Visibility::Inherited) {
@@ -206,8 +208,12 @@ impl TryFrom<Field> for Column {
             return Err(syn::Error::new(field_span, FIELD_MUST_NOT_BE_MUT));
         }
 
-        let attr = ColumnAttr::from_attributes(&attrs)?;
-        Ok(Self { ident, ty, attr })
+        let attr = ColumnAttr::from_attributes(&rs_attrs)?;
+        Ok(Self {
+            rs_name,
+            rs_ty,
+            attr,
+        })
     }
 }
 
@@ -225,10 +231,10 @@ pub struct TableAttr {
 }
 
 pub struct Table {
-    pub ident: Ident,
+    pub rs_name: Ident,
     pub columns: Vec<Column>,
     pub attr: TableAttr,
-    pub vis: Visibility,
+    pub rs_vis: Visibility,
 }
 impl TryFrom<Item> for Table {
     type Error = syn::Error;
@@ -237,39 +243,39 @@ impl TryFrom<Item> for Table {
             return Err(syn::Error::new(item.span(), TABLE_MUST_BE_STRUCT));
         };
         let ItemStruct {
-            attrs,
-            vis,
+            attrs: rs_attrs,
+            vis: rs_vis,
             struct_token: _,
-            ident,
-            generics,
-            fields,
+            ident: rs_name,
+            generics: rs_generics,
+            fields: rs_columns,
             semi_token: _,
         } = item_struct;
 
-        if !generics.params.is_empty() {
+        if !rs_generics.params.is_empty() {
             return Err(syn::Error::new(
-                generics.params.span(),
+                rs_generics.params.span(),
                 GENERICS_ARE_NOT_ALLOWED,
             ));
         }
-        if let Some(where_clause) = generics.where_clause {
+        if let Some(where_clause) = rs_generics.where_clause {
             return Err(syn::Error::new(
                 where_clause.span(),
                 GENERICS_ARE_NOT_ALLOWED,
             ));
         }
 
-        let columns = fields.into_iter().map(Column::try_from);
+        let columns = rs_columns.into_iter().map(Column::try_from);
         let columns: Result<Vec<Column>, syn::Error> = columns.collect();
         let columns = columns?;
 
-        let attr = TableAttr::from_attributes(&attrs)?;
+        let attr = TableAttr::from_attributes(&rs_attrs)?;
 
         Ok(Self {
-            ident,
+            rs_name,
             columns,
             attr,
-            vis,
+            rs_vis,
         })
     }
 }
@@ -288,9 +294,9 @@ impl TryFrom<proc_macro2::TokenStream> for DbAttr {
 }
 
 pub struct Db {
-    pub ident: Ident,
+    pub rs_name: Ident,
     pub tables: Vec<Table>,
-    pub vis: Visibility,
+    pub rs_vis: Visibility,
 }
 impl Parse for Db {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
@@ -302,33 +308,37 @@ impl TryFrom<Item> for Db {
     fn try_from(item: Item) -> Result<Self, Self::Error> {
         let item_span = item.span();
         let Item::Mod(ItemMod {
-            attrs,
-            vis,
-            unsafety,
+            attrs: rs_attrs,
+            vis: rs_vis,
+            unsafety: rs_unsafety,
             mod_token: _,
-            ident,
-            content,
+            ident: rs_name,
+            content: rs_tables,
             semi: _,
         }) = item
         else {
             return Err(syn::Error::new(item.span(), DB_ITEM_MUST_BE_MOD));
         };
 
-        if !attrs.is_empty() {
+        if !rs_attrs.is_empty() {
             return Err(syn::Error::new(item_span, DB_MOD_MUST_NOT_HAVE_ATTRS));
         }
-        if let Some(unsafety) = unsafety {
+        if let Some(unsafety) = rs_unsafety {
             return Err(syn::Error::new(unsafety.span(), DB_MOD_MUST_NOT_BE_UNSAFE));
         };
 
-        let Some((_, items)) = content else {
+        let Some((_, items)) = rs_tables else {
             return Err(syn::Error::new(item_span, DB_MOD_MUST_HAVE_CONTENT));
         };
         let tables = items.into_iter().map(Table::try_from);
         let tables: Result<Vec<Table>, syn::Error> = tables.collect();
         let tables = tables?;
 
-        Ok(Self { ident, tables, vis })
+        Ok(Self {
+            rs_name,
+            tables,
+            rs_vis,
+        })
     }
 }
 

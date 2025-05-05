@@ -1,9 +1,9 @@
-pub use super::stage1::TyCompound;
-use super::stage1::{self, ColumnAttrRequest, ColumnAttrResponse};
+use super::stage1;
+pub use super::stage1::{ColumnAttrRequest, ColumnAttrResponse, TyCompound};
 
 use crate::utils::collections::TryCollectAll;
 
-use syn::{Attribute, Ident, Type, Visibility, spanned::Spanned};
+use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
@@ -119,10 +119,10 @@ enum ColumnAttrTy {
     Element(ColumnAttrTyElement),
 }
 impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
-    fn from(column_attr_ty: Option<stage1::ColumnAttrTy>) -> Self {
+    fn from(attr_ty: Option<stage1::ColumnAttrTy>) -> Self {
         use ColumnAttrTyElement as CATE;
         use stage1::ColumnAttrTy as S1CAT;
-        match column_attr_ty {
+        match attr_ty {
             Some(S1CAT::Foreign) => Self::Compound,
 
             None => Self::Element(CATE::None),
@@ -169,41 +169,40 @@ pub struct Column {
     /// the name for the column in the struct
     pub rs_name: Ident,
     /// the type of the column
-    /// the type for the column
     pub ty: Ty,
     /// the parsed rust type for the column
     pub rs_ty: Type,
-    pub response: ColumnAttrResponse,
-    pub request: ColumnAttrRequest,
+    pub attr_response: ColumnAttrResponse,
+    pub attr_request: ColumnAttrRequest,
 
-    pub attrs: Vec<Attribute>,
+    pub rs_attrs: Vec<Attribute>,
 }
 impl TryFrom<stage1::Column> for Column {
     type Error = syn::Error;
     fn try_from(column: stage1::Column) -> Result<Self, Self::Error> {
         let stage1::Column {
-            ident: rs_name,
-            ty: rs_ty,
+            rs_name,
+            rs_ty,
             attr,
         } = column;
 
-        let name = attr.name.unwrap_or_else(|| rs_name.to_string());
+        let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
 
-        let column_attr_ty = ColumnAttrTy::from(attr.ty);
-        let ty = match column_attr_ty {
+        let attr_ty = ColumnAttrTy::from(attr.ty);
+        let ty = match attr_ty {
             ColumnAttrTy::Compound => {
                 let ty_compound = TyCompound::try_from(&rs_ty)?;
                 Ty::Compund(ty_compound)
             }
-            ColumnAttrTy::Element(column_attr_ty_element) => {
+            ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
-                let rs_ty = match column_attr_ty_element {
+                let rs_ty = match attr_ty_element {
                     CATE::Value(ref rs_ty) => rs_ty,
                     _ => &rs_ty,
                 };
                 let ty_element_value = stage1::TyElementValue::try_from(rs_ty)?;
                 let ty_element_value = TyElementValue::from(ty_element_value);
-                match column_attr_ty_element {
+                match attr_ty_element {
                     CATE::None | CATE::Value(_) => Ty::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
                         let TyElementValue { ty, optional } = ty_element_value;
@@ -220,6 +219,7 @@ impl TryFrom<stage1::Column> for Column {
                         let AtomicTy::String(_) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
                         };
+
                         Ty::Element(TyElement::Value(TyElementValue {
                             ty: AtomicTy::String(atomic_ty_string),
                             optional,
@@ -233,6 +233,7 @@ impl TryFrom<stage1::Column> for Column {
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         };
+
                         Ty::Element(TyElement::AutoTime(TyElementAutoTime {
                             ty,
                             event: auto_time_event,
@@ -247,9 +248,9 @@ impl TryFrom<stage1::Column> for Column {
             rs_name,
             ty,
             rs_ty,
-            response: attr.response,
-            request: attr.request,
-            attrs: attr.attrs,
+            attr_response: attr.attr_response,
+            attr_request: attr.attr_request,
+            rs_attrs: attr.attrs,
         })
     }
 }
@@ -258,7 +259,7 @@ pub struct Table {
     /// the name for the sql table, for example `customers`
     pub name: String,
     /// the name for the table struct, for example `Customer`
-    pub ty: Ident,
+    pub rs_name: Ident,
     /// the columns in the database
     pub columns: Vec<Column>,
     /// the name for the id of the table, for example `CustomerId`
@@ -268,31 +269,31 @@ pub struct Table {
     /// automatically implement the controller (model must be implemented), using the db as the state
     pub controller: bool,
     /// visibility
-    pub vis: Visibility,
+    pub rs_vis: Visibility,
     /// attributes
-    pub attrs: Vec<Attribute>,
+    pub rs_attrs: Vec<Attribute>,
 }
 impl TryFrom<stage1::Table> for Table {
     type Error = syn::Error;
     fn try_from(table: stage1::Table) -> Result<Self, Self::Error> {
         let stage1::Table {
-            ident: ty,
+            rs_name,
             columns,
             attr:
                 stage1::TableAttr {
                     controller,
                     model,
                     name,
-                    attrs,
+                    attrs: rs_attrs,
                 },
-            vis,
+            rs_vis,
         } = table;
 
         if controller && !model {
-            return Err(syn::Error::new(ty.span(), TABLE_MUST_IMPLEMENT_MODEL));
+            return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL));
         }
 
-        let name = name.unwrap_or_else(|| ty.to_string());
+        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         let mut id_name = None;
         let columns = columns.into_iter().map(|column| {
@@ -310,17 +311,17 @@ impl TryFrom<stage1::Table> for Table {
         });
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
-        let id_name = id_name.ok_or_else(|| syn::Error::new(ty.span(), TABLE_MUST_HAVE_ID))?;
+        let id_name = id_name.ok_or_else(|| syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_ID))?;
 
         Ok(Self {
             name,
-            ty,
+            rs_name,
             columns,
             id_name,
             model,
             controller,
-            vis,
-            attrs,
+            rs_vis,
+            rs_attrs,
         })
     }
 }
@@ -329,32 +330,36 @@ pub struct Db {
     /// the name of the database
     pub name: String,
     /// the name for the database module, for example `db`
-    pub ident: Ident,
+    pub rs_name: Ident,
     /// the tables in the database
     pub tables: Vec<Table>,
     /// visibility
-    pub vis: Visibility,
+    pub rs_vis: Visibility,
 }
 impl Db {
     pub fn try_new(db: stage1::Db, attr: stage1::DbAttr) -> syn::Result<Self> {
         let stage1::DbAttr { name } = attr;
-        let stage1::Db { ident, tables, vis } = db;
+        let stage1::Db {
+            rs_name,
+            tables,
+            rs_vis,
+        } = db;
 
-        let name = name.unwrap_or_else(|| ident.to_string());
+        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         let tables = tables.into_iter().map(Table::try_from);
         let tables: Result<Vec<Table>, syn::Error> = tables.try_collect_all_default();
         let tables = tables?;
 
         Ok(Self {
-            ident,
+            rs_name,
             name,
             tables,
-            vis,
+            rs_vis,
         })
     }
 }
 
 pub fn find_table<'a>(tables: &'a [Table], ident: &Ident) -> Option<&'a Table> {
-    tables.iter().find(|table| &table.ty == ident)
+    tables.iter().find(|table| &table.rs_name == ident)
 }
