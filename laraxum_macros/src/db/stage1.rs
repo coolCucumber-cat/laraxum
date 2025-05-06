@@ -1,4 +1,4 @@
-use crate::utils::multiplicity;
+use crate::utils::{multiplicity, syn::parse_type};
 
 use syn::{
     Attribute, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
@@ -18,86 +18,99 @@ const UNKNOWN_TYPE: &str = "unknown type";
 
 pub type StringLen = u16;
 
-macro_rules! ty_enum {
-    {
-        $(#[$meta:meta])*
-        $vis:vis enum $enum:ident {
-            $(
-                $(#[$variant_meta:meta])*
-                $ident:ident => $ty:ty
-            ),* $(,)?
-        }
-        // ;
-        // $(#[$mod_meta:meta])*
-        // $mod_vis:vis mod $mod_ident:ident;
-    } => {
-        $(#[$meta])*
-        $vis enum $enum {
-            $(
-                $(#[$variant_meta])*
-                $ident,
-            )*
-        }
+#[allow(non_camel_case_types)]
+#[derive(PartialEq, Eq)]
+pub enum AtomicTy {
+    String,
+    bool,
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+    f32,
+    f64,
 
-        impl<'ty> ::core::convert::TryFrom::<&'ty ::syn::Type> for $enum {
-            type Error = ::syn::Error;
+    /// TIMESTAMP
+    TimeOffsetDateTime,
+    /// DATETIME
+    TimeDateTime,
+    /// DATE
+    TimeDate,
+    /// TIME
+    TimeTime,
+    /// TIME
+    TimeDuration,
 
-            fn try_from(ty: &'ty ::syn::Type) -> ::core::result::Result::<Self, Self::Error> {
-                $(
-                    {
-                        let ty_cmp: ::syn::Type = ::syn::parse_quote! { $ty };
-                        if ty == &ty_cmp {
-                            return ::core::result::Result::Ok(Self::$ident);
-                        }
-                    }
-                )*
-                let span = ::syn::spanned::Spanned::span(&ty);
-                ::core::result::Result::Err(::syn::Error::new(span, UNKNOWN_TYPE))
-            }
-        }
-    };
+    /// TIMESTAMP
+    ChronoDateTimeUtc,
+    /// TIMESTAMP
+    ChronoDateTimeLocal,
+    /// DATETIME
+    ChronoNaiveDateTime,
+    /// DATE
+    ChronoNaiveDate,
+    /// TIME
+    ChronoNaiveTime,
+    /// TIME
+    ChronoTimeDelta,
 }
 
-ty_enum! {
-    #[allow(non_camel_case_types)]
-    #[derive(PartialEq, Eq)]
-    pub enum AtomicTy {
-        String => String,
-        bool => bool,
-        u8 => u8,
-        i8 => i8,
-        u16 => u16,
-        i16 => i16,
-        u32 => u32,
-        i32 => i32,
-        u64 => u64,
-        i64 => i64,
-        f32 => f32,
-        f64 => f64,
-
-        /// TIMESTAMP
-        TimeOffsetDateTime => time::OffsetDateTime,
-        /// DATETIME
-        TimeDateTime => time::PrimitiveDateTime,
-        /// DATE
-        TimeDate => time::Date,
-        /// TIME
-        TimeTime => time::Time,
-        /// TIME
-        TimeDuration => time::Duration,
-
-        /// TIMESTAMP
-        ChronoDateTimeUtc => chrono::DateTime<chrono::Utc>,
-        /// TIMESTAMP
-        ChronoDateTimeLocal => chrono::DateTime<chrono::Local>,
-        /// DATETIME
-        ChronoNaiveDateTime => chrono::NaiveDateTime,
-        /// DATE
-        ChronoNaiveDate => chrono::NaiveDate,
-        /// TIME
-        ChronoNaiveTime => chrono::NaiveTime,
-        /// TIME
-        ChronoTimeDelta => chrono::TimeDelta,
+impl TryFrom<&Type> for AtomicTy {
+    type Error = syn::Error;
+    fn try_from(ty: &Type) -> Result<Self, Self::Error> {
+        if ty == &parse_type!(String) {
+            Ok(Self::String)
+        } else if ty == &parse_type!(bool) {
+            Ok(Self::bool)
+        } else if ty == &parse_type!(u8) {
+            Ok(Self::u8)
+        } else if ty == &parse_type!(i8) {
+            Ok(Self::i8)
+        } else if ty == &parse_type!(u16) {
+            Ok(Self::u16)
+        } else if ty == &parse_type!(i16) {
+            Ok(Self::i16)
+        } else if ty == &parse_type!(u32) {
+            Ok(Self::u32)
+        } else if ty == &parse_type!(i32) {
+            Ok(Self::i32)
+        } else if ty == &parse_type!(u64) {
+            Ok(Self::u64)
+        } else if ty == &parse_type!(i64) {
+            Ok(Self::i64)
+        } else if ty == &parse_type!(f32) {
+            Ok(Self::f32)
+        } else if ty == &parse_type!(f64) {
+            Ok(Self::f64)
+        } else if ty == &parse_type!(time::OffsetDateTime) {
+            Ok(Self::TimeOffsetDateTime)
+        } else if ty == &parse_type!(time::PrimitiveDateTime) {
+            Ok(Self::TimeDateTime)
+        } else if ty == &parse_type!(time::Date) {
+            Ok(Self::TimeDate)
+        } else if ty == &parse_type!(time::Time) {
+            Ok(Self::TimeTime)
+        } else if ty == &parse_type!(time::Duration) {
+            Ok(Self::TimeDuration)
+        } else if ty == &parse_type!(chrono::DateTime<chrono::Utc>) {
+            Ok(Self::ChronoDateTimeUtc)
+        } else if ty == &parse_type!(chrono::DateTime<chrono::Local>) {
+            Ok(Self::ChronoDateTimeLocal)
+        } else if ty == &parse_type!(chrono::NaiveDateTime) {
+            Ok(Self::ChronoNaiveDateTime)
+        } else if ty == &parse_type!(chrono::NaiveDate) {
+            Ok(Self::ChronoNaiveDate)
+        } else if ty == &parse_type!(chrono::NaiveTime) {
+            Ok(Self::ChronoNaiveTime)
+        } else if ty == &parse_type!(chrono::TimeDelta) {
+            Ok(Self::ChronoTimeDelta)
+        } else {
+            Err(syn::Error::new(ty.span(), UNKNOWN_TYPE))
+        }
     }
 }
 

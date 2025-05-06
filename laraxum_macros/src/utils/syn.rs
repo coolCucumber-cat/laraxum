@@ -11,6 +11,14 @@ use syn::{
 
 const EXPECTED_IDENT: &str = "expected identifier";
 
+macro_rules! parse_type {
+    ($ty:ty) => {{
+        let ty: ::syn::Type = ::syn::parse_quote! { $ty };
+        ty
+    }};
+}
+pub(crate) use parse_type;
+
 pub fn from_str_to_rs_ident(s: &str) -> Ident {
     quote::format_ident!("{s}")
 }
@@ -87,13 +95,4 @@ pub fn parse_type_single_arg_from_path_segments(
         return None;
     };
     Some((ident, ty2))
-}
-
-pub fn parse_option_from_ty(ty: &Type) -> Option<&Type> {
-    let path_segments = parse_path_segments_from_type(ty)?;
-    let ty = parse_type_single_arg_from_path_segments(path_segments);
-    ty.and_then(|(ident, ty)| (ident == "Option").then_some(ty))
-}
-pub fn is_optional_type(ty: &Type) -> (&Type, bool) {
-    super::map_is_some(ty, parse_option_from_ty)
 }
