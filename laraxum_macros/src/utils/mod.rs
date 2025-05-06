@@ -1,4 +1,5 @@
 pub mod collections;
+pub mod multiplicity;
 pub mod syn;
 
 pub fn map_is_some<T, F>(value: &T, f: F) -> (&T, bool)

@@ -46,11 +46,11 @@ impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
         match error {
             sqlx::Error::RowNotFound => Self::NotFound,
-            // #[cfg(debug_assertions)]
-            // error => {
-            //     panic!("sql error: {error:?}");
-            // }
-            // #[cfg(not(debug_assertions))]
+            #[cfg(debug_assertions)]
+            error => {
+                panic!("sql error: {error:?}");
+            }
+            #[cfg(not(debug_assertions))]
             _ => Self::Server,
         }
     }
@@ -182,27 +182,6 @@ pub trait Encode {
     type Encode;
     fn encode(self) -> Self::Encode;
 }
-
-// impl<T> Decode for Option<T>
-// where
-//     T: Decode,
-// {
-//     type Decode = Option<T::Decode>;
-//     #[inline]
-//     fn decode(decode: Self::Decode) -> Self {
-//         decode.map(T::decode)
-//     }
-// }
-// impl<T> Encode for Option<T>
-// where
-//     T: Encode,
-// {
-//     type Encode = Option<T::Encode>;
-//     #[inline]
-//     fn encode(self) -> Self::Encode {
-//         self.map(T::encode)
-//     }
-// }
 
 macro_rules! impl_encode_decode {
     { $($ty:ty),* $(,)* } => {

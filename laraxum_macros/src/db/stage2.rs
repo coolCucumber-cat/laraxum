@@ -114,16 +114,23 @@ enum ColumnAttrTyElement {
     AutoTime(AutoTimeEvent),
 }
 
+enum ColumnAttrTyCompound {
+    One,
+    Many(Ident),
+}
+
 enum ColumnAttrTy {
-    Compound,
+    Compound(ColumnAttrTyCompound),
     Element(ColumnAttrTyElement),
 }
 impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
     fn from(attr_ty: Option<stage1::ColumnAttrTy>) -> Self {
+        use ColumnAttrTyCompound as CATC;
         use ColumnAttrTyElement as CATE;
-        use stage1::ColumnAttrTy as S1CAT;
+        use stage1::{ColumnAttrTy as S1CAT, ColumnAttrTyCompound as S1CATF};
         match attr_ty {
-            Some(S1CAT::Foreign) => Self::Compound,
+            Some(S1CAT::Compound(S1CATF { many: None })) => Self::Compound(CATC::One),
+            Some(S1CAT::Compound(S1CATF { many: Some(many) })) => Self::Compound(CATC::Many(many)),
 
             None => Self::Element(CATE::None),
             Some(S1CAT::Value(rs_ty)) => Self::Element(CATE::Value(rs_ty)),
@@ -157,22 +164,24 @@ pub enum Ty {
 impl Ty {
     pub fn optional(&self) -> bool {
         match self {
-            Self::Compund(compound) => compound.optional,
+            Self::Compund(compound) => compound.multiplicity.optional(),
             Self::Element(element) => element.optional(),
         }
     }
 }
 
 pub struct Column {
-    /// the name for the column in the database
+    /// the name of the column in the database
     pub name: String,
-    /// the name for the column in the struct
+    /// the name of the column in the rust struct
     pub rs_name: Ident,
     /// the type of the column
     pub ty: Ty,
-    /// the parsed rust type for the column
+    /// the type of the column in the rust struct
     pub rs_ty: Type,
+    /// the response attribute of the column
     pub attr_response: ColumnAttrResponse,
+    /// the request attribute of the column
     pub attr_request: ColumnAttrRequest,
 
     pub rs_attrs: Vec<Attribute>,
@@ -190,7 +199,7 @@ impl TryFrom<stage1::Column> for Column {
 
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {
-            ColumnAttrTy::Compound => {
+            ColumnAttrTy::Compound(attr_ty_compound) => {
                 let ty_compound = TyCompound::try_from(&rs_ty)?;
                 Ty::Compund(ty_compound)
             }

@@ -19,14 +19,14 @@ pub fn parse_curly_brackets(input: ParseStream) -> syn::Result<ParseBuffer> {
     Ok(syn::__private::parse_braces(input)?.content)
 }
 
-pub(crate) fn parse_exactly_one_punctuated<T, P>(punctuated: &Punctuated<T, P>) -> Option<&T> {
+pub fn parse_exactly_one_punctuated<T, P>(punctuated: &Punctuated<T, P>) -> Option<&T> {
     match punctuated.first() {
         Some(ident) if punctuated.len() == 1 => Some(ident),
         _ => None,
     }
 }
 
-pub(crate) fn parse_path_segments_from_type_path(
+pub fn parse_path_segments_from_type_path(
     path: &TypePath,
 ) -> Option<&Punctuated<PathSegment, Token![::]>> {
     if let TypePath {
@@ -38,6 +38,13 @@ pub(crate) fn parse_path_segments_from_type_path(
     } = path
     {
         Some(segments)
+    } else {
+        None
+    }
+}
+pub fn parse_path_segments_from_type(ty: &Type) -> Option<&Punctuated<PathSegment, Token![::]>> {
+    if let Type::Path(path) = ty {
+        parse_path_segments_from_type_path(path)
     } else {
         None
     }
@@ -56,32 +63,18 @@ pub fn parse_ident_from_path_segments(
         Err(syn::Error::new(path_segments.span(), EXPECTED_IDENT))
     }
 }
-
 pub fn parse_ident_from_type(ty: &Type) -> Result<&Ident, syn::Error> {
-    let path_segments = if let Type::Path(path) = ty {
-        parse_path_segments_from_type_path(path)
-    } else {
-        None
-    };
+    let path_segments = parse_path_segments_from_type(ty);
     if let Some(path_segments) = path_segments {
         parse_ident_from_path_segments(path_segments)
     } else {
         Err(syn::Error::new(ty.span(), EXPECTED_IDENT))
     }
-    // if let Type::Path(path) = ty {
-    //     if let Some(path_segments) = parse_path_segments_from_type_path(path) {
-    //         parse_ident_from_path_segments(path_segments)
-    //     } else {
-    //         syn::Error::new(ty.span(), EXPECTED_IDENT)
-    //     }
-    // } else {
-    //     syn::Error::new(ty.span(), EXPECTED_IDENT)
-    // }
 }
 
-pub fn parse_option_from_path_segments(
+pub fn parse_type_single_arg_from_path_segments(
     path_segments: &Punctuated<PathSegment, Token![::]>,
-) -> Option<&Type> {
+) -> Option<(&Ident, &Type)> {
     let Some(PathSegment {
         ident,
         arguments: syn::PathArguments::AngleBracketed(args),
@@ -89,28 +82,18 @@ pub fn parse_option_from_path_segments(
     else {
         return None;
     };
-    if ident != "Option" {
-        return None;
-    }
     let args = &args.args;
     let Some(GenericArgument::Type(ty2)) = parse_exactly_one_punctuated(args) else {
         return None;
     };
-    Some(ty2)
+    Some((ident, ty2))
 }
 
 pub fn parse_option_from_ty(ty: &Type) -> Option<&Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let path_segments = parse_path_segments_from_type_path(path)?;
-    parse_option_from_path_segments(path_segments)
+    let path_segments = parse_path_segments_from_type(ty)?;
+    let ty = parse_type_single_arg_from_path_segments(path_segments);
+    ty.and_then(|(ident, ty)| (ident == "Option").then_some(ty))
 }
-
 pub fn is_optional_type(ty: &Type) -> (&Type, bool) {
     super::map_is_some(ty, parse_option_from_ty)
 }
-
-// pub fn is_optional_type_cow<'ty>(ty: Cow<'ty, Type>) -> (Cow<'ty, Type>, bool) {
-//     cow_try_and_then_is_some(ty, |ty| parse_option_from_ty(ty).map(Cow::Borrowed))
-// }

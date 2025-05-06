@@ -1,6 +1,5 @@
-use crate::utils::syn::{is_optional_type, parse_ident_from_type};
+use crate::utils::multiplicity;
 
-use darling::{FromAttributes, FromMeta};
 use syn::{
     Attribute, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
     parse::Parse, spanned::Spanned,
@@ -109,7 +108,7 @@ pub struct TyElementValue {
 impl TryFrom<&Type> for TyElementValue {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (rs_ty, optional) = is_optional_type(rs_ty);
+        let (rs_ty, optional) = multiplicity::optional(rs_ty);
         let ty = AtomicTy::try_from(rs_ty)?;
         Ok(Self { ty, optional })
     }
@@ -117,43 +116,44 @@ impl TryFrom<&Type> for TyElementValue {
 
 pub struct TyCompound {
     pub ty: Ident,
-    pub optional: bool,
+    pub multiplicity: multiplicity::Multiplicity,
 }
 impl TryFrom<&Type> for TyCompound {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (rs_ty, optional) = is_optional_type(rs_ty);
-        let ty = parse_ident_from_type(rs_ty)?.clone();
-        Ok(Self { ty, optional })
+        let (rs_ty, multiplicity) = multiplicity::multiplicity(rs_ty);
+        let ty = crate::utils::syn::parse_ident_from_type(rs_ty)?.clone();
+        Ok(Self { ty, multiplicity })
     }
 }
 
+#[derive(darling::FromMeta, Default)]
+pub struct ColumnAttrTyCompound {
+    pub many: Option<Ident>,
+}
+
 #[derive(darling::FromMeta)]
-// #[darling(default)]
+#[darling(rename_all = "snake_case")]
 pub enum ColumnAttrTy {
-    #[darling(rename = "value")]
-    Value(Type),
-    #[darling(rename = "id")]
-    Id,
     #[darling(rename = "foreign")]
-    Foreign,
-    #[darling(rename = "on_create")]
-    OnCreate,
-    #[darling(rename = "on_update")]
-    OnUpdate,
-    #[darling(rename = "varchar")]
+    Compound(ColumnAttrTyCompound),
+
+    Id,
+
+    Value(Type),
     Varchar(StringLen),
-    #[darling(rename = "char")]
     Char(StringLen),
-    #[darling(rename = "text")]
     Text,
+
+    OnCreate,
+    OnUpdate,
 }
 
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrResponse {
     pub name: Option<String>,
-    pub ty: Option<Type>,
+    // pub ty: Option<Type>,
     #[darling(default)]
     pub skip: bool,
 }
@@ -162,7 +162,7 @@ pub struct ColumnAttrResponse {
 #[darling(default)]
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
-    pub ty: Option<Type>,
+    // pub ty: Option<Type>,
     #[darling(default)]
     pub skip: bool,
 }
@@ -208,7 +208,7 @@ impl TryFrom<Field> for Column {
             return Err(syn::Error::new(field_span, FIELD_MUST_NOT_BE_MUT));
         }
 
-        let attr = ColumnAttr::from_attributes(&rs_attrs)?;
+        let attr = <ColumnAttr as darling::FromAttributes>::from_attributes(&rs_attrs)?;
         Ok(Self {
             rs_name,
             rs_ty,
@@ -269,7 +269,7 @@ impl TryFrom<Item> for Table {
         let columns: Result<Vec<Column>, syn::Error> = columns.collect();
         let columns = columns?;
 
-        let attr = TableAttr::from_attributes(&rs_attrs)?;
+        let attr = <TableAttr as darling::FromAttributes>::from_attributes(&rs_attrs)?;
 
         Ok(Self {
             rs_name,
@@ -288,7 +288,7 @@ impl TryFrom<proc_macro2::TokenStream> for DbAttr {
     type Error = syn::Error;
     fn try_from(input: proc_macro2::TokenStream) -> Result<Self, Self::Error> {
         let metas = darling::ast::NestedMeta::parse_meta_list(input)?;
-        let attr = Self::from_list(&metas)?;
+        let attr = <Self as darling::FromMeta>::from_list(&metas)?;
         Ok(attr)
     }
 }
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn table_attr() {
         let attr: Attribute = syn::parse_quote!(#[db(name = "groups")]);
-        let table_attr = TableAttr::from_attributes(&[attr]).unwrap();
+        let table_attr = <TableAttr as darling::FromAttributes>::from_attributes(&[attr]).unwrap();
         assert_eq!(
             table_attr,
             TableAttr {
