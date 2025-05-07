@@ -20,20 +20,7 @@ fn name_intern_extern(parent_child: (&str, &str)) -> (String, String) {
     (name_intern(parent_child), name_extern(parent_child))
 }
 
-fn make_not_optional(sql_ty: impl Into<String>) -> String {
-    let mut sql_ty = sql_ty.into();
-    fmt2::fmt! { (sql_ty) => " NOT NULL" };
-    sql_ty
-}
-fn make_maybe_optional(sql_ty: Cow<str>, optional: bool) -> Cow<str> {
-    if optional {
-        sql_ty
-    } else {
-        Cow::Owned(make_not_optional(sql_ty.into_owned()))
-    }
-}
-
-fn rs_ty_foreign_id(optional: bool) -> Type {
+fn rs_ty_compound_request(optional: bool) -> Type {
     if optional {
         syn::parse_quote!(Option<u64>)
     } else {
@@ -42,7 +29,7 @@ fn rs_ty_foreign_id(optional: bool) -> Type {
 }
 
 impl stage2::AtomicTyString {
-    fn sql_ty(&self) -> Cow<'static, str> {
+    fn ty(&self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
         match self {
             Self::Varchar(len) => Cow::Owned(fmt2::fmt! { { str } => "VARCHAR(" {len} ")" }),
@@ -53,188 +40,202 @@ impl stage2::AtomicTyString {
 }
 
 impl stage2::AtomicTyTime {
-    fn sql_ty(&self) -> &'static str {
-        AtomicTyTime::from(self).sql_ty
+    fn ty(&self) -> &'static str {
+        AtomicTyTime::from(self).ty
     }
 }
 
 struct AtomicTyTime {
-    sql_ty: &'static str,
-    sql_current_time_func: &'static str,
+    ty: &'static str,
+    current_time_func: &'static str,
 }
 impl From<&stage2::AtomicTyTime> for AtomicTyTime {
     fn from(ty: &stage2::AtomicTyTime) -> Self {
         #[cfg(feature = "mysql")]
         match ty {
             stage2::AtomicTyTime::ChronoDateTimeUtc => Self {
-                sql_ty: "TIMESTAMP",
-                sql_current_time_func: "UTC_TIMESTAMP()",
+                ty: "TIMESTAMP",
+                current_time_func: "UTC_TIMESTAMP()",
             },
             stage2::AtomicTyTime::ChronoDateTimeLocal
             | stage2::AtomicTyTime::TimeOffsetDateTime => Self {
-                sql_ty: "TIMESTAMP",
-                sql_current_time_func: "CURRENT_TIMESTAMP()",
+                ty: "TIMESTAMP",
+                current_time_func: "CURRENT_TIMESTAMP()",
             },
             stage2::AtomicTyTime::ChronoNaiveDateTime
             | stage2::AtomicTyTime::TimePrimitiveDateTime => Self {
-                sql_ty: "DATETIME",
-                sql_current_time_func: "CURRENT_TIMESTAMP()",
+                ty: "DATETIME",
+                current_time_func: "CURRENT_TIMESTAMP()",
             },
             stage2::AtomicTyTime::ChronoNaiveDate | stage2::AtomicTyTime::TimeDate => Self {
-                sql_ty: "DATE",
-                sql_current_time_func: "CURRENT_DATE()",
+                ty: "DATE",
+                current_time_func: "CURRENT_DATE()",
             },
             stage2::AtomicTyTime::ChronoNaiveTime
             | stage2::AtomicTyTime::TimeTime
             | stage2::AtomicTyTime::ChronoTimeDelta
             | stage2::AtomicTyTime::TimeDuration => Self {
-                sql_ty: "TIME",
-                sql_current_time_func: "CURRENT_TIME()",
+                ty: "TIME",
+                current_time_func: "CURRENT_TIME()",
             },
         }
     }
 }
 
 impl stage2::AtomicTy {
-    fn sql_ty(&self) -> Cow<'static, str> {
+    fn ty(&self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
-        {
-            match self {
-                Self::bool => Cow::Borrowed("BOOL"),
-                Self::u8 => Cow::Borrowed("TINYINT UNSIGNED"),
-                Self::i8 => Cow::Borrowed("TINYINT"),
-                Self::u16 => Cow::Borrowed("SMALLINT UNSIGNED"),
-                Self::i16 => Cow::Borrowed("SMALLINT"),
-                Self::u32 => Cow::Borrowed("INT UNSIGNED"),
-                Self::i32 => Cow::Borrowed("INT"),
-                Self::u64 => Cow::Borrowed("BIGINT UNSIGNED"),
-                Self::i64 => Cow::Borrowed("BIGINT"),
-                Self::f32 => Cow::Borrowed("FLOAT"),
-                Self::f64 => Cow::Borrowed("DOUBLE"),
+        match self {
+            Self::bool => Cow::Borrowed("BOOL"),
+            Self::u8 => Cow::Borrowed("TINYINT UNSIGNED"),
+            Self::i8 => Cow::Borrowed("TINYINT"),
+            Self::u16 => Cow::Borrowed("SMALLINT UNSIGNED"),
+            Self::i16 => Cow::Borrowed("SMALLINT"),
+            Self::u32 => Cow::Borrowed("INT UNSIGNED"),
+            Self::i32 => Cow::Borrowed("INT"),
+            Self::u64 => Cow::Borrowed("BIGINT UNSIGNED"),
+            Self::i64 => Cow::Borrowed("BIGINT"),
+            Self::f32 => Cow::Borrowed("FLOAT"),
+            Self::f64 => Cow::Borrowed("DOUBLE"),
 
-                Self::String(string) => string.sql_ty(),
-                Self::Time(time) => Cow::Borrowed(time.sql_ty()),
-            }
+            Self::String(string) => string.ty(),
+            Self::Time(time) => Cow::Borrowed(time.ty()),
         }
 
-        // #[cfg(feature = "postgres")]
-        // ty_enum! {
-        //     enum ColumnTyPrimitiveInner {
-        //         Id(Id) => u64 => "SERIAL PRIMARY KEY",
-        //         String(String) => ::std::string::String => "VARCHAR(255)",
-        //         bool(bool) => bool => "BOOL",
-        //         i8(i8) => i8 => "CHAR",  // TINYINT
-        //         i16(i16) => i16 => "INT2", // SMALLINT
-        //         i32(i32) => i32 => "INT4", // INT
-        //         i64(i64) => i64 => "INT8", // BIGINT
-        //         f32(f32) => f32 => "FLOAT4", // FLOAT
-        //         f64(f64) => f64 => "FLOAT8", // DOUBLE
-        //     }
-        // }
-        //
-        // #[cfg(feature = "sqlite")]
-        // ty_enum! {
-        //     enum ColumnTyPrimitiveInner {
-        //         Id(Id) => u64 => "INTEGER PRIMARY KEY AUTOINCREMENT",
-        //         String(String) => ::std::string::String => "TEXT",
-        //         bool(bool) => bool => "BOOLEAN",
-        //         u8(u8) => u8 => "INTEGER",
-        //         i8(i8) => i8 => "INTEGER",
-        //         u16(u16) => u16 => "INTEGER",
-        //         i16(i16) => i16 => "INTEGER",
-        //         u32(u32) => u32 => "INTEGER",
-        //         i32(i32) => i32 => "INTEGER",
-        //         u64(u64) => u64 => "INTEGER",
-        //         i64(i64) => i64 => "BIGINT",
-        //         f32(f32) => f32 => "FLOAT",
-        //         f64(f64) => f64 => "DOUBLE",
-        //     }
-        // }
+        #[cfg(feature = "sqlite")]
+        match self {
+            Self::bool => Cow::Borrowed("BOOLEAN"),
+            Self::u8 => Cow::Borrowed("INTEGER"),
+            Self::i8 => Cow::Borrowed("INTEGER"),
+            Self::u16 => Cow::Borrowed("INTEGER"),
+            Self::i16 => Cow::Borrowed("INTEGER"),
+            Self::u32 => Cow::Borrowed("INTEGER"),
+            Self::i32 => Cow::Borrowed("INTEGER"),
+            Self::u64 => Cow::Borrowed("INTEGER"),
+            Self::i64 => Cow::Borrowed("BIGINT"),
+            Self::f32 => Cow::Borrowed("FLOAT"),
+            Self::f64 => Cow::Borrowed("DOUBLE"),
+
+            Self::String(string) => string.sql_ty(),
+            Self::Time(time) => Cow::Borrowed(time.sql_ty()),
+        }
+
+        #[cfg(feature = "postgres")]
+        match self {
+            Self::bool => Cow::Borrowed("BOOL"),
+            Self::u8 => Cow::Borrowed("CHAR"),
+            Self::i8 => Cow::Borrowed("CHAR"),
+            Self::u16 => Cow::Borrowed("INT2"),
+            Self::i16 => Cow::Borrowed("INT2"),
+            Self::u32 => Cow::Borrowed("INT4"),
+            Self::i32 => Cow::Borrowed("INT4"),
+            Self::u64 => Cow::Borrowed("INT8"),
+            Self::i64 => Cow::Borrowed("INT8"),
+            Self::f32 => Cow::Borrowed("FLOAT4"),
+            Self::f64 => Cow::Borrowed("FLOAT8"),
+
+            Self::String(string) => string.sql_ty(),
+            Self::Time(time) => Cow::Borrowed(time.sql_ty()),
+        }
     }
 }
 
 impl stage2::TyElementValue {
-    fn sql_ty(&self) -> Cow<'static, str> {
-        let sql_ty = self.ty.sql_ty();
-        make_maybe_optional(sql_ty, self.optional)
+    fn ty(&self) -> TyValue<'static> {
+        TyValue {
+            ty: self.ty.ty(),
+            optional: self.optional,
+        }
     }
 }
 
 impl stage2::TyElementAutoTime {
-    fn sql_ty(&self) -> String {
+    fn ty(&self) -> Ty {
         let atomic_ty_time = AtomicTyTime::from(&self.ty);
-        let mut sql_ty = make_not_optional(atomic_ty_time.sql_ty);
-        fmt2::fmt! { (sql_ty) =>
-            " DEFAULT " {atomic_ty_time.sql_current_time_func}
+        Ty {
+            ty: TyValue {
+                ty: Cow::Borrowed(atomic_ty_time.ty),
+                optional: false,
+            },
+            default_value: Some(atomic_ty_time.current_time_func),
+            on_update: match self.event {
+                stage2::AutoTimeEvent::OnUpdate => Some(atomic_ty_time.current_time_func),
+                stage2::AutoTimeEvent::OnCreate => None,
+            },
+            ..Default::default()
         }
-        if matches!(self.event, stage2::AutoTimeEvent::OnUpdate) {
-            fmt2::fmt! { (sql_ty) =>
-                " ON UPDATE " {atomic_ty_time.sql_current_time_func}
-            }
-        }
-        sql_ty
     }
 }
 
 impl stage2::TyElement {
-    const SQL_TY_ID: &str = {
+    const TY_ID: &str = {
         #[cfg(feature = "mysql")]
         {
-            "BIGINT UNSIGNED NOT NULL UNIQUE PRIMARY KEY AUTO_INCREMENT"
+            "BIGINT UNSIGNED"
+        }
+        #[cfg(feature = "sqlite")]
+        {
+            "INTEGER"
+        }
+        #[cfg(feature = "postgres")]
+        {
+            "BIGSERIAL"
         }
     };
 
-    fn sql_ty(&self) -> Cow<str> {
+    fn ty(&self) -> Ty {
         match self {
-            Self::Value(value) => value.sql_ty(),
-            Self::Id => Cow::Borrowed(Self::SQL_TY_ID),
-            Self::AutoTime(auto_time) => Cow::Owned(auto_time.sql_ty()),
+            Self::Value(value) => Ty {
+                ty: value.ty(),
+                ..Default::default()
+            },
+            Self::Id => Ty {
+                ty: TyValue {
+                    ty: Self::TY_ID,
+                    optional: false,
+                },
+                primary_key: true,
+                unique: true,
+                ..Default::default()
+            },
+            Self::AutoTime(auto_time) => auto_time.ty(),
         }
     }
 }
 
 impl stage2::TyCompound {
-    fn sql_ty(&self, table_name: &str, table_id_name: &str) -> String {
+    const TY: &str = {
         #[cfg(feature = "mysql")]
         {
-            let sql_ty = make_maybe_optional(
-                Cow::Borrowed("BIGINT UNSIGNED"),
-                self.multiplicity.optional(),
-            );
-            let mut sql_ty = sql_ty.into_owned();
-            fmt2::fmt! { (sql_ty) => " FOREIGN KEY REFERENCES " {table_name} "(" {table_id_name} ")" }
-            sql_ty
+            "BIGINT UNSIGNED"
+        }
+        #[cfg(feature = "sqlite")]
+        {
+            "INTEGER"
+        }
+        #[cfg(feature = "postgres")]
+        {
+            "BIGINT"
+        }
+    };
+
+    fn ty(&self, table_name: &str, table_id_name: &str) -> Ty {
+        if matches!(self.multiplicity, stage2::TyCompoundMultiplicity::Many(_)) {
+            todo!("multiple foreign keys not yet implemented");
+        }
+        Ty {
+            ty: TyValue {
+                ty: Cow::Borrowed(Self::TY),
+                optional: self.multiplicity.optional(),
+            },
+            foreign_key: Some((table_name, table_id_name)),
+            on_delete: None,
+            on_update: None,
+            unique: false,
+            ..Default::default()
         }
     }
 }
-
-// impl stage2::TyElement {
-//     fn transform_response(&self, expr: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-//         type TransformFn = fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream;
-//
-//         #[allow(clippy::match_single_binding)]
-//         let transform: Option<TransformFn> = match self {
-//             #[cfg(feature = "mysql")]
-//             Self::Value(stage2::TyElementValue {
-//                 ty: stage2::AtomicTy::bool,
-//                 optional: _,
-//             }) => Some(|ts| quote! { #ts != 0 }),
-//             _ => None,
-//         };
-//
-//         if let Some(transform) = transform {
-//             if self.optional() {
-//                 let val_name = quote! { val };
-//                 let transformed = transform(&val_name);
-//                 quote! { ::core::option::Option::map(#expr, |#val_name| #transformed) }
-//             } else {
-//                 transform(&expr)
-//             }
-//         } else {
-//             expr
-//         }
-//     }
-// }
 
 struct RequestColumn<'name> {
     name: &'name str,
@@ -245,6 +246,83 @@ struct RequestColumn<'name> {
 struct ResponseColumnName {
     name_intern: String,
     name_extern: String,
+}
+
+// type AtomicTy<'ty> = Cow<'ty, str>;
+
+struct TyValue<'ty> {
+    ty: Cow<'ty, str>,
+    optional: bool,
+}
+impl fmt2::write_to::WriteTo for TyValue<'_> {
+    fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
+    where
+        W: fmt2::write::Write + ?Sized,
+    {
+        fmt2::fmt! { (? w) => {self.ty} }?;
+        if !self.optional {
+            fmt2::fmt! { (? w) => " NOT NULL" }?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Ty<'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+    ty: TyValue<'ty>,
+    primary_key: bool,
+    foreign_key: Option<(&'fk_table str, &'fk_id str)>,
+    on_delete: Option<&'on_delete str>,
+    on_update: Option<&'on_update str>,
+    default_value: Option<&'default_value str>,
+    unique: bool,
+}
+impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_, '_> {
+    fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
+    where
+        W: fmt2::write::Write + ?Sized,
+    {
+        fmt2::fmt! { (? w) => {self.ty} }?;
+        if self.primary_key {
+            #[cfg(feature = "mysql")]
+            fmt2::fmt! { (? w) => " PRIMARY KEY AUTO_INCREMENT" }?;
+            #[cfg(feature = "sqlite")]
+            fmt2::fmt! { (? w) => " PRIMARY KEY AUTOINCREMENT" }?;
+            #[cfg(feature = "postgres")]
+            fmt2::fmt! { (? w) => " PRIMARY KEY" }?;
+        }
+        if let Some((table_name, table_id_name)) = self.foreign_key {
+            fmt2::fmt! { (? w) => " FOREIGN KEY REFERENCES " {table_name} "(" {table_id_name} ")" }?;
+        }
+        if let Some(on_delete) = self.on_delete {
+            fmt2::fmt! { (? w) => " ON DELETE " {on_delete} }?;
+        }
+        if let Some(on_update) = self.on_update {
+            fmt2::fmt! { (? w) => " ON UPDATE " {on_update} }?;
+        }
+        if let Some(default_value) = self.default_value {
+            fmt2::fmt! { (? w) => " DEFAULT " {default_value} }?;
+        }
+        if self.unique {
+            fmt2::fmt! { (? w) => " UNIQUE" }?;
+        }
+
+        Ok(())
+    }
+}
+
+struct Column<'name, 'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+    name: &'name str,
+    ty: Ty<'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete>,
+}
+impl fmt2::write_to::WriteTo for Column<'_, '_, '_, '_, '_, '_, '_> {
+    fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
+    where
+        W: fmt2::write::Write + ?Sized,
+    {
+        // no space between name and type, since the type automatically adds a space
+        fmt2::fmt! { (? w) => {self.name} {self.ty} }
+    }
 }
 
 struct Join {
@@ -331,7 +409,9 @@ impl Table {
             } else {
                 #[cfg(feature = "try_blocks")]
                 {
-                    quote! { #field_access? }
+                    quote! {
+                        #field_access?
+                    }
                 }
                 #[cfg(not(feature = "try_blocks"))]
                 {
@@ -363,9 +443,7 @@ impl Table {
                 }
                 #[cfg(not(feature = "try_blocks"))]
                 quote! {
-                    'response_block: {
-                        ::core::option::Option::Some(#getter)
-                    }
+                    'response_block: { ::core::option::Option::Some(#getter) }
                 }
             } else {
                 getter
@@ -440,7 +518,7 @@ impl Table {
                         let response_table_getter = response_table_getter(
                             &foreign_table.rs_name,
                             response_columns_getters,
-                            ty_compound.multiplicity.optional(),
+                            ty_compound.optional(),
                         );
 
                         joins.push(Join {
@@ -459,7 +537,7 @@ impl Table {
 
         let (table_name_intern, table_name_extern) = name_intern_extern((&*db.name, &*table.name));
 
-        let mut create_columns: Vec<(&str, Cow<str>)> = vec![];
+        let mut create_columns: Vec<Column> = vec![];
         let mut request_columns: Vec<RequestColumn> = vec![];
         let mut response_columns_names: Vec<ResponseColumnName> = vec![];
         let mut response_columns_fields: Vec<proc_macro2::TokenStream> = vec![];
@@ -483,7 +561,7 @@ impl Table {
 
             match ty {
                 stage2::Ty::Element(ty_element) => {
-                    let sql_ty = ty_element.sql_ty();
+                    let sql_ty = ty_element.ty();
                     create_columns.push((column_name, sql_ty));
 
                     if let stage2::TyElement::Value(_) = ty_element {
@@ -513,17 +591,17 @@ impl Table {
                     let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
                         .expect("table does not exist");
 
-                    let sql_ty = ty_compound.sql_ty(&foreign_table.name, &foreign_table.id_name);
+                    let sql_ty = ty_compound.ty(&foreign_table.name, &foreign_table.id_name);
                     create_columns.push((column_name, Cow::Owned(sql_ty)));
 
                     request_columns.push(RequestColumn {
                         field: request_column_field(
                             rs_name,
-                            &rs_ty_foreign_id(ty_compound.multiplicity.optional()),
+                            &rs_ty_compound_request(ty_compound.optional()),
                             request,
                             attrs,
                         ),
-                        setter: request_column_setter(rs_name, ty_compound.multiplicity.optional()),
+                        setter: request_column_setter(rs_name, ty_compound.optional()),
                         name: column_name,
                     });
 
@@ -544,7 +622,7 @@ impl Table {
                     let response_table_getter = response_table_getter(
                         &foreign_table.rs_name,
                         response_columns_getter,
-                        ty_compound.multiplicity.optional(),
+                        ty_compound.optional(),
                     );
                     response_columns_getters.push((rs_name, response_table_getter));
 

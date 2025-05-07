@@ -2,12 +2,12 @@
 ///
 /// todo:
 /// - many foreign keys
-/// - request/response attrs (field_name field instead of response_name and request_name)
-/// - skip/rename request/response fields
 /// - encode/decode custom types like enums
 /// - enum types (maybe attr to make enum type)
 /// - schema generator
-/// - use try blocks instead of breaking from blocks
+/// - unique
+/// - auto increment
+/// - sql types for all DBs
 mod db;
 mod router;
 mod utils;

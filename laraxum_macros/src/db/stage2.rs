@@ -1,7 +1,7 @@
 use super::stage1;
-pub use super::stage1::{ColumnAttrRequest, ColumnAttrResponse, TyCompound};
+pub use super::stage1::{ColumnAttrRequest, ColumnAttrResponse};
 
-use crate::utils::collections::TryCollectAll;
+use crate::utils::{collections::TryCollectAll, multiplicity};
 
 use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
@@ -12,6 +12,8 @@ const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
+const COLUMN_MUST_BE_VEC: &str = "column must be Vec";
+const COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE: &str = "column must specify intermediate table";
 
 pub enum AtomicTyString {
     Varchar(stage1::StringLen),
@@ -107,9 +109,9 @@ pub struct TyElementAutoTime {
 }
 
 enum ColumnAttrTyElement {
+    Id,
     None,
     Value(Type),
-    Id,
     String(AtomicTyString),
     AutoTime(AutoTimeEvent),
 }
@@ -127,10 +129,10 @@ impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
     fn from(attr_ty: Option<stage1::ColumnAttrTy>) -> Self {
         use ColumnAttrTyCompound as CATC;
         use ColumnAttrTyElement as CATE;
-        use stage1::{ColumnAttrTy as S1CAT, ColumnAttrTyCompound as S1CATF};
+        use stage1::{ColumnAttrTy as S1CAT, ColumnAttrTyCompound as S1CATC};
         match attr_ty {
-            Some(S1CAT::Compound(S1CATF { many: None })) => Self::Compound(CATC::One),
-            Some(S1CAT::Compound(S1CATF { many: Some(many) })) => Self::Compound(CATC::Many(many)),
+            Some(S1CAT::Compound(S1CATC { many: None })) => Self::Compound(CATC::One),
+            Some(S1CAT::Compound(S1CATC { many: Some(many) })) => Self::Compound(CATC::Many(many)),
 
             None => Self::Element(CATE::None),
             Some(S1CAT::Value(rs_ty)) => Self::Element(CATE::Value(rs_ty)),
@@ -152,8 +154,32 @@ pub enum TyElement {
     AutoTime(TyElementAutoTime),
 }
 impl TyElement {
-    pub fn optional(&self) -> bool {
+    pub const fn optional(&self) -> bool {
         matches!(self, Self::Value(value) if value.optional)
+    }
+}
+
+pub enum TyCompoundMultiplicity {
+    One,
+    OneOrZero,
+    Many(Ident),
+}
+impl TyCompoundMultiplicity {
+    pub const fn optional(&self) -> bool {
+        match self {
+            Self::OneOrZero => true,
+            Self::One | Self::Many(_) => false,
+        }
+    }
+}
+
+pub struct TyCompound {
+    pub ty: Ident,
+    pub multiplicity: TyCompoundMultiplicity,
+}
+impl TyCompound {
+    pub const fn optional(&self) -> bool {
+        self.multiplicity.optional()
     }
 }
 
@@ -162,9 +188,9 @@ pub enum Ty {
     Element(TyElement),
 }
 impl Ty {
-    pub fn optional(&self) -> bool {
+    pub const fn optional(&self) -> bool {
         match self {
-            Self::Compund(compound) => compound.multiplicity.optional(),
+            Self::Compund(compound) => compound.optional(),
             Self::Element(element) => element.optional(),
         }
     }
@@ -200,8 +226,31 @@ impl TryFrom<stage1::Column> for Column {
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {
             ColumnAttrTy::Compound(attr_ty_compound) => {
-                let ty_compound = TyCompound::try_from(&rs_ty)?;
-                Ty::Compund(ty_compound)
+                use ColumnAttrTyCompound as CATC;
+                use TyCompoundMultiplicity as TCM;
+                use multiplicity::Multiplicity as M;
+                let stage1::TyCompound {
+                    ty,
+                    multiplicity: ty_compound_multiplicity,
+                } = stage1::TyCompound::try_from(&rs_ty)?;
+                let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
+                    (CATC::One, M::One) => TCM::One,
+                    (CATC::One, M::OneOrZero) => TCM::OneOrZero,
+                    (CATC::One, M::Many) => {
+                        return Err(syn::Error::new(
+                            rs_ty.span(),
+                            COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE,
+                        ));
+                    }
+                    (CATC::Many(many), M::Many) => TCM::Many(many),
+                    (CATC::Many(_), _) => {
+                        return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_VEC));
+                    }
+                };
+                Ty::Compund(TyCompound {
+                    ty,
+                    multiplicity: ty_compound_multiplicity,
+                })
             }
             ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;

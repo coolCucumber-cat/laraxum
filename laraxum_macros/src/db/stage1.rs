@@ -58,7 +58,6 @@ pub enum AtomicTy {
     /// TIME
     ChronoTimeDelta,
 }
-
 impl TryFrom<&Type> for AtomicTy {
     type Error = syn::Error;
     fn try_from(ty: &Type) -> Result<Self, Self::Error> {
@@ -222,6 +221,7 @@ impl TryFrom<Field> for Column {
         }
 
         let attr = <ColumnAttr as darling::FromAttributes>::from_attributes(&rs_attrs)?;
+
         Ok(Self {
             rs_name,
             rs_ty,
