@@ -20,14 +20,6 @@ fn name_intern_extern(parent_child: (&str, &str)) -> (String, String) {
     (name_intern(parent_child), name_extern(parent_child))
 }
 
-fn rs_ty_compound_request(optional: bool) -> Type {
-    if optional {
-        syn::parse_quote!(Option<u64>)
-    } else {
-        syn::parse_quote!(u64)
-    }
-}
-
 impl stage2::AtomicTyString {
     fn ty(&self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
@@ -141,7 +133,7 @@ impl stage2::AtomicTy {
 }
 
 impl stage2::TyElementValue {
-    fn ty(&self) -> TyValue<'static> {
+    fn ty(&self) -> TyValue {
         TyValue {
             ty: self.ty.ty(),
             optional: self.optional,
@@ -162,7 +154,10 @@ impl stage2::TyElementAutoTime {
                 stage2::AutoTimeEvent::OnUpdate => Some(atomic_ty_time.current_time_func),
                 stage2::AutoTimeEvent::OnCreate => None,
             },
-            ..Default::default()
+            primary_key: false,
+            foreign_key: None,
+            on_delete: None,
+            unique: false,
         }
     }
 }
@@ -187,7 +182,13 @@ impl stage2::TyElement {
         match self {
             Self::Value(value) => Ty {
                 ty: value.ty(),
-                ..Default::default()
+
+                primary_key: false,
+                foreign_key: None,
+                on_delete: None,
+                on_update: None,
+                default_value: None,
+                unique: false,
             },
             Self::Id => Ty {
                 ty: TyValue {
@@ -196,7 +197,11 @@ impl stage2::TyElement {
                 },
                 primary_key: true,
                 unique: true,
-                ..Default::default()
+
+                foreign_key: None,
+                on_delete: None,
+                on_update: None,
+                default_value: None,
             },
             Self::AutoTime(auto_time) => auto_time.ty(),
         }
@@ -219,7 +224,11 @@ impl stage2::TyCompound {
         }
     };
 
-    fn ty(&self, table_name: &str, table_id_name: &str) -> Ty {
+    fn ty<'table_name, 'table_id_name>(
+        &self,
+        table_name: &'table_name str,
+        table_id_name: &'table_id_name str,
+    ) -> Ty<'table_name, 'table_id_name, '_, '_, '_> {
         if matches!(self.multiplicity, stage2::TyCompoundMultiplicity::Many(_)) {
             todo!("multiple foreign keys not yet implemented");
         }
@@ -229,32 +238,24 @@ impl stage2::TyCompound {
                 optional: self.multiplicity.optional(),
             },
             foreign_key: Some((table_name, table_id_name)),
+
+            primary_key: false,
             on_delete: None,
             on_update: None,
+            default_value: None,
             unique: false,
-            ..Default::default()
         }
     }
 }
 
-struct RequestColumn<'name> {
-    name: &'name str,
-    field: proc_macro2::TokenStream,
-    setter: proc_macro2::TokenStream,
-}
-
-struct ResponseColumnName {
-    name_intern: String,
-    name_extern: String,
-}
-
 // type AtomicTy<'ty> = Cow<'ty, str>;
 
-struct TyValue<'ty> {
-    ty: Cow<'ty, str>,
+// #[derive(Default)]
+struct TyValue {
+    ty: Cow<'static, str>,
     optional: bool,
 }
-impl fmt2::write_to::WriteTo for TyValue<'_> {
+impl fmt2::write_to::WriteTo for TyValue {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
     where
         W: fmt2::write::Write + ?Sized,
@@ -267,9 +268,9 @@ impl fmt2::write_to::WriteTo for TyValue<'_> {
     }
 }
 
-#[derive(Default)]
-struct Ty<'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
-    ty: TyValue<'ty>,
+// #[derive(Default)]
+struct Ty<'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+    ty: TyValue,
     primary_key: bool,
     foreign_key: Option<(&'fk_table str, &'fk_id str)>,
     on_delete: Option<&'on_delete str>,
@@ -277,7 +278,7 @@ struct Ty<'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
     default_value: Option<&'default_value str>,
     unique: bool,
 }
-impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_, '_> {
+impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_> {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
     where
         W: fmt2::write::Write + ?Sized,
@@ -311,11 +312,11 @@ impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_, '_> {
     }
 }
 
-struct Column<'name, 'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+struct Column<'name, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
     name: &'name str,
-    ty: Ty<'ty, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete>,
+    ty: Ty<'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete>,
 }
-impl fmt2::write_to::WriteTo for Column<'_, '_, '_, '_, '_, '_, '_> {
+impl fmt2::write_to::WriteTo for Column<'_, '_, '_, '_, '_, '_> {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
     where
         W: fmt2::write::Write + ?Sized,
@@ -323,6 +324,17 @@ impl fmt2::write_to::WriteTo for Column<'_, '_, '_, '_, '_, '_, '_> {
         // no space between name and type, since the type automatically adds a space
         fmt2::fmt! { (? w) => {self.name} {self.ty} }
     }
+}
+
+struct RequestColumn<'name> {
+    name: &'name str,
+    field: proc_macro2::TokenStream,
+    setter: proc_macro2::TokenStream,
+}
+
+struct ResponseColumnName {
+    name_intern: String,
+    name_extern: String,
 }
 
 struct Join {
@@ -345,6 +357,14 @@ impl Table {
         }
         fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
             quote! { #[serde(rename = #serde_name)] }
+        }
+
+        fn rs_ty_compound_request(optional: bool) -> Type {
+            if optional {
+                syn::parse_quote!(Option<u64>)
+            } else {
+                syn::parse_quote!(u64)
+            }
         }
 
         fn request_column_field(
@@ -537,7 +557,7 @@ impl Table {
 
         let (table_name_intern, table_name_extern) = name_intern_extern((&*db.name, &*table.name));
 
-        let mut create_columns: Vec<Column> = vec![];
+        let mut columns: Vec<Column> = vec![];
         let mut request_columns: Vec<RequestColumn> = vec![];
         let mut response_columns_names: Vec<ResponseColumnName> = vec![];
         let mut response_columns_fields: Vec<proc_macro2::TokenStream> = vec![];
@@ -561,8 +581,10 @@ impl Table {
 
             match ty {
                 stage2::Ty::Element(ty_element) => {
-                    let sql_ty = ty_element.ty();
-                    create_columns.push((column_name, sql_ty));
+                    columns.push(Column {
+                        name: column_name,
+                        ty: ty_element.ty(),
+                    });
 
                     if let stage2::TyElement::Value(_) = ty_element {
                         request_columns.push(RequestColumn {
@@ -591,8 +613,10 @@ impl Table {
                     let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
                         .expect("table does not exist");
 
-                    let sql_ty = ty_compound.ty(&foreign_table.name, &foreign_table.id_name);
-                    create_columns.push((column_name, Cow::Owned(sql_ty)));
+                    columns.push(Column {
+                        name: column_name,
+                        ty: ty_compound.ty(&foreign_table.name, &foreign_table.id_name),
+                    });
 
                     request_columns.push(RequestColumn {
                         field: request_column_field(
@@ -604,6 +628,9 @@ impl Table {
                         setter: request_column_setter(rs_name, ty_compound.optional()),
                         name: column_name,
                     });
+
+                    response_columns_fields
+                        .push(response_column_field(rs_name, rs_ty, response, attrs));
 
                     let foreign_table_name_intern = name_intern((&db.name, &foreign_table.name));
                     let foreign_table_name_extern =
@@ -632,9 +659,6 @@ impl Table {
                         foreign_table_id_name_intern,
                         column_name_intern,
                     });
-
-                    response_columns_fields
-                        .push(response_column_field(rs_name, rs_ty, response, attrs));
                 }
             }
         }
@@ -645,43 +669,83 @@ impl Table {
 
         let id_name_intern = name_intern((&*table_name_extern, &*table.id_name));
 
-        let migration_up = fmt2::fmt! { { str } =>
-            "CREATE TABLE IF NOT EXISTS " {table_name_intern} " ("
-                @..join(create_columns => "," => |c| {c.0} " " {c.1})
-            ");"
-        };
-        let migration_down = fmt2::fmt! { { str } =>
-            "DROP TABLE " {table_name_intern} ";"
-        };
+        fn create_table(table_name_intern: &str, columns: &[Column]) -> String {
+            fmt2::fmt! { { str } =>
+                "CREATE TABLE IF NOT EXISTS " {table_name_intern} " ("
+                    @..join(columns => "," => |c| {c})
+                ");"
+            }
+        }
+        fn delete_table(table_name_intern: &str) -> String {
+            fmt2::fmt! { { str } =>
+                "DROP TABLE " {table_name_intern} ";"
+            }
+        }
+        fn get_all(
+            table_name_intern: &str,
+            table_name_extern: &str,
+            response_columns_names: &[ResponseColumnName],
+            joins: &[Join],
+        ) -> String {
+            fmt2::fmt! { { str } =>
+                "SELECT "
+                @..join(response_columns_names => "," => |c|
+                    {c.name_intern}
+                    " AS "
+                    // "`"
+                    {c.name_extern}
+                    // "`"
+                )
+                " FROM " {table_name_intern} " AS " {table_name_extern}
+                @..(joins.iter().rev() => |join|
+                    " LEFT JOIN "
+                    {join.foreign_table_name_intern} " AS " {join.foreign_table_name_extern}
+                    " ON "
+                    {join.column_name_intern} "=" {join.foreign_table_id_name_intern}
+                )
+            }
+        }
+        fn get_all_get_one(
+            table_name_intern: &str,
+            table_name_extern: &str,
+            id_name_intern: &str,
+            response_columns_names: &[ResponseColumnName],
+            joins: &[Join],
+        ) -> (String, String) {
+            let get_all = get_all(
+                table_name_intern,
+                table_name_extern,
+                response_columns_names,
+                joins,
+            );
+            let get_one = fmt2::fmt! { { str } =>
+                {get_all} " WHERE " {id_name_intern} "=?"
+            };
+            (get_all, get_one)
+        }
+        fn create_one(table_name_intern: &str, request_columns: &[RequestColumn]) -> String {
+            fmt2::fmt! { { str } =>
+                "INSERT INTO " {table_name_intern} " ("
+                    @..join(&request_columns => "," => |c| {c.name})
+                ") VALUES ("
+                    @..join(&request_columns => "," => |_c| "?")
+                ")"
+            }
+        }
+        fn update_one() {}
 
-        let get_all = fmt2::fmt! { { str } =>
-            "SELECT "
-            @..join(response_columns_names => "," => |c|
-                {c.name_intern}
-                " AS "
-                // "`"
-                {c.name_extern}
-                // "`"
-            )
-            " FROM " {table_name_intern} " AS " {table_name_extern}
-            @..(joins.iter().rev() => |join|
-                " LEFT JOIN "
-                {join.foreign_table_name_intern} " AS " {join.foreign_table_name_extern}
-                " ON "
-                {join.column_name_intern} "=" {join.foreign_table_id_name_intern}
-            )
-        };
-        let get_one = fmt2::fmt! { { str } =>
-            {get_all} " WHERE " {id_name_intern} "=?"
-        };
+        let migration_up = create_table(&table_name_intern, &columns);
+        let migration_down = delete_table(&table_name_intern);
 
-        let create_one = fmt2::fmt! { { str } =>
-            "INSERT INTO " {table_name_intern} " ("
-                @..join(&request_columns => "," => |c| {c.name})
-            ") VALUES ("
-                @..join(&request_columns => "," => |_c| "?")
-            ")"
-        };
+        let get_all = get_all_get_one(
+            &table_name_intern,
+            &table_name_extern,
+            &id_name_intern,
+            &response_columns_names,
+            &joins,
+        );
+
+        let create_one = create_one(&table_name_intern, &request_columns);
         let update_one = fmt2::fmt! { { str } =>
             "UPDATE " {table_name_intern} " SET "
             @..join(&request_columns => "," => |c| {c.name} "=?")
