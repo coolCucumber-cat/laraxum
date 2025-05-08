@@ -191,7 +191,7 @@ impl stage2::TyElement {
             },
             Self::Id => Ty {
                 ty: TyValue {
-                    ty: Self::TY_ID,
+                    ty: Cow::Borrowed(Self::TY_ID),
                     optional: false,
                 },
                 primary_key: true,
