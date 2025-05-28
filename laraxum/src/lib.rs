@@ -110,28 +110,43 @@ pub trait Table {
 }
 
 pub trait Model: Table {
+    type Id: Serialize + Copy;
+
     async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, Error>;
-    async fn get_one(db: &Self::Db, id: Id) -> Result<Self::Response, Error>;
-    async fn create_one(db: &Self::Db, r: Self::Request) -> Result<Id, Error>;
+    async fn get_one(db: &Self::Db, id: Self::Id) -> Result<Self::Response, Error>;
+    async fn create_one(db: &Self::Db, r: Self::Request) -> Result<Self::Id, Error>;
     async fn create_one_return(db: &Self::Db, r: Self::Request) -> Result<Self::Response, Error> {
-        match Self::create_one(db, r).await {
-            Ok(id) => Self::get_one(db, id).await,
-            Err(err) => Err(err),
-        }
+        let id = Self::create_one(db, r).await?;
+        Self::get_one(db, id).await
     }
-    async fn update_one(db: &Self::Db, r: Self::Request, id: Id) -> Result<(), Error>;
+    async fn update_one(db: &Self::Db, r: Self::Request, id: Self::Id) -> Result<(), Error>;
     async fn update_one_return(
         db: &Self::Db,
         r: Self::Request,
-        id: Id,
+        id: Self::Id,
     ) -> Result<Self::Response, Error> {
-        match Self::update_one(db, r, id).await {
-            Ok(()) => Self::get_one(db, id).await,
-            Err(err) => Err(err),
-        }
+        Self::update_one(db, r, id).await?;
+        Self::get_one(db, id).await
     }
-    async fn delete_one(db: &Self::Db, id: Id) -> Result<(), Error>;
+    async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
 }
+
+pub trait ManyModel: Table {
+    type ManyId;
+    type ManyResponse: Model;
+
+    // async fn get_many(db: &Self::Db, id: Self::Id) -> Result<Self::Response, Error>;
+    // async fn create_many(db: &Self::Db, r: Self::Request) -> Result<Self::Id, Error>;
+    // async fn update_many(db: &Self::Db, r: Self::Request, id: Self::Id) -> Result<(), Error>;
+    // async fn delete_many(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
+}
+
+// pub trait AdvancedModelMany<Id>: Table {
+//     type AdvancedModelManyResponse: Serialize;
+//
+//     async fn get_many(db: &Self::Db, id: Id)
+//     -> Result<Vec<Self::AdvancedModelManyResponse>, Error>;
+// }
 
 pub trait Controller: Model {
     type State: AnyDb<Db = Self::Db>;
@@ -145,7 +160,7 @@ pub trait Controller: Model {
     }
     async fn get(
         State(state): State<Arc<Self::State>>,
-        Path(id): Path<Id>,
+        Path(id): Path<Self::Id>,
     ) -> Result<Json<Self::Response>, Error> {
         let rs = Self::get_one(state.db(), id).await?;
         Ok(Json(rs))
@@ -159,7 +174,7 @@ pub trait Controller: Model {
     }
     async fn update(
         State(state): State<Arc<Self::State>>,
-        Path(id): Path<Id>,
+        Path(id): Path<Self::Id>,
         Json(rq): Json<Self::Request>,
     ) -> Result<Json<Self::Response>, ModelError<Self::RequestError>> {
         let rs = Self::update_one_return(state.db(), rq, id).await?;
@@ -167,7 +182,7 @@ pub trait Controller: Model {
     }
     async fn delete(
         State(state): State<Arc<Self::State>>,
-        Path(id): Path<Id>,
+        Path(id): Path<Self::Id>,
     ) -> Result<(), Error> {
         Self::delete_one(state.db(), id).await?;
         Ok(())

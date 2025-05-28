@@ -157,6 +157,14 @@ impl TyElement {
     pub const fn optional(&self) -> bool {
         matches!(self, Self::Value(value) if value.optional)
     }
+    pub const fn unique(&self) -> bool {
+        match self {
+            Self::Id => true,
+            // TODO: unique
+            Self::Value(_value) => false,
+            Self::AutoTime(_) => false,
+        }
+    }
 }
 
 pub enum TyCompoundMultiplicity {
@@ -181,6 +189,10 @@ impl TyCompound {
     pub const fn optional(&self) -> bool {
         self.multiplicity.optional()
     }
+    pub const fn unique(&self) -> bool {
+        // TODO: unique
+        false
+    }
 }
 
 pub enum Ty {
@@ -192,6 +204,12 @@ impl Ty {
         match self {
             Self::Compund(compound) => compound.optional(),
             Self::Element(element) => element.optional(),
+        }
+    }
+    pub const fn unique(&self) -> bool {
+        match self {
+            Self::Compund(compound) => compound.unique(),
+            Self::Element(element) => element.unique(),
         }
     }
 }

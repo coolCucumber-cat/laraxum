@@ -140,6 +140,7 @@ impl TryFrom<&Type> for TyCompound {
 }
 
 #[derive(darling::FromMeta, Default)]
+#[darling(default)]
 pub struct ColumnAttrTyCompound {
     pub many: Option<Ident>,
 }

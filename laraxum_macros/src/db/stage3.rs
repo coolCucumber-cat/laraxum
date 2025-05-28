@@ -344,6 +344,83 @@ struct Join {
     column_name_intern: String,
 }
 
+fn create_table(table_name_intern: &str, columns: &[Column]) -> String {
+    fmt2::fmt! { { str } =>
+        "CREATE TABLE IF NOT EXISTS " {table_name_intern} " ("
+            @..join(columns => "," => |c| {c})
+        ");"
+    }
+}
+fn delete_table(table_name_intern: &str) -> String {
+    fmt2::fmt! { { str } =>
+        "DROP TABLE " {table_name_intern} ";"
+    }
+}
+fn get_all(
+    table_name_intern: &str,
+    table_name_extern: &str,
+    response_columns_names: &[ResponseColumnName],
+    joins: &[Join],
+) -> String {
+    fmt2::fmt! { { str } =>
+        "SELECT "
+        @..join(response_columns_names => "," => |c|
+            {c.name_intern}
+            " AS "
+            // "`"
+            {c.name_extern}
+            // "`"
+        )
+        " FROM " {table_name_intern} " AS " {table_name_extern}
+        @..(joins.iter().rev() => |join|
+            " LEFT JOIN "
+            {join.foreign_table_name_intern} " AS " {join.foreign_table_name_extern}
+            " ON "
+            {join.column_name_intern} "=" {join.foreign_table_id_name_intern}
+        )
+    }
+}
+fn get_all_get_one(
+    table_name_intern: &str,
+    table_name_extern: &str,
+    id_name_intern: &str,
+    response_columns_names: &[ResponseColumnName],
+    joins: &[Join],
+) -> (String, String) {
+    let get_all = get_all(
+        table_name_intern,
+        table_name_extern,
+        response_columns_names,
+        joins,
+    );
+    let get_one = fmt2::fmt! { { str } =>
+        {get_all} " WHERE " {id_name_intern} "=?"
+    };
+    (get_all, get_one)
+}
+fn create_one(table_name_intern: &str, request_columns: &[RequestColumn]) -> String {
+    fmt2::fmt! { { str } =>
+        "INSERT INTO " {table_name_intern} " ("
+            @..join(&request_columns => "," => |c| {c.name})
+        ") VALUES ("
+            @..join(&request_columns => "," => |_c| "?")
+        ")"
+    }
+}
+fn update_one(table_name_intern: &str, id_name: &str, request_columns: &[RequestColumn]) -> String {
+    fmt2::fmt! { { str } =>
+        "UPDATE " {table_name_intern} " SET "
+        @..join(&request_columns => "," => |c| {c.name} "=?")
+        " WHERE " {id_name} "=?"
+    }
+}
+fn delete_one(table_name_intern: &str, id_name: &str) -> String {
+    fmt2::fmt! { { str } =>
+        "DELETE FROM " {table_name_intern}
+        " WHERE " {id_name} "=?"
+    }
+}
+
 struct Table {
     token_stream: proc_macro2::TokenStream,
     migration_up: String,
@@ -669,94 +746,18 @@ impl Table {
 
         let id_name_intern = name_intern((&*table_name_extern, &*table.id_name));
 
-        fn create_table(table_name_intern: &str, columns: &[Column]) -> String {
-            fmt2::fmt! { { str } =>
-                "CREATE TABLE IF NOT EXISTS " {table_name_intern} " ("
-                    @..join(columns => "," => |c| {c})
-                ");"
-            }
-        }
-        fn delete_table(table_name_intern: &str) -> String {
-            fmt2::fmt! { { str } =>
-                "DROP TABLE " {table_name_intern} ";"
-            }
-        }
-        fn get_all(
-            table_name_intern: &str,
-            table_name_extern: &str,
-            response_columns_names: &[ResponseColumnName],
-            joins: &[Join],
-        ) -> String {
-            fmt2::fmt! { { str } =>
-                "SELECT "
-                @..join(response_columns_names => "," => |c|
-                    {c.name_intern}
-                    " AS "
-                    // "`"
-                    {c.name_extern}
-                    // "`"
-                )
-                " FROM " {table_name_intern} " AS " {table_name_extern}
-                @..(joins.iter().rev() => |join|
-                    " LEFT JOIN "
-                    {join.foreign_table_name_intern} " AS " {join.foreign_table_name_extern}
-                    " ON "
-                    {join.column_name_intern} "=" {join.foreign_table_id_name_intern}
-                )
-            }
-        }
-        fn get_all_get_one(
-            table_name_intern: &str,
-            table_name_extern: &str,
-            id_name_intern: &str,
-            response_columns_names: &[ResponseColumnName],
-            joins: &[Join],
-        ) -> (String, String) {
-            let get_all = get_all(
-                table_name_intern,
-                table_name_extern,
-                response_columns_names,
-                joins,
-            );
-            let get_one = fmt2::fmt! { { str } =>
-                {get_all} " WHERE " {id_name_intern} "=?"
-            };
-            (get_all, get_one)
-        }
-        fn create_one(table_name_intern: &str, request_columns: &[RequestColumn]) -> String {
-            fmt2::fmt! { { str } =>
-                "INSERT INTO " {table_name_intern} " ("
-                    @..join(&request_columns => "," => |c| {c.name})
-                ") VALUES ("
-                    @..join(&request_columns => "," => |_c| "?")
-                ")"
-            }
-        }
-        fn update_one() {}
-
-        let migration_up = create_table(&table_name_intern, &columns);
-        let migration_down = delete_table(&table_name_intern);
-
-        let get_all = get_all_get_one(
+        let create_table = create_table(&table_name_intern, &columns);
+        let delete_table = delete_table(&table_name_intern);
+        let (get_all, get_one) = get_all_get_one(
             &table_name_intern,
             &table_name_extern,
             &id_name_intern,
             &response_columns_names,
             &joins,
         );
-
         let create_one = create_one(&table_name_intern, &request_columns);
-        let update_one = fmt2::fmt! { { str } =>
-            "UPDATE " {table_name_intern} " SET "
-            @..join(&request_columns => "," => |c| {c.name} "=?")
-            " WHERE " {table.id_name} "=?"
-        };
-        let delete_one = fmt2::fmt! { { str } =>
-            "DELETE FROM " {table_name_intern}
-            " WHERE " {table.id_name} "=?"
-        };
-
-        let doc = fmt2::fmt! { { str } => "`" {table_name_intern} "`"};
+        let update_one = update_one(&table_name_intern, &table.id_name, &request_columns);
+        let delete_one = delete_one(&table_name_intern, &table.id_name);
 
         let table_rs_name = &table.rs_name;
         let table_rs_attrs = &*table.rs_attrs;
@@ -765,16 +766,16 @@ impl Table {
         let request_columns_setters = request_columns.iter().map(|c| &c.setter);
         let request_columns_setter = quote! { #(#request_columns_setters,)* };
 
-        let controller_token_stream = if table.controller {
+        let controller = table.controller.then(|| {
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
                 }
             }
-        } else {
-            quote! {}
-        };
+        });
         let table_rs_name_request = quote::format_ident!("{}Request", table.rs_name);
+        let doc = fmt2::fmt! { { str } => "`" {table_name_intern} "`"};
+
         let table_token_stream = quote! {
             #[doc = #doc]
             #[derive(::serde::Serialize)]
@@ -799,6 +800,8 @@ impl Table {
             }
 
             impl ::laraxum::Model for #table_rs_name {
+                type Id = u64;
+
                 /// `get_all`
                 ///
                 /// ```sql
@@ -879,13 +882,13 @@ impl Table {
                 }
             }
 
-            #controller_token_stream
+            #controller
         };
 
         Self {
             token_stream: table_token_stream,
-            migration_up,
-            migration_down,
+            migration_up: create_table,
+            migration_down: delete_table,
         }
     }
 }
