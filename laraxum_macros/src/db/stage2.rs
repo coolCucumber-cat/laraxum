@@ -5,7 +5,7 @@ use crate::utils::{collections::TryCollectAll, multiplicity};
 
 use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
-const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+// const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
 const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
 const ID_MUST_BE_U64: &str = "id must be u64";
@@ -111,7 +111,7 @@ pub struct TyElementAutoTime {
 enum ColumnAttrTyElement {
     Id,
     None,
-    Value(Type),
+    Value(Box<Type>),
     String(AtomicTyString),
     AutoTime(AutoTimeEvent),
 }
@@ -339,7 +339,7 @@ pub struct Table {
     /// the columns in the database
     pub columns: Vec<Column>,
     /// the name for the id of the table, for example `CustomerId`
-    pub id_name: String,
+    pub id_name: Option<String>,
     /// automatically implement the model
     pub model: bool,
     /// automatically implement the controller (model must be implemented), using the db as the state
@@ -387,7 +387,6 @@ impl TryFrom<stage1::Table> for Table {
         });
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
-        let id_name = id_name.ok_or_else(|| syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_ID))?;
 
         Ok(Self {
             name,

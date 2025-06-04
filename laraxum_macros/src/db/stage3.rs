@@ -7,6 +7,8 @@ use std::borrow::Cow;
 use quote::quote;
 use syn::{Attribute, Ident, Type};
 
+const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+
 fn name_extern((parent, child): (&str, &str)) -> String {
     fmt2::fmt! { { str } => {parent} "__" {child} }
 }
@@ -380,23 +382,22 @@ fn get_all(
         )
     }
 }
-fn get_all_get_one(
+fn get_one(
     table_name_intern: &str,
     table_name_extern: &str,
     id_name_intern: &str,
     response_columns_names: &[ResponseColumnName],
     joins: &[Join],
-) -> (String, String) {
+) -> String {
     let get_all = get_all(
         table_name_intern,
         table_name_extern,
         response_columns_names,
         joins,
     );
-    let get_one = fmt2::fmt! { { str } =>
+    fmt2::fmt! { { str } =>
         {get_all} " WHERE " {id_name_intern} "=?"
-    };
-    (get_all, get_one)
+    }
 }
 fn create_one(table_name_intern: &str, request_columns: &[RequestColumn]) -> String {
     fmt2::fmt! { { str } =>
@@ -594,6 +595,11 @@ impl Table {
                     stage2::Ty::Compund(ty_compound) => {
                         let foreign_table = stage2::find_table(db_tables, &ty_compound.ty)
                             .expect("table does not exist");
+                        let foreign_table_id_name = foreign_table
+                            .id_name
+                            .as_deref()
+                            .ok_or(TABLE_MUST_HAVE_ID)
+                            .unwrap();
 
                         let foreign_table_name_intern = name_intern((db_name, &foreign_table.name));
                         let foreign_table_name_extern = name_extern_triple((
@@ -602,7 +608,7 @@ impl Table {
                             column_name,
                         ));
                         let foreign_table_id_name_intern =
-                            name_intern((&*foreign_table_name_extern, &foreign_table.id_name));
+                            name_intern((&*foreign_table_name_extern, foreign_table_id_name));
 
                         let response_columns_getters = traverse(
                             &foreign_table.columns,
@@ -689,10 +695,15 @@ impl Table {
                     // };
                     let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
                         .expect("table does not exist");
+                    let foreign_table_id_name = foreign_table
+                        .id_name
+                        .as_deref()
+                        .ok_or(TABLE_MUST_HAVE_ID)
+                        .unwrap();
 
                     columns.push(Column {
                         name: column_name,
-                        ty: ty_compound.ty(&foreign_table.name, &foreign_table.id_name),
+                        ty: ty_compound.ty(&foreign_table.name, foreign_table_id_name),
                     });
 
                     request_columns.push(RequestColumn {
@@ -713,7 +724,7 @@ impl Table {
                     let foreign_table_name_extern =
                         name_extern_triple((&table_name_extern, &foreign_table.name, column_name));
                     let foreign_table_id_name_intern =
-                        name_intern((&*foreign_table_name_extern, &foreign_table.id_name));
+                        name_intern((&*foreign_table_name_extern, foreign_table_id_name));
 
                     let response_columns_getter = traverse(
                         &foreign_table.columns,
@@ -744,38 +755,26 @@ impl Table {
             response_table_getter(&table.rs_name, response_columns_getters, true);
         let response_table_getter = map_option_to_result(response_table_getter);
 
-        let id_name_intern = name_intern((&*table_name_extern, &*table.id_name));
-
-        let create_table = create_table(&table_name_intern, &columns);
-        let delete_table = delete_table(&table_name_intern);
-        let (get_all, get_one) = get_all_get_one(
-            &table_name_intern,
-            &table_name_extern,
-            &id_name_intern,
-            &response_columns_names,
-            &joins,
-        );
-        let create_one = create_one(&table_name_intern, &request_columns);
-        let update_one = update_one(&table_name_intern, &table.id_name, &request_columns);
-        let delete_one = delete_one(&table_name_intern, &table.id_name);
-
-        let table_rs_name = &table.rs_name;
-        let table_rs_attrs = &*table.rs_attrs;
-        let db_rs_name = &db.rs_name;
         let request_columns_fields = request_columns.iter().map(|c| &c.field);
         let request_columns_setters = request_columns.iter().map(|c| &c.setter);
         let request_columns_setter = quote! { #(#request_columns_setters,)* };
 
-        let controller = table.controller.then(|| {
-            quote! {
-                impl ::laraxum::Controller for #table_rs_name {
-                    type State = #db_rs_name;
-                }
-            }
-        });
-        let table_rs_name_request = quote::format_ident!("{}Request", table.rs_name);
-        let doc = fmt2::fmt! { { str } => "`" {table_name_intern} "`"};
+        let create_table = create_table(&table_name_intern, &columns);
+        let delete_table = delete_table(&table_name_intern);
 
+        let get_all = get_all(
+            &table_name_intern,
+            &table_name_extern,
+            &response_columns_names,
+            &joins,
+        );
+        let create_one = create_one(&table_name_intern, &request_columns);
+
+        let table_rs_name = &table.rs_name;
+        let table_rs_name_request = quote::format_ident!("{}Request", table.rs_name);
+        let table_rs_attrs = &*table.rs_attrs;
+        let db_rs_name = &db.rs_name;
+        let doc = fmt2::fmt! { { str } => "`" {table_name_intern} "`"};
         let table_token_stream = quote! {
             #[doc = #doc]
             #[derive(::serde::Serialize)]
@@ -794,94 +793,120 @@ impl Table {
             impl ::laraxum::Table for #table_rs_name {
                 type Db = #db_rs_name;
                 type Response = #table_rs_name;
-                type Request = #table_rs_name_request;
-                type RequestError = ();
-                type RequestQuery = ();
             }
 
-            impl ::laraxum::Model for #table_rs_name {
-                type Id = u64;
+            impl ::laraxum::Collection for #table_rs_name {
+                type GetAllRequestQuery = ();
+                type CreateRequest = #table_rs_name_request;
+                type CreateRequestError = ();
 
                 /// `get_all`
                 ///
                 /// ```sql
                 #[doc = #get_all]
                 /// ```
-                async fn get_all(db: &Self::Db)
-                    -> ::core::result::Result::<::std::vec::Vec<Self::Response>, ::laraxum::Error>
-                {
+                async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, ::laraxum::Error> {
                     let response = ::sqlx::query!(#get_all)
                         .try_map(|response| #response_table_getter)
                         .fetch_all(&db.pool)
                         .await?;
                     ::core::result::Result::Ok(response)
                 }
-                /// `get_one`
-                ///
-                /// ```sql
-                #[doc = #get_one]
-                /// ```
-                async fn get_one(db: &Self::Db, id: ::laraxum::Id)
-                    -> ::core::result::Result::<Self::Response, ::laraxum::Error>
-                {
-                    let response = ::sqlx::query!(#get_one, id)
-                        .try_map(|response| #response_table_getter)
-                        .fetch_one(&db.pool)
-                        .await?;
-                    ::core::result::Result::Ok(response)
-                }
-                /// `create_one`
-                ///
-                /// ```sql
-                #[doc = #create_one]
-                /// ```
-                async fn create_one(db: &Self::Db, request: Self::Request)
-                    -> ::core::result::Result::<::laraxum::Id, ::laraxum::Error>
-                {
+                async fn create_one(
+                    db: &Self::Db,
+                    request: Self::CreateRequest,
+                ) -> Result<(), ::laraxum::ModelError<Self::CreateRequestError>> {
                     let response = ::sqlx::query!(
                             #create_one,
                             #request_columns_setter
                         )
                         .execute(&db.pool)
                         .await?;
-                    ::core::result::Result::Ok(response.last_insert_id())
-                }
-                /// `update_one`
-                ///
-                /// ```sql
-                #[doc = #update_one]
-                /// ```
-                async fn update_one(
-                    db: &Self::Db,
-                    request: Self::Request,
-                    id: ::laraxum::Id,
-                )
-                    -> ::core::result::Result::<(), ::laraxum::Error>
-                {
-                    ::sqlx::query!(
-                        #update_one,
-                        #request_columns_setter
-                        id,
-                    )
-                        .execute(&db.pool)
-                        .await?;
-                    ::core::result::Result::Ok(())
-                }
-                /// `delete_one`
-                ///
-                /// ```sql
-                #[doc = #delete_one]
-                /// ```
-                async fn delete_one(db: &Self::Db, id: ::laraxum::Id)
-                    -> ::core::result::Result::<(), ::laraxum::Error>
-                {
-                    ::sqlx::query!(#delete_one, id)
-                        .execute(&db.pool)
-                        .await?;
                     ::core::result::Result::Ok(())
                 }
             }
+        };
 
+        let model = table.id_name.as_deref().map(|table_id_name| {
+            let id_name_intern = name_intern((&*table_name_extern, table_id_name));
+            let get_one = get_one(
+                &table_name_intern,
+                &table_name_extern,
+                &id_name_intern,
+                &response_columns_names,
+                &joins,
+            );
+            let update_one = update_one(&table_name_intern, table_id_name, &request_columns);
+            let delete_one = delete_one(&table_name_intern, table_id_name);
+
+            quote! {
+                impl ::laraxum::Model for #table_rs_name {
+                    type Id = u64;
+                    type UpdateRequest = #table_rs_name_request;
+                    type UpdateRequestError = ();
+
+                    /// `get_one`
+                    ///
+                    /// ```sql
+                    #[doc = #get_one]
+                    /// ```
+                    async fn get_one(db: &Self::Db, id: Self::Id) -> ::core::result::Result<Self::Response, ::laraxum::Error>{
+                        let response = ::sqlx::query!(#get_one, id)
+                            .try_map(|response| #response_table_getter)
+                            .fetch_one(&db.pool)
+                            .await?;
+                        ::core::result::Result::Ok(response)
+                    }
+                    async fn create_get_one(
+                        db: &Self::Db,
+                        request: Self::CreateRequest,
+                    ) -> ::core::result::Result<Self::Response, ::laraxum::ModelError<Self::CreateRequestError>> {
+                        let response = ::sqlx::query!(#create_one, #request_columns_setter)
+                            .execute(&db.pool)
+                            .await?;
+                        let response = Self::get_one(db, response.last_insert_id()).await?;
+                        ::core::result::Result::Ok(response)
+                    }
+                    async fn update_one(
+                        db: &Self::Db,
+                        request: Self::UpdateRequest,
+                        id: Self::Id,
+                    ) -> ::core::result::Result<(), ::laraxum::ModelError<Self::UpdateRequestError>> {
+                        ::sqlx::query!(#update_one, #request_columns_setter id)
+                            .execute(&db.pool)
+                            .await?;
+                        ::core::result::Result::Ok(())
+                    }
+                    async fn update_get_one(
+                        db: &Self::Db,
+                        request: Self::UpdateRequest,
+                        id: Self::Id,
+                    ) -> ::core::result::Result<Self::Response, ::laraxum::ModelError<Self::UpdateRequestError>> {
+                        Self::update_one(db, request, id).await?;
+                        let response = Self::get_one(db, id).await?;
+                        ::core::result::Result::Ok(response)
+                    }
+                    async fn delete_one(db: &Self::Db, id: Self::Id) -> ::core::result::Result<(), ::laraxum::Error> {
+                        ::sqlx::query!(#delete_one, id)
+                            .execute(&db.pool)
+                            .await?;
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            }
+        });
+
+        let controller = table.controller.then(|| {
+            quote! {
+                impl ::laraxum::Controller for #table_rs_name {
+                    type State = #db_rs_name;
+                }
+            }
+        });
+
+        let table_token_stream = quote! {
+            #table_token_stream
+            #model
             #controller
         };
 

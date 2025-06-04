@@ -153,7 +153,7 @@ pub enum ColumnAttrTy {
 
     Id,
 
-    Value(Type),
+    Value(Box<Type>),
     Varchar(StringLen),
     Char(StringLen),
     Text,
