@@ -559,15 +559,14 @@ impl Table {
             }
         }
 
-        fn traverse<'columns>(
-            table_columns: &'columns [stage2::Column],
+        fn traverse_internal<'table>(
+            db: &stage2::Db,
             table_name_extern: &str,
-            db_tables: &[stage2::Table],
-            db_name: &str,
+            table: &'table stage2::Table,
             response_columns_names: &mut Vec<ResponseColumnName>,
             joins: &mut Vec<Join>,
-        ) -> impl Iterator<Item = (&'columns Ident, proc_macro2::TokenStream)> {
-            table_columns.iter().map(move |column| {
+        ) -> impl Iterator<Item = (&'table Ident, proc_macro2::TokenStream)> {
+            table.columns.iter().map(move |column| {
                 let stage2::Column {
                     name: column_name,
                     rs_name,
@@ -593,15 +592,16 @@ impl Table {
                         response_column_getter
                     }
                     stage2::Ty::Compund(ty_compound) => {
-                        let foreign_table = stage2::find_table(db_tables, &ty_compound.ty)
+                        let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
                             .expect("table does not exist");
                         let foreign_table_id_name = foreign_table
-                            .id_name
+                            .model
                             .as_deref()
                             .ok_or(TABLE_MUST_HAVE_ID)
                             .unwrap();
 
-                        let foreign_table_name_intern = name_intern((db_name, &foreign_table.name));
+                        let foreign_table_name_intern =
+                            name_intern((&db.name, &foreign_table.name));
                         let foreign_table_name_extern = name_extern_triple((
                             table_name_extern,
                             &foreign_table.name,
@@ -610,18 +610,13 @@ impl Table {
                         let foreign_table_id_name_intern =
                             name_intern((&*foreign_table_name_extern, foreign_table_id_name));
 
-                        let response_columns_getters = traverse(
-                            &foreign_table.columns,
+                        let response_table_getter = traverse(
+                            db,
                             &foreign_table_name_extern,
-                            db_tables,
-                            db_name,
+                            foreign_table,
+                            ty_compound,
                             response_columns_names,
                             joins,
-                        );
-                        let response_table_getter = response_table_getter(
-                            &foreign_table.rs_name,
-                            response_columns_getters,
-                            ty_compound.optional(),
                         );
 
                         joins.push(Join {
@@ -636,6 +631,23 @@ impl Table {
                 };
                 (rs_name, response_column_getter)
             })
+        }
+
+        fn traverse(
+            db: &stage2::Db,
+            table_name_extern: &str,
+            table: &stage2::Table,
+            ty_compound: &stage2::TyCompound,
+            response_columns_names: &mut Vec<ResponseColumnName>,
+            joins: &mut Vec<Join>,
+        ) -> proc_macro2::TokenStream {
+            let response_columns_getter =
+                traverse_internal(db, table_name_extern, table, response_columns_names, joins);
+            response_table_getter(
+                &table.rs_name,
+                response_columns_getter,
+                ty_compound.optional(),
+            )
         }
 
         let (table_name_intern, table_name_extern) = name_intern_extern((&*db.name, &*table.name));
@@ -696,7 +708,7 @@ impl Table {
                     let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
                         .expect("table does not exist");
                     let foreign_table_id_name = foreign_table
-                        .id_name
+                        .model
                         .as_deref()
                         .ok_or(TABLE_MUST_HAVE_ID)
                         .unwrap();
@@ -726,18 +738,13 @@ impl Table {
                     let foreign_table_id_name_intern =
                         name_intern((&*foreign_table_name_extern, foreign_table_id_name));
 
-                    let response_columns_getter = traverse(
-                        &foreign_table.columns,
+                    let response_table_getter = traverse(
+                        db,
                         &foreign_table_name_extern,
-                        &db.tables,
-                        &db.name,
+                        foreign_table,
+                        ty_compound,
                         &mut response_columns_names,
                         &mut joins,
-                    );
-                    let response_table_getter = response_table_getter(
-                        &foreign_table.rs_name,
-                        response_columns_getter,
-                        ty_compound.optional(),
                     );
                     response_columns_getters.push((rs_name, response_table_getter));
 
@@ -787,7 +794,9 @@ impl Table {
             pub struct #table_rs_name_request {
                 #(#request_columns_fields),*
             }
+        };
 
+        let collection_token_stream = table.collection.then(|| quote! {
             impl ::laraxum::Db<#table_rs_name> for #db_rs_name {}
 
             impl ::laraxum::Table for #table_rs_name {
@@ -805,7 +814,7 @@ impl Table {
                 /// ```sql
                 #[doc = #get_all]
                 /// ```
-                async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, ::laraxum::Error> {
+                async fn get_all(db: &Self::Db) -> ::core::result::Result<::std::vec::Vec<Self::Response>, ::laraxum::Error> {
                     let response = ::sqlx::query!(#get_all)
                         .try_map(|response| #response_table_getter)
                         .fetch_all(&db.pool)
@@ -815,7 +824,7 @@ impl Table {
                 async fn create_one(
                     db: &Self::Db,
                     request: Self::CreateRequest,
-                ) -> Result<(), ::laraxum::ModelError<Self::CreateRequestError>> {
+                ) -> ::core::result::Result<(), ::laraxum::ModelError<Self::CreateRequestError>> {
                     let response = ::sqlx::query!(
                             #create_one,
                             #request_columns_setter
@@ -825,9 +834,11 @@ impl Table {
                     ::core::result::Result::Ok(())
                 }
             }
-        };
+        });
 
-        let model = table.id_name.as_deref().map(|table_id_name| {
+        let model_token_stream = table.model.as_deref().filter(|_|table.model).map(|table_id_name| {
+            // let table_id_name=table.id_name.as_deref();
+            // let table_id_name=table_id_name.expect();
             let id_name_intern = name_intern((&*table_name_extern, table_id_name));
             let get_one = get_one(
                 &table_name_intern,
@@ -896,7 +907,7 @@ impl Table {
             }
         });
 
-        let controller = table.controller.then(|| {
+        let controller_token_stream = table.controller.then(|| {
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
@@ -904,10 +915,38 @@ impl Table {
             }
         });
 
+        let many_model_token_stream = table.many_model.then(|| {
+            quote! {
+                impl ManyModel<OneResponse>: Table {
+                    type OneRequest;
+                    type ManyRequest;
+                    type ManyResponse;
+
+                    async fn get_many(
+                        db: &Self::Db,
+                        one: Self::OneRequest,
+                    ) -> Result<Vec<Self::ManyResponse>, Error>;
+                    async fn create_many(
+                        db: &Self::Db,
+                        one: Self::OneRequest,
+                        many: &[Self::ManyRequest],
+                    ) -> Result<(), Error>;
+                    async fn update_many(
+                        db: &Self::Db,
+                        one: Self::OneRequest,
+                        many: &[Self::ManyRequest],
+                    ) -> Result<(), Error>;
+                    async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
+                }
+            }
+        });
+
         let table_token_stream = quote! {
             #table_token_stream
-            #model
-            #controller
+            #collection_token_stream
+            #model_token_stream
+            #controller_token_stream
+            #many_model_token_stream
         };
 
         Self {

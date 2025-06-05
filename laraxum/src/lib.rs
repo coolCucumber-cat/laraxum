@@ -151,35 +151,6 @@ pub trait Model: Collection {
     async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
 }
 
-pub trait ManyModel<OneResponse>: Table {
-    type OneRequest;
-    type ManyRequest;
-    type ManyResponse;
-
-    async fn get_many(
-        db: &Self::Db,
-        one: Self::OneRequest,
-    ) -> Result<Vec<Self::ManyResponse>, Error>;
-    async fn create_many(
-        db: &Self::Db,
-        one: Self::OneRequest,
-        many: &[Self::ManyRequest],
-    ) -> Result<(), Error>;
-    async fn update_many(
-        db: &Self::Db,
-        one: Self::OneRequest,
-        many: &[Self::ManyRequest],
-    ) -> Result<(), Error>;
-    async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
-}
-
-// pub trait AdvancedModelMany<Id>: Table {
-//     type AdvancedModelManyResponse: Serialize;
-//
-//     async fn get_many(db: &Self::Db, id: Id)
-//     -> Result<Vec<Self::AdvancedModelManyResponse>, Error>;
-// }
-
 pub trait Controller: Model
 where
     <Self as Table>::Response: Serialize,
@@ -229,6 +200,35 @@ where
         Ok(())
     }
 }
+
+pub trait ManyModel<OneResponse>: Table {
+    type OneRequest;
+    type ManyRequest;
+    type ManyResponse;
+
+    async fn get_many(
+        db: &Self::Db,
+        one: Self::OneRequest,
+    ) -> Result<Vec<Self::ManyResponse>, Error>;
+    async fn create_many(
+        db: &Self::Db,
+        one: Self::OneRequest,
+        many: &[Self::ManyRequest],
+    ) -> Result<(), Error>;
+    async fn update_many(
+        db: &Self::Db,
+        one: Self::OneRequest,
+        many: &[Self::ManyRequest],
+    ) -> Result<(), Error>;
+    async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
+}
+
+// pub trait AdvancedModelMany<Id>: Table {
+//     type AdvancedModelManyResponse: Serialize;
+//
+//     async fn get_many(db: &Self::Db, id: Id)
+//     -> Result<Vec<Self::AdvancedModelManyResponse>, Error>;
+// }
 
 pub trait Decode {
     type Decode;

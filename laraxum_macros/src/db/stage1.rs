@@ -236,9 +236,12 @@ impl TryFrom<Field> for Column {
 #[darling(attributes(db), forward_attrs(allow, doc))]
 pub struct TableAttr {
     #[darling(default)]
+    pub collection: bool,
+    #[darling(default)]
     pub model: bool,
     #[darling(default)]
     pub controller: bool,
+    pub many_model: bool,
     pub name: Option<String>,
 
     pub attrs: Vec<Attribute>,
@@ -368,8 +371,10 @@ mod tests {
             table_attr,
             TableAttr {
                 attrs: vec![],
+                collection: false,
                 controller: false,
                 model: false,
+                many_model: false,
                 name: Some("groups".into())
             }
         );

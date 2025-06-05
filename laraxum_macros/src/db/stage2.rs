@@ -8,6 +8,8 @@ use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
 // const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
 const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
+const TABLE_MUST_HAVE_ID: &str = "table must have id";
+const TABLE_MUST_HAVE_TWO_COLUMNS: &str = "table must have two columns";
 const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
@@ -338,12 +340,12 @@ pub struct Table {
     pub rs_name: Ident,
     /// the columns in the database
     pub columns: Vec<Column>,
+    pub collection: bool,
     /// the name for the id of the table, for example `CustomerId`
-    pub id_name: Option<String>,
-    /// automatically implement the model
-    pub model: bool,
+    pub model: Option<String>,
     /// automatically implement the controller (model must be implemented), using the db as the state
     pub controller: bool,
+    pub many_model: bool,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -357,8 +359,10 @@ impl TryFrom<stage1::Table> for Table {
             columns,
             attr:
                 stage1::TableAttr {
-                    controller,
+                    collection,
                     model,
+                    controller,
+                    many_model,
                     name,
                     attrs: rs_attrs,
                 },
@@ -368,8 +372,7 @@ impl TryFrom<stage1::Table> for Table {
         if controller && !model {
             return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL));
         }
-
-        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
+        let collection = collection || model;
 
         let mut id_name = None;
         let columns = columns.into_iter().map(|column| {
@@ -388,13 +391,24 @@ impl TryFrom<stage1::Table> for Table {
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
 
+        if model && id_name.is_none() {
+            return Err(syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_ID));
+        }
+        if many_model && columns.len() != 2 {
+            return Err(syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_TWO_COLUMNS));
+        }
+
+        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
+
         Ok(Self {
             name,
             rs_name,
             columns,
-            id_name,
+            model: id_name,
+            collection,
             model,
             controller,
+            many_model,
             rs_vis,
             rs_attrs,
         })
