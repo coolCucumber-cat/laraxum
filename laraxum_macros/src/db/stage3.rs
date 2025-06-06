@@ -389,15 +389,14 @@ fn get_one(
     response_columns_names: &[ResponseColumnName],
     joins: &[Join],
 ) -> String {
-    let get_all = get_all(
+    let mut get_all = get_all(
         table_name_intern,
         table_name_extern,
         response_columns_names,
         joins,
     );
-    fmt2::fmt! { { str } =>
-        {get_all} " WHERE " {id_name_intern} "=?"
-    }
+    fmt2::fmt! { (get_all) => " WHERE " {id_name_intern} "=?" };
+    get_all
 }
 fn create_one(table_name_intern: &str, request_columns: &[RequestColumn]) -> String {
     fmt2::fmt! { { str } =>
@@ -566,7 +565,7 @@ impl Table {
             response_columns_names: &mut Vec<ResponseColumnName>,
             joins: &mut Vec<Join>,
         ) -> impl Iterator<Item = (&'table Ident, proc_macro2::TokenStream)> {
-            table.columns.iter().map(move |column| {
+            table.columns.columns().map(move |column| {
                 let stage2::Column {
                     name: column_name,
                     rs_name,
@@ -614,7 +613,7 @@ impl Table {
                             db,
                             &foreign_table_name_extern,
                             foreign_table,
-                            ty_compound,
+                            &ty_compound,
                             response_columns_names,
                             joins,
                         );
@@ -796,7 +795,7 @@ impl Table {
             }
         };
 
-        let collection_token_stream = table.collection.then(|| quote! {
+        let collection_token_stream = table.columns.is_collection().then(|| quote! {
             impl ::laraxum::Db<#table_rs_name> for #db_rs_name {}
 
             impl ::laraxum::Table for #table_rs_name {
@@ -836,9 +835,7 @@ impl Table {
             }
         });
 
-        let model_token_stream = table.model.as_deref().filter(|_|table.model).map(|table_id_name| {
-            // let table_id_name=table.id_name.as_deref();
-            // let table_id_name=table_id_name.expect();
+        let model_token_stream = table.columns.model_id().map(|table_id_name| {
             let id_name_intern = name_intern((&*table_name_extern, table_id_name));
             let get_one = get_one(
                 &table_name_intern,
@@ -907,7 +904,7 @@ impl Table {
             }
         });
 
-        let controller_token_stream = table.controller.then(|| {
+        let controller_token_stream = table.columns.is_controller().then(|| {
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
@@ -915,7 +912,7 @@ impl Table {
             }
         });
 
-        let many_model_token_stream = table.many_model.then(|| {
+        let many_model_token_stream = table.columns.then(|| {
             quote! {
                 impl ManyModel<OneResponse>: Table {
                     type OneRequest;

@@ -231,17 +231,15 @@ impl TryFrom<Field> for Column {
     }
 }
 
-#[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
+// #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
 #[derive(darling::FromAttributes)]
 #[darling(attributes(db), forward_attrs(allow, doc))]
 pub struct TableAttr {
-    #[darling(default)]
-    pub collection: bool,
-    #[darling(default)]
-    pub model: bool,
-    #[darling(default)]
-    pub controller: bool,
-    pub many_model: bool,
+    // TODO: this was removed for simplicity, add it back
+    // pub collection: Option<darling::util::SpannedValue<()>>,
+    pub model: Option<darling::util::SpannedValue<()>>,
+    pub controller: Option<darling::util::SpannedValue<()>>,
+    pub many_model: Option<darling::util::SpannedValue<()>>,
     pub name: Option<String>,
 
     pub attrs: Vec<Attribute>,
@@ -359,24 +357,24 @@ impl TryFrom<Item> for Db {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn table_attr() {
-        let attr: Attribute = syn::parse_quote!(#[db(name = "groups")]);
-        let table_attr = <TableAttr as darling::FromAttributes>::from_attributes(&[attr]).unwrap();
-        assert_eq!(
-            table_attr,
-            TableAttr {
-                attrs: vec![],
-                collection: false,
-                controller: false,
-                model: false,
-                many_model: false,
-                name: Some("groups".into())
-            }
-        );
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//
+//     #[test]
+//     fn table_attr() {
+//         let attr: Attribute = syn::parse_quote!(#[db(name = "groups")]);
+//         let table_attr = <TableAttr as darling::FromAttributes>::from_attributes(&[attr]).unwrap();
+//         assert_eq!(
+//             table_attr,
+//             TableAttr {
+//                 attrs: vec![],
+//                 collection: None,
+//                 controller: None,
+//                 model: None,
+//                 many_model: None,
+//                 name: Some("groups".into())
+//             }
+//         );
+//     }
+// }

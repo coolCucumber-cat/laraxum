@@ -5,11 +5,11 @@ use crate::utils::{collections::TryCollectAll, multiplicity};
 
 use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
-// const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
 const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
-const TABLE_MUST_HAVE_ID: &str = "table must have id";
 const TABLE_MUST_HAVE_TWO_COLUMNS: &str = "table must have two columns";
+const MODEL_AND_MANY_MODEL_CONFLICT: &str = "model and many_model conflict";
 const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
@@ -333,19 +333,50 @@ impl TryFrom<stage1::Column> for Column {
     }
 }
 
+pub enum Columns {
+    CollectionOnly {
+        columns: Vec<Column>,
+    },
+    Model {
+        id: Column,
+        columns: Vec<Column>,
+        controller: bool,
+    },
+    ManyModel {
+        a: Column,
+        b: Column,
+    },
+}
+impl Columns {
+    pub fn columns(&self) -> impl Iterator<Item = &Column> {
+        let (a, b, c) = match self {
+            Self::CollectionOnly { columns, .. } => (None, None, &**columns),
+            Self::Model { id, columns, .. } => (Some(id), None, &**columns),
+            Self::ManyModel { a, b } => (Some(a), Some(b), &[] as &[_]),
+        };
+        a.into_iter().chain(b).chain(c)
+    }
+    pub fn model_id(&self) -> Option<&Column> {
+        match self {
+            Self::Model { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+    pub fn is_collection(&self) -> bool {
+        matches!(*self, Self::CollectionOnly { .. } | Self::Model { .. })
+    }
+    pub fn is_controller(&self) -> bool {
+        matches!(*self, Self::Model { controller, .. } if controller)
+    }
+}
+
 pub struct Table {
     /// the name for the sql table, for example `customers`
     pub name: String,
     /// the name for the table struct, for example `Customer`
     pub rs_name: Ident,
     /// the columns in the database
-    pub columns: Vec<Column>,
-    pub collection: bool,
-    /// the name for the id of the table, for example `CustomerId`
-    pub model: Option<String>,
-    /// automatically implement the controller (model must be implemented), using the db as the state
-    pub controller: bool,
-    pub many_model: bool,
+    pub columns: Columns,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -359,56 +390,92 @@ impl TryFrom<stage1::Table> for Table {
             columns,
             attr:
                 stage1::TableAttr {
-                    collection,
-                    model,
-                    controller,
-                    many_model,
+                    model: model_attr,
+                    controller: controller_attr,
+                    many_model: many_model_attr,
                     name,
                     attrs: rs_attrs,
                 },
             rs_vis,
         } = table;
 
-        if controller && !model {
-            return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL));
-        }
-        let collection = collection || model;
+        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
 
-        let mut id_name = None;
-        let columns = columns.into_iter().map(|column| {
-            let column = Column::try_from(column)?;
-            if let Ty::Element(TyElement::Id) = column.ty {
-                if id_name.is_some() {
-                    return Err(syn::Error::new(
-                        column.rs_name.span(),
-                        TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
-                    ));
+        let mut id = None;
+        let columns = columns
+            .into_iter()
+            .map(|column| {
+                let column = Column::try_from(column)?;
+                if let Ty::Element(TyElement::Id) = column.ty {
+                    if id.is_some() {
+                        return Err(syn::Error::new(
+                            column.rs_name.span(),
+                            TABLE_MUST_NOT_HAVE_MULTIPLE_IDS,
+                        ));
+                    }
+                    id = Some(column);
+                    Ok(None)
+                } else {
+                    Ok(Some(column))
                 }
-                id_name = Some(column.name.clone());
-            }
-            Ok(column)
-        });
+            })
+            .filter_map(Result::transpose);
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
 
-        if model && id_name.is_none() {
-            return Err(syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_ID));
-        }
-        if many_model && columns.len() != 2 {
-            return Err(syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_TWO_COLUMNS));
-        }
+        // TODO: allow model to have options or default options if only controller was specified (controller auto implements model too)
+        // let model = model.or_else(|| controller.map(|_x| Default::default()));
+        let model = model_attr.or(controller_attr);
+        let model = match (model, id) {
+            (Some(model), Some(id)) => Some((id, model)),
+            (None, None) => None,
+            (Some(model), None) => return Err(syn::Error::new(model.span(), TABLE_MUST_HAVE_ID)),
+            (None, Some(ref id)) => {
+                return Err(syn::Error::new(
+                    id.rs_name.span(),
+                    TABLE_MUST_IMPLEMENT_MODEL,
+                ));
+            }
+        };
 
-        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
+        let columns = match (model, many_model_attr) {
+            (Some((_, model_attr)), Some(_)) => {
+                return Err(syn::Error::new(
+                    model_attr.span(),
+                    MODEL_AND_MANY_MODEL_CONFLICT,
+                ));
+            }
+            (Some((id, _)), None) => Columns::Model {
+                id,
+                columns,
+                controller: controller_attr.is_some(),
+            },
+            (None, Some(_)) => {
+                let mut columns = columns.into_iter();
+                let span = rs_name.span();
+                let f_err = || syn::Error::new(span, TABLE_MUST_HAVE_TWO_COLUMNS);
+                let many_model = Columns::ManyModel {
+                    a: columns.next().ok_or_else(f_err)?,
+                    b: columns.next().ok_or_else(f_err)?,
+                };
+                columns.next().map_or_else(
+                    || Ok(()),
+                    |column| {
+                        Err(syn::Error::new(
+                            column.rs_name.span(),
+                            TABLE_MUST_HAVE_TWO_COLUMNS,
+                        ))
+                    },
+                )?;
+                many_model
+            }
+            (None, None) => Columns::CollectionOnly { columns },
+        };
 
         Ok(Self {
             name,
             rs_name,
             columns,
-            model: id_name,
-            collection,
-            model,
-            controller,
-            many_model,
             rs_vis,
             rs_attrs,
         })
