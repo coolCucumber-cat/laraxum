@@ -39,7 +39,7 @@ fn db_syn(
     let stage2_db = db::stage2::Db::try_new(stage1_db, stage1_db_attr)?;
 
     // stage 3: backend -> codegen
-    let stage3_db = db::stage3::Db::from(stage2_db);
+    let stage3_db = db::stage3::Db::try_from(stage2_db)?;
 
     Ok(stage3_db)
 }

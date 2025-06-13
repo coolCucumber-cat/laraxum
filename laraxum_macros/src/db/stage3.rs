@@ -1,6 +1,6 @@
 use super::stage2;
 
-use crate::utils::syn::from_str_to_rs_ident;
+use crate::utils::{collections::TryCollectAll, syn::from_str_to_rs_ident};
 
 use std::borrow::Cow;
 
@@ -226,11 +226,7 @@ impl stage2::TyCompound {
         }
     };
 
-    fn ty<'table_name, 'table_id_name>(
-        &self,
-        table_name: &'table_name str,
-        table_id_name: &'table_id_name str,
-    ) -> Ty<'table_name, 'table_id_name, '_, '_, '_> {
+    fn ty<'ty>(&self, table_name: &'ty str, table_id_name: &'ty str) -> Ty<'ty> {
         if matches!(self.multiplicity, stage2::TyCompoundMultiplicity::Many(_)) {
             todo!("multiple foreign keys not yet implemented");
         }
@@ -271,16 +267,27 @@ impl fmt2::write_to::WriteTo for TyValue {
 }
 
 // #[derive(Default)]
-struct Ty<'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+struct Ty<'a> {
     ty: TyValue,
     primary_key: bool,
-    foreign_key: Option<(&'fk_table str, &'fk_id str)>,
-    on_delete: Option<&'on_delete str>,
-    on_update: Option<&'on_update str>,
-    default_value: Option<&'default_value str>,
+    foreign_key: Option<(&'a str, &'a str)>,
+    on_delete: Option<&'a str>,
+    on_update: Option<&'a str>,
+    default_value: Option<&'a str>,
     unique: bool,
 }
-impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_> {
+// // #[derive(Default)]
+// struct Ty<'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+//     ty: TyValue,
+//     primary_key: bool,
+//     foreign_key: Option<(&'fk_table str, &'fk_id str)>,
+//     on_delete: Option<&'on_delete str>,
+//     on_update: Option<&'on_update str>,
+//     default_value: Option<&'default_value str>,
+//     unique: bool,
+// }
+impl fmt2::write_to::WriteTo for Ty<'_> {
+    // impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_> {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
     where
         W: fmt2::write::Write + ?Sized,
@@ -314,39 +321,74 @@ impl fmt2::write_to::WriteTo for Ty<'_, '_, '_, '_, '_> {
     }
 }
 
-struct Column<'name, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+struct CreateColumn<'name, 'ty> {
     name: &'name str,
-    ty: Ty<'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete>,
+    ty: Ty<'ty>,
 }
-impl fmt2::write_to::WriteTo for Column<'_, '_, '_, '_, '_, '_> {
+// struct CreateColumn<'name, 'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete> {
+//     name: &'name str,
+//     ty: Ty<'fk_table, 'fk_id, 'default_value, 'on_update, 'on_delete>,
+// }
+impl fmt2::write_to::WriteTo for CreateColumn<'_, '_> {
+    // impl fmt2::write_to::WriteTo for CreateColumn<'_, '_, '_, '_, '_, '_> {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
     where
         W: fmt2::write::Write + ?Sized,
     {
-        // no space between name and type, since the type automatically adds a space
-        fmt2::fmt! { (? w) => {self.name} {self.ty} }
+        fmt2::fmt! { (? w) => {self.name} " " {self.ty} }
     }
 }
 
-struct RequestColumn<'name> {
-    name: &'name str,
-    field: proc_macro2::TokenStream,
-    setter: proc_macro2::TokenStream,
+struct ResponseColumn<'a> {
+    rs_name: &'a Ident,
+    rs_ty: &'a Type,
+    attr: &'a stage2::ColumnAttrResponse,
+    rs_attrs: &'a [Attribute],
 }
 
-struct ResponseColumnName {
+struct ResponseGetterColumnElement<'a> {
     name_intern: String,
     name_extern: String,
+    optional: bool,
+    rs_name: &'a Ident,
 }
 
-struct Join {
+struct ResponseGetterColumnCompound<'a> {
+    name_intern: String,
+    foreign_table_id_name_intern: String,
     foreign_table_name_intern: String,
     foreign_table_name_extern: String,
-    foreign_table_id_name_intern: String,
-    column_name_intern: String,
+    optional: bool,
+    rs_name: &'a Ident,
+    rs_ty_name: &'a Ident,
+    columns: Vec<ResponseGetterColumn<'a>>,
 }
 
-fn create_table(table_name_intern: &str, columns: &[Column]) -> String {
+enum ResponseGetterColumn<'a> {
+    Element(ResponseGetterColumnElement<'a>),
+    Compound(ResponseGetterColumnCompound<'a>),
+}
+
+struct RequestColumn<'a> {
+    name: &'a str,
+    optional: bool,
+    rs_name: &'a Ident,
+    rs_ty: Cow<'a, Type>,
+    attr: &'a stage2::ColumnAttrRequest,
+    rs_attrs: &'a [Attribute],
+}
+
+struct Column<'a> {
+    create: CreateColumn<'a, 'a>,
+    response: ResponseColumn<'a>,
+    response_getter: ResponseGetterColumn<'a>,
+    request: Option<RequestColumn<'a>>,
+}
+
+fn create_table<'columns, 'name: 'columns, 'ty: 'columns>(
+    table_name_intern: &str,
+    columns: impl IntoIterator<Item = &'columns CreateColumn<'name, 'ty>>,
+) -> String {
     fmt2::fmt! { { str } =>
         "CREATE TABLE IF NOT EXISTS " {table_name_intern} " ("
             @..join(columns => "," => |c| {c})
@@ -358,59 +400,72 @@ fn delete_table(table_name_intern: &str) -> String {
         "DROP TABLE " {table_name_intern} ";"
     }
 }
-fn get_all(
+fn get_all<'elements, 'compounds>(
     table_name_intern: &str,
     table_name_extern: &str,
-    response_columns_names: &[ResponseColumnName],
-    joins: &[Join],
+    response_getter_column_elements: impl IntoIterator<
+        Item = &'elements ResponseGetterColumnElement<'elements>,
+    >,
+    response_getter_column_compounds: impl IntoIterator<
+        Item = &'compounds ResponseGetterColumnCompound<'compounds>,
+    >,
 ) -> String {
     fmt2::fmt! { { str } =>
         "SELECT "
-        @..join(response_columns_names => "," => |c|
-            {c.name_intern}
+        @..join(response_getter_column_elements => "," => |element|
+            {element.name_intern}
             " AS "
-            // "`"
-            {c.name_extern}
-            // "`"
+            {element.name_extern}
         )
         " FROM " {table_name_intern} " AS " {table_name_extern}
-        @..(joins.iter().rev() => |join|
+        @..(response_getter_column_compounds => |compound|
             " LEFT JOIN "
-            {join.foreign_table_name_intern} " AS " {join.foreign_table_name_extern}
+            {compound.foreign_table_name_intern} " AS " {compound.foreign_table_name_extern}
             " ON "
-            {join.column_name_intern} "=" {join.foreign_table_id_name_intern}
+            {compound.name_intern} "=" {compound.foreign_table_id_name_intern}
         )
     }
 }
-fn get_one(
+fn get_one<'elements, 'compounds>(
     table_name_intern: &str,
     table_name_extern: &str,
     id_name_intern: &str,
-    response_columns_names: &[ResponseColumnName],
-    joins: &[Join],
+    response_getter_column_elements: impl IntoIterator<
+        Item = &'elements ResponseGetterColumnElement<'elements>,
+    >,
+    response_getter_column_compounds: impl IntoIterator<
+        Item = &'compounds ResponseGetterColumnCompound<'compounds>,
+    >,
 ) -> String {
     let mut get_all = get_all(
         table_name_intern,
         table_name_extern,
-        response_columns_names,
-        joins,
+        response_getter_column_elements,
+        response_getter_column_compounds,
     );
     fmt2::fmt! { (get_all) => " WHERE " {id_name_intern} "=?" };
     get_all
 }
-fn create_one(table_name_intern: &str, request_columns: &[RequestColumn]) -> String {
+fn create_one<'request_columns>(
+    table_name_intern: &str,
+    request_columns: impl IntoIterator<Item = &'request_columns RequestColumn<'request_columns>> + Clone,
+) -> String {
     fmt2::fmt! { { str } =>
         "INSERT INTO " {table_name_intern} " ("
-            @..join(&request_columns => "," => |c| {c.name})
+            @..join(request_columns.clone() => "," => |c| {c.name})
         ") VALUES ("
-            @..join(&request_columns => "," => |_c| "?")
+            @..join(request_columns => "," => |_c| "?")
         ")"
     }
 }
-fn update_one(table_name_intern: &str, id_name: &str, request_columns: &[RequestColumn]) -> String {
+fn update_one<'request_columns>(
+    table_name_intern: &str,
+    id_name: &str,
+    request_columns: impl IntoIterator<Item = &'request_columns RequestColumn<'request_columns>>,
+) -> String {
     fmt2::fmt! { { str } =>
         "UPDATE " {table_name_intern} " SET "
-        @..join(&request_columns => "," => |c| {c.name} "=?")
+        @..join(request_columns => "," => |c| {c.name} "=?")
         " WHERE " {id_name} "=?"
     }
 }
@@ -428,12 +483,23 @@ struct Table {
 }
 
 impl Table {
-    fn new(table: &stage2::Table, db: &stage2::Db) -> Self {
+    fn try_new(table: &stage2::Table, db: &stage2::Db) -> syn::Result<Self> {
         fn serde_skip() -> proc_macro2::TokenStream {
             quote! { #[serde(skip)] }
         }
         fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
             quote! { #[serde(rename = #serde_name)] }
+        }
+
+        fn map_option_to_result(
+            token_stream: proc_macro2::TokenStream,
+        ) -> proc_macro2::TokenStream {
+            quote! {
+                match #token_stream {
+                    ::core::option::Option::Some(val) => ::core::result::Result::Ok(val),
+                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::Decode(::std::string::String::new())),
+                }
+            }
         }
 
         fn rs_ty_compound_request(optional: bool) -> Type {
@@ -444,66 +510,65 @@ impl Table {
             }
         }
 
-        fn request_column_field(
-            rs_name: &Ident,
-            rs_ty: &Type,
-            attr: &stage2::ColumnAttrRequest,
-            rs_attrs: &[Attribute],
-        ) -> proc_macro2::TokenStream {
-            let serde_skip = attr.skip.then(serde_skip);
-            let serde_name = attr.name.as_deref().map(serde_name);
-            quote! {
-                #(#rs_attrs)* #serde_skip #serde_name
-                pub #rs_name: #rs_ty
-            }
-        }
-        fn request_column_setter(rs_name: &Ident, optional: bool) -> proc_macro2::TokenStream {
-            if optional {
-                quote! { ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode) }
-            } else {
-                quote! { ::laraxum::Encode::encode(request.#rs_name) }
-            }
-        }
+        // fn request_column_field(
+        //     rs_name: &Ident,
+        //     rs_ty: &Type,
+        //     attr: &stage2::ColumnAttrRequest,
+        //     rs_attrs: &[Attribute],
+        // ) -> proc_macro2::TokenStream {
+        //     let serde_skip = attr.skip.then(serde_skip);
+        //     let serde_name = attr.name.as_deref().map(serde_name);
+        //     quote! {
+        //         #(#rs_attrs)* #serde_skip #serde_name
+        //         pub #rs_name: #rs_ty
+        //     }
+        // }
+        // fn request_column_setter(rs_name: &Ident, optional: bool) -> proc_macro2::TokenStream {
+        //     if optional {
+        //         quote! { ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode) }
+        //     } else {
+        //         quote! { ::laraxum::Encode::encode(request.#rs_name) }
+        //     }
+        // }
 
-        fn response_column_field(
-            rs_name: &Ident,
-            rs_ty: &Type,
-            attr: &stage2::ColumnAttrResponse,
-            rs_attrs: &[Attribute],
-        ) -> proc_macro2::TokenStream {
-            let serde_skip = attr.skip.then(serde_skip);
-            let serde_name = attr.name.as_deref().map(serde_name);
-            quote! {
-                #(#rs_attrs)* #serde_skip #serde_name
-                pub #rs_name: #rs_ty
-            }
-        }
-        fn response_column_getter_field_access(name_extern: &str) -> proc_macro2::TokenStream {
-            let name_extern = from_str_to_rs_ident(name_extern);
-            quote! { response.#name_extern }
-        }
-        fn response_column_getter_decode(
-            field_access: proc_macro2::TokenStream,
-            optional: bool,
-        ) -> proc_macro2::TokenStream {
-            if optional {
-                quote! { ::core::option::Option::map(#field_access, ::laraxum::Decode::decode) }
-            } else {
-                quote! { ::laraxum::Decode::decode(#field_access) }
-            }
-        }
-        fn response_column_getter(name_extern: &str, optional: bool) -> proc_macro2::TokenStream {
-            let field_access = response_column_getter_field_access(name_extern);
-            response_column_getter_decode(field_access, optional)
-        }
-        fn response_column_getter_foreign(
+        // fn response_column_field(
+        //     rs_name: &Ident,
+        //     rs_ty: &Type,
+        //     attr: &stage2::ColumnAttrResponse,
+        //     rs_attrs: &[Attribute],
+        // ) -> proc_macro2::TokenStream {
+        //     let serde_skip = attr.skip.then(serde_skip);
+        //     let serde_name = attr.name.as_deref().map(serde_name);
+        //     quote! {
+        //         #(#rs_attrs)* #serde_skip #serde_name
+        //         pub #rs_name: #rs_ty
+        //     }
+        // }
+
+        // fn response_column_getter_field_access(name_extern: &str) -> proc_macro2::TokenStream {
+        //     let name_extern = from_str_to_rs_ident(name_extern);
+        //     quote! { response.#name_extern }
+        // }
+        // fn response_column_getter_decode(
+        //     field_access: proc_macro2::TokenStream,
+        //     optional: bool,
+        // ) -> proc_macro2::TokenStream {
+        //     if optional {
+        //         quote! { ::core::option::Option::map(#field_access, ::laraxum::Decode::decode) }
+        //     } else {
+        //         quote! { ::laraxum::Decode::decode(#field_access) }
+        //     }
+        // }
+
+        fn response_column_getter(
             name_extern: &str,
             optional: bool,
+            foreign: bool,
         ) -> proc_macro2::TokenStream {
-            let field_access = response_column_getter_field_access(name_extern);
-            let field_access = if optional {
-                field_access
-            } else {
+            let name_extern = from_str_to_rs_ident(name_extern);
+            let field_access = quote! { response.#name_extern };
+
+            let field_access = if foreign && !optional {
                 #[cfg(feature = "try_blocks")]
                 {
                     quote! {
@@ -519,17 +584,47 @@ impl Table {
                         }
                     }
                 }
+            } else {
+                field_access
             };
-            response_column_getter_decode(field_access, optional)
+
+            if optional {
+                quote! { ::core::option::Option::map(#field_access, ::laraxum::Decode::decode) }
+            } else {
+                quote! { ::laraxum::Decode::decode(#field_access) }
+            }
         }
-        fn response_table_getter<'response_name>(
+        fn response_getter<'columns>(
             table_ty: &Ident,
-            columns: impl IntoIterator<Item = (&'response_name Ident, proc_macro2::TokenStream)>,
+            columns: impl IntoIterator<Item = &'columns ResponseGetterColumn<'columns>>,
             optional: bool,
+            foreign: bool,
         ) -> proc_macro2::TokenStream {
-            let columns = columns.into_iter().map(|(field_name, getter)| {
-                quote! {
-                    #field_name: #getter
+            let columns = columns.into_iter().map(|column| match column {
+                ResponseGetterColumn::Element(element) => {
+                    let ResponseGetterColumnElement {
+                        name_extern,
+                        optional,
+                        rs_name,
+                        ..
+                    } = element;
+                    let getter = response_column_getter(name_extern, *optional, foreign);
+                    quote! {
+                        #rs_name: #getter
+                    }
+                }
+                ResponseGetterColumn::Compound(compound) => {
+                    let ResponseGetterColumnCompound {
+                        optional,
+                        rs_name,
+                        rs_ty_name,
+                        columns,
+                        ..
+                    } = compound;
+                    let getter = response_getter(rs_ty_name, columns.iter(), *optional, true);
+                    quote! {
+                        #rs_name: #getter
+                    }
                 }
             });
             let getter = quote! { #table_ty { #( #columns ),* } };
@@ -547,234 +642,291 @@ impl Table {
             }
         }
 
-        fn map_option_to_result(
-            token_stream: proc_macro2::TokenStream,
-        ) -> proc_macro2::TokenStream {
-            quote! {
-                match #token_stream {
-                    ::core::option::Option::Some(val) => ::core::result::Result::Ok(val),
-                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::Decode("".into())),
-                }
-            }
-        }
-
-        fn traverse_internal<'table>(
-            db: &stage2::Db,
+        fn traverse<'table: 'iter, 'iter>(
             table_name_extern: &str,
             table: &'table stage2::Table,
-            response_columns_names: &mut Vec<ResponseColumnName>,
-            joins: &mut Vec<Join>,
-        ) -> impl Iterator<Item = (&'table Ident, proc_macro2::TokenStream)> {
+            db: &stage2::Db,
+        ) -> impl Iterator<Item = syn::Result<ResponseGetterColumn<'iter>>> {
             table.columns.columns().map(move |column| {
                 let stage2::Column {
-                    name: column_name,
-                    rs_name,
-                    ty,
-                    ..
+                    name, rs_name, ty, ..
                 } = column;
-                let column_name = &**column_name;
+                let name = &**name;
                 let (column_name_intern, column_name_extern) =
-                    name_intern_extern((table_name_extern, column_name));
+                    name_intern_extern((table_name_extern, name));
 
-                let response_column_getter = match ty {
+                let response_getter_column = match ty {
                     stage2::Ty::Element(ty_element) => {
-                        let response_column_getter = response_column_getter_foreign(
-                            &column_name_extern,
-                            ty_element.optional(),
-                        );
-
-                        response_columns_names.push(ResponseColumnName {
+                        let element = ResponseGetterColumnElement {
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
-                        });
-
-                        response_column_getter
+                            rs_name,
+                            optional: ty_element.optional(),
+                        };
+                        ResponseGetterColumn::Element(element)
                     }
                     stage2::Ty::Compund(ty_compound) => {
-                        let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
-                            .expect("table does not exist");
-                        let foreign_table_id_name = foreign_table
-                            .model
-                            .as_deref()
-                            .ok_or(TABLE_MUST_HAVE_ID)
-                            .unwrap();
+                        let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)?;
+                        let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
+                            syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
+                        })?;
+
+                        let columns = traverse(table_name_extern, table, db);
+                        let columns: Result<Vec<ResponseGetterColumn>, syn::Error> =
+                            columns.try_collect_all_default();
+                        let columns = columns?;
 
                         let foreign_table_name_intern =
                             name_intern((&db.name, &foreign_table.name));
-                        let foreign_table_name_extern = name_extern_triple((
-                            table_name_extern,
-                            &foreign_table.name,
-                            column_name,
-                        ));
+                        let foreign_table_name_extern =
+                            name_extern_triple((table_name_extern, &foreign_table.name, name));
                         let foreign_table_id_name_intern =
-                            name_intern((&*foreign_table_name_extern, foreign_table_id_name));
+                            name_intern((&*foreign_table_name_extern, &foreign_table_id.name));
 
-                        let response_table_getter = traverse(
-                            db,
-                            &foreign_table_name_extern,
-                            foreign_table,
-                            &ty_compound,
-                            response_columns_names,
-                            joins,
-                        );
-
-                        joins.push(Join {
+                        let compound = ResponseGetterColumnCompound {
+                            name_intern: column_name_intern,
+                            foreign_table_id_name_intern,
                             foreign_table_name_intern,
                             foreign_table_name_extern,
-                            foreign_table_id_name_intern,
-                            column_name_intern,
-                        });
-
-                        response_table_getter
+                            rs_name,
+                            rs_ty_name: &ty_compound.ty,
+                            optional: ty_compound.optional(),
+                            columns,
+                        };
+                        ResponseGetterColumn::Compound(compound)
                     }
                 };
-                (rs_name, response_column_getter)
+                Ok(response_getter_column)
             })
         }
 
-        fn traverse(
-            db: &stage2::Db,
-            table_name_extern: &str,
-            table: &stage2::Table,
-            ty_compound: &stage2::TyCompound,
-            response_columns_names: &mut Vec<ResponseColumnName>,
-            joins: &mut Vec<Join>,
-        ) -> proc_macro2::TokenStream {
-            let response_columns_getter =
-                traverse_internal(db, table_name_extern, table, response_columns_names, joins);
-            response_table_getter(
-                &table.rs_name,
-                response_columns_getter,
-                ty_compound.optional(),
+        fn flatten_internal<'columns>(
+            response_getter_columns: impl Iterator<Item = &'columns ResponseGetterColumn<'columns>>,
+            response_getter_column_elements: &mut Vec<
+                &'columns ResponseGetterColumnElement<'columns>,
+            >,
+            response_getter_column_compounds: &mut Vec<
+                &'columns ResponseGetterColumnCompound<'columns>,
+            >,
+        ) {
+            for response_getter_column in response_getter_columns {
+                match response_getter_column {
+                    ResponseGetterColumn::Element(element) => {
+                        response_getter_column_elements.push(element);
+                    }
+                    ResponseGetterColumn::Compound(compound) => {
+                        response_getter_column_compounds.push(compound);
+                        flatten_internal(
+                            compound.columns.iter(),
+                            response_getter_column_elements,
+                            response_getter_column_compounds,
+                        );
+                    }
+                }
+            }
+        }
+        fn flatten<'columns>(
+            response_getter_columns: impl Iterator<Item = &'columns ResponseGetterColumn<'columns>>,
+        ) -> (
+            Vec<&'columns ResponseGetterColumnElement<'columns>>,
+            Vec<&'columns ResponseGetterColumnCompound<'columns>>,
+        ) {
+            let mut response_getter_column_elements = vec![];
+            let mut response_getter_column_compounds = vec![];
+            flatten_internal(
+                response_getter_columns,
+                &mut response_getter_column_elements,
+                &mut response_getter_column_compounds,
+            );
+            (
+                response_getter_column_elements,
+                response_getter_column_compounds,
             )
         }
 
         let (table_name_intern, table_name_extern) = name_intern_extern((&*db.name, &*table.name));
-
-        let mut columns: Vec<Column> = vec![];
-        let mut request_columns: Vec<RequestColumn> = vec![];
-        let mut response_columns_names: Vec<ResponseColumnName> = vec![];
-        let mut response_columns_fields: Vec<proc_macro2::TokenStream> = vec![];
-        let mut response_columns_getters: Vec<(&Ident, proc_macro2::TokenStream)> = vec![];
-        let mut joins: Vec<Join> = vec![];
-
-        for column in &table.columns {
+        let columns = table.columns.columns().map(|column| {
             let stage2::Column {
-                name: column_name,
+                name,
                 rs_name,
                 ty,
                 rs_ty,
-                attr_response: response,
-                attr_request: request,
-                rs_attrs: attrs,
+                attr_response,
+                attr_request,
+                rs_attrs,
             } = column;
-            let column_name = &**column_name;
-            let attrs = &**attrs;
             let (column_name_intern, column_name_extern) =
-                name_intern_extern((&*table_name_extern, column_name));
+                name_intern_extern((&*table_name_extern, name));
 
-            match ty {
-                stage2::Ty::Element(ty_element) => {
-                    columns.push(Column {
-                        name: column_name,
+            let column0 = match ty {
+                stage2::Ty::Element(ty_element) => Column {
+                    create: CreateColumn {
+                        name,
                         ty: ty_element.ty(),
-                    });
-
-                    if let stage2::TyElement::Value(_) = ty_element {
-                        request_columns.push(RequestColumn {
-                            field: request_column_field(rs_name, rs_ty, request, attrs),
-                            setter: request_column_setter(rs_name, ty_element.optional()),
-                            name: column_name,
-                        });
-                    }
-
-                    response_columns_fields
-                        .push(response_column_field(rs_name, rs_ty, response, attrs));
-                    response_columns_getters.push((
+                    },
+                    response: ResponseColumn {
                         rs_name,
-                        response_column_getter(&column_name_extern, ty_element.optional()),
-                    ));
-                    response_columns_names.push(ResponseColumnName {
+                        rs_ty,
+                        attr: attr_response,
+                        rs_attrs,
+                    },
+                    response_getter: ResponseGetterColumn::Element(ResponseGetterColumnElement {
                         name_intern: column_name_intern,
                         name_extern: column_name_extern,
-                    });
-                }
+                        optional: ty_element.optional(),
+                        rs_name,
+                    }),
+                    request: ty_element.is_updatable().then(|| RequestColumn {
+                        name,
+                        optional: ty_element.optional(),
+                        rs_name,
+                        rs_ty: Cow::Borrowed(rs_ty),
+                        attr: attr_request,
+                        rs_attrs,
+                    }),
+                },
                 stage2::Ty::Compund(ty_compound) => {
-                    // let Some(foreign_table) = stage2::find_table(&db.tables, &ty_compound.ident)
-                    // else {
-                    //     continue;
-                    // };
-                    let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)
-                        .expect("table does not exist");
-                    let foreign_table_id_name = foreign_table
-                        .model
-                        .as_deref()
-                        .ok_or(TABLE_MUST_HAVE_ID)
-                        .unwrap();
+                    let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)?;
+                    let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
+                        syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
+                    })?;
 
-                    columns.push(Column {
-                        name: column_name,
-                        ty: ty_compound.ty(&foreign_table.name, foreign_table_id_name),
-                    });
-
-                    request_columns.push(RequestColumn {
-                        field: request_column_field(
-                            rs_name,
-                            &rs_ty_compound_request(ty_compound.optional()),
-                            request,
-                            attrs,
-                        ),
-                        setter: request_column_setter(rs_name, ty_compound.optional()),
-                        name: column_name,
-                    });
-
-                    response_columns_fields
-                        .push(response_column_field(rs_name, rs_ty, response, attrs));
+                    let columns = traverse(&table_name_extern, table, db);
+                    let columns: Result<Vec<ResponseGetterColumn>, syn::Error> =
+                        columns.try_collect_all_default();
+                    let columns = columns?;
 
                     let foreign_table_name_intern = name_intern((&db.name, &foreign_table.name));
                     let foreign_table_name_extern =
-                        name_extern_triple((&table_name_extern, &foreign_table.name, column_name));
+                        name_extern_triple((&table_name_extern, &foreign_table.name, name));
                     let foreign_table_id_name_intern =
-                        name_intern((&*foreign_table_name_extern, foreign_table_id_name));
+                        name_intern((&*foreign_table_name_extern, &foreign_table_id.name));
 
-                    let response_table_getter = traverse(
-                        db,
-                        &foreign_table_name_extern,
-                        foreign_table,
-                        ty_compound,
-                        &mut response_columns_names,
-                        &mut joins,
-                    );
-                    response_columns_getters.push((rs_name, response_table_getter));
-
-                    joins.push(Join {
+                    let compound = ResponseGetterColumnCompound {
+                        name_intern: column_name_intern,
+                        foreign_table_id_name_intern,
                         foreign_table_name_intern,
                         foreign_table_name_extern,
-                        foreign_table_id_name_intern,
-                        column_name_intern,
-                    });
+                        rs_name,
+                        rs_ty_name: &ty_compound.ty,
+                        optional: ty_compound.optional(),
+                        columns,
+                    };
+
+                    Column {
+                        create: CreateColumn {
+                            name,
+                            ty: ty_compound.ty(&foreign_table.name, &foreign_table_id.name),
+                        },
+                        response: ResponseColumn {
+                            rs_name,
+                            rs_ty,
+                            attr: attr_response,
+                            rs_attrs,
+                        },
+                        response_getter: ResponseGetterColumn::Compound(compound),
+                        request: Some(RequestColumn {
+                            name,
+                            optional: ty_compound.optional(),
+                            rs_name,
+                            rs_ty: Cow::Owned(rs_ty_compound_request(ty_compound.optional())),
+                            attr: attr_request,
+                            rs_attrs,
+                        }),
+                    }
                 }
+            };
+            Ok(column0)
+        });
+        let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
+        let columns = columns?;
+
+        let response_column_fields = columns.iter().map(|column| {
+            let ResponseColumn {
+                rs_name,
+                rs_ty,
+                attr,
+                rs_attrs,
+            } = column.response;
+
+            let serde_skip = attr.skip.then(serde_skip);
+            let serde_name = attr.name.as_deref().map(serde_name);
+
+            quote! {
+                #(#rs_attrs)* #serde_skip #serde_name
+                pub #rs_name: #rs_ty
             }
-        }
+        });
 
-        let response_table_getter =
-            response_table_getter(&table.rs_name, response_columns_getters, true);
-        let response_table_getter = map_option_to_result(response_table_getter);
+        let (response_getter_column_elements, response_getter_column_compounds) =
+            flatten(columns.iter().map(|column| &column.response_getter));
+        let response_getter = response_getter(
+            &table.rs_name,
+            columns.iter().map(|column| &column.response_getter),
+            true,
+            false,
+        );
+        let response_getter = map_option_to_result(response_getter);
 
-        let request_columns_fields = request_columns.iter().map(|c| &c.field);
-        let request_columns_setters = request_columns.iter().map(|c| &c.setter);
-        let request_columns_setter = quote! { #(#request_columns_setters,)* };
+        let request_column_fields =
+            columns
+                .iter()
+                .flat_map(|column| &column.request)
+                .map(|column| {
+                    let RequestColumn {
+                        rs_name,
+                        rs_ty,
+                        attr,
+                        rs_attrs,
+                        ..
+                    } = column;
 
-        let create_table = create_table(&table_name_intern, &columns);
+                    let serde_skip = attr.skip.then(serde_skip);
+                    let serde_name = attr.name.as_deref().map(serde_name);
+
+                    quote! {
+                        #(#rs_attrs)* #serde_skip #serde_name
+                        pub #rs_name: #rs_ty
+                    }
+                });
+
+        let request_columns_setters =
+            columns
+                .iter()
+                .flat_map(|column| &column.request)
+                .map(|column| {
+                    let RequestColumn {
+                        optional, rs_name, ..
+                    } = column;
+
+                    if *optional {
+                        quote! {
+                            ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode)
+                        }
+                    } else {
+                        quote! {
+                            ::laraxum::Encode::encode(request.#rs_name)
+                        }
+                    }
+                });
+        let request_columns_setters = quote! { #(#request_columns_setters,)* };
+
+        let create_table = create_table(
+            &table_name_intern,
+            columns.iter().map(|column| &column.create),
+        );
         let delete_table = delete_table(&table_name_intern);
 
         let get_all = get_all(
             &table_name_intern,
             &table_name_extern,
-            &response_columns_names,
-            &joins,
+            response_getter_column_elements.iter().copied(),
+            response_getter_column_compounds.iter().copied(),
         );
-        let create_one = create_one(&table_name_intern, &request_columns);
+        let create_one = create_one(
+            &table_name_intern,
+            columns.iter().flat_map(|column| &column.request),
+        );
 
         let table_rs_name = &table.rs_name;
         let table_rs_name_request = quote::format_ident!("{}Request", table.rs_name);
@@ -786,12 +938,12 @@ impl Table {
             #[derive(::serde::Serialize)]
             #(#table_rs_attrs)*
             pub struct #table_rs_name {
-                #(#response_columns_fields),*
+                #(#response_column_fields),*
             }
 
             #[derive(::serde::Deserialize)]
             pub struct #table_rs_name_request {
-                #(#request_columns_fields),*
+                #(#request_column_fields),*
             }
         };
 
@@ -815,7 +967,7 @@ impl Table {
                 /// ```
                 async fn get_all(db: &Self::Db) -> ::core::result::Result<::std::vec::Vec<Self::Response>, ::laraxum::Error> {
                     let response = ::sqlx::query!(#get_all)
-                        .try_map(|response| #response_table_getter)
+                        .try_map(|response| #response_getter)
                         .fetch_all(&db.pool)
                         .await?;
                     ::core::result::Result::Ok(response)
@@ -826,7 +978,7 @@ impl Table {
                 ) -> ::core::result::Result<(), ::laraxum::ModelError<Self::CreateRequestError>> {
                     let response = ::sqlx::query!(
                             #create_one,
-                            #request_columns_setter
+                            #request_columns_setters
                         )
                         .execute(&db.pool)
                         .await?;
@@ -835,17 +987,17 @@ impl Table {
             }
         });
 
-        let model_token_stream = table.columns.model_id().map(|table_id_name| {
-            let id_name_intern = name_intern((&*table_name_extern, table_id_name));
+        let model_token_stream = table.columns.model().map(|table_id| {
+            let id_name_intern = name_intern((&*table_name_extern, &table_id.name));
             let get_one = get_one(
                 &table_name_intern,
                 &table_name_extern,
                 &id_name_intern,
-                &response_columns_names,
-                &joins,
+                response_getter_column_elements.iter().copied(),
+                response_getter_column_compounds.iter().copied(),
             );
-            let update_one = update_one(&table_name_intern, table_id_name, &request_columns);
-            let delete_one = delete_one(&table_name_intern, table_id_name);
+            let update_one = update_one(&table_name_intern, &table_id.name, columns.iter().flat_map(|column|&column.request));
+            let delete_one = delete_one(&table_name_intern, &table_id.name);
 
             quote! {
                 impl ::laraxum::Model for #table_rs_name {
@@ -860,7 +1012,7 @@ impl Table {
                     /// ```
                     async fn get_one(db: &Self::Db, id: Self::Id) -> ::core::result::Result<Self::Response, ::laraxum::Error>{
                         let response = ::sqlx::query!(#get_one, id)
-                            .try_map(|response| #response_table_getter)
+                            .try_map(|response| #response_getter)
                             .fetch_one(&db.pool)
                             .await?;
                         ::core::result::Result::Ok(response)
@@ -869,7 +1021,7 @@ impl Table {
                         db: &Self::Db,
                         request: Self::CreateRequest,
                     ) -> ::core::result::Result<Self::Response, ::laraxum::ModelError<Self::CreateRequestError>> {
-                        let response = ::sqlx::query!(#create_one, #request_columns_setter)
+                        let response = ::sqlx::query!(#create_one, #request_columns_setters)
                             .execute(&db.pool)
                             .await?;
                         let response = Self::get_one(db, response.last_insert_id()).await?;
@@ -880,7 +1032,7 @@ impl Table {
                         request: Self::UpdateRequest,
                         id: Self::Id,
                     ) -> ::core::result::Result<(), ::laraxum::ModelError<Self::UpdateRequestError>> {
-                        ::sqlx::query!(#update_one, #request_columns_setter id)
+                        ::sqlx::query!(#update_one, #request_columns_setters id)
                             .execute(&db.pool)
                             .await?;
                         ::core::result::Result::Ok(())
@@ -912,7 +1064,8 @@ impl Table {
             }
         });
 
-        let many_model_token_stream = table.columns.then(|| {
+        let many_model_token_stream = table.columns.many_model().map(|(_a, _b)| {
+            // TODO:
             quote! {
                 impl ManyModel<OneResponse>: Table {
                     type OneRequest;
@@ -946,23 +1099,25 @@ impl Table {
             #many_model_token_stream
         };
 
-        Self {
+        Ok(Self {
             token_stream: table_token_stream,
             migration_up: create_table,
             migration_down: delete_table,
-        }
+        })
     }
 }
 
 pub use proc_macro2::TokenStream as Db;
 
-impl From<stage2::Db> for Db {
-    fn from(db: stage2::Db) -> Self {
-        let tables = db
+impl TryFrom<stage2::Db> for Db {
+    type Error = syn::Error;
+    fn try_from(db: stage2::Db) -> Result<Self, Self::Error> {
+        let tables: Result<Vec<Table>, syn::Error> = db
             .tables
             .iter()
-            .map(|table| Table::new(table, &db))
-            .collect::<Vec<_>>();
+            .map(|table| Table::try_new(table, &db))
+            .try_collect_all_default();
+        let tables = tables?;
 
         let tables_token_stream = tables.iter().map(|table| &table.token_stream);
 
@@ -1009,7 +1164,7 @@ impl From<stage2::Db> for Db {
             }
         };
 
-        quote! {
+        Ok(quote! {
             /// ```sql
             #[doc = #migration_up_full]
             /// ```
@@ -1030,6 +1185,6 @@ impl From<stage2::Db> for Db {
             }
 
             #(#tables_token_stream)*
-        }
+        })
     }
 }

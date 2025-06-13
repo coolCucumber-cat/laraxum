@@ -9,6 +9,7 @@ const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
 const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
 const TABLE_MUST_HAVE_TWO_COLUMNS: &str = "table must have two columns";
+const TABLE_DOES_NOT_EXIST: &str = "table does not exist";
 const MODEL_AND_MANY_MODEL_CONFLICT: &str = "model and many_model conflict";
 const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
@@ -167,6 +168,9 @@ impl TyElement {
             Self::AutoTime(_) => false,
         }
     }
+    pub const fn is_updatable(&self) -> bool {
+        matches!(self, Self::Value(_))
+    }
 }
 
 pub enum TyCompoundMultiplicity {
@@ -224,7 +228,7 @@ pub struct Column {
     /// the type of the column
     pub ty: Ty,
     /// the type of the column in the rust struct
-    pub rs_ty: Type,
+    pub rs_ty: Box<Type>,
     /// the response attribute of the column
     pub attr_response: ColumnAttrResponse,
     /// the request attribute of the column
@@ -252,7 +256,7 @@ impl TryFrom<stage1::Column> for Column {
                 let stage1::TyCompound {
                     ty,
                     multiplicity: ty_compound_multiplicity,
-                } = stage1::TyCompound::try_from(&rs_ty)?;
+                } = stage1::TyCompound::try_from(&*rs_ty)?;
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
                     (CATC::One, M::One) => TCM::One,
                     (CATC::One, M::OneOrZero) => TCM::OneOrZero,
@@ -278,7 +282,7 @@ impl TryFrom<stage1::Column> for Column {
                     CATE::Value(ref rs_ty) => rs_ty,
                     _ => &rs_ty,
                 };
-                let ty_element_value = stage1::TyElementValue::try_from(rs_ty)?;
+                let ty_element_value = stage1::TyElementValue::try_from(&**rs_ty)?;
                 let ty_element_value = TyElementValue::from(ty_element_value);
                 match attr_ty_element {
                     CATE::None | CATE::Value(_) => Ty::Element(TyElement::Value(ty_element_value)),
@@ -356,9 +360,15 @@ impl Columns {
         };
         a.into_iter().chain(b).chain(c)
     }
-    pub fn model_id(&self) -> Option<&Column> {
+    pub fn model(&self) -> Option<&Column> {
         match self {
             Self::Model { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+    pub fn many_model(&self) -> Option<(&Column, &Column)> {
+        match self {
+            Self::ManyModel { a, b } => Some((a, b)),
             _ => None,
         }
     }
@@ -516,6 +526,9 @@ impl Db {
     }
 }
 
-pub fn find_table<'a>(tables: &'a [Table], ident: &Ident) -> Option<&'a Table> {
-    tables.iter().find(|table| &table.rs_name == ident)
+pub fn find_table<'a>(tables: &'a [Table], ident: &Ident) -> syn::Result<&'a Table> {
+    tables
+        .iter()
+        .find(|table| &table.rs_name == ident)
+        .ok_or_else(|| syn::Error::new(ident.span(), TABLE_DOES_NOT_EXIST))
 }

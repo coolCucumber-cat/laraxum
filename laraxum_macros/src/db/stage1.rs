@@ -195,7 +195,7 @@ pub struct ColumnAttr {
 
 pub struct Column {
     pub rs_name: Ident,
-    pub rs_ty: Type,
+    pub rs_ty: Box<Type>,
     pub attr: ColumnAttr,
 }
 impl TryFrom<Field> for Column {
@@ -225,7 +225,7 @@ impl TryFrom<Field> for Column {
 
         Ok(Self {
             rs_name,
-            rs_ty,
+            rs_ty: Box::new(rs_ty),
             attr,
         })
     }
