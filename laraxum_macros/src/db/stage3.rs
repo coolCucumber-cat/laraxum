@@ -2,7 +2,7 @@ use super::stage2;
 
 use crate::utils::{collections::TryCollectAll, syn::from_str_to_rs_ident};
 
-use std::{borrow::Cow, vec};
+use std::borrow::Cow;
 
 use quote::quote;
 use syn::{Attribute, Ident, Type};
@@ -497,8 +497,7 @@ impl Table {
             quote! {
                 match #token_stream {
                     ::core::option::Option::Some(val) => ::core::result::Result::Ok(val),
-                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::RowNotFound),
-                    // ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::Decode(::std::string::String::new())),
+                    ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::Decode(::std::string::String::new())),
                 }
             }
         }
@@ -646,7 +645,7 @@ impl Table {
         fn traverse<'table: 'iter, 'iter>(
             table_name_extern: &str,
             table: &'table stage2::Table,
-            db: &'iter stage2::Db,
+            db: &stage2::Db,
         ) -> impl Iterator<Item = syn::Result<ResponseGetterColumn<'iter>>> {
             table.columns.columns().map(move |column| {
                 let stage2::Column {
@@ -672,18 +671,17 @@ impl Table {
                             syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
 
+                        let columns = traverse(table_name_extern, table, db);
+                        let columns: Result<Vec<ResponseGetterColumn>, syn::Error> =
+                            columns.try_collect_all_default();
+                        let columns = columns?;
+
                         let foreign_table_name_intern =
                             name_intern((&db.name, &foreign_table.name));
                         let foreign_table_name_extern =
                             name_extern_triple((table_name_extern, &foreign_table.name, name));
                         let foreign_table_id_name_intern =
                             name_intern((&*foreign_table_name_extern, &foreign_table_id.name));
-
-                        let columns = traverse(&foreign_table_name_extern, foreign_table, db);
-                        // let columns = traverse(table_name_extern, table, db);
-                        let columns: Result<Vec<ResponseGetterColumn>, syn::Error> =
-                            columns.try_collect_all_default();
-                        let columns = columns?;
 
                         let compound = ResponseGetterColumnCompound {
                             name_intern: column_name_intern,
@@ -793,17 +791,16 @@ impl Table {
                         syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
                     })?;
 
+                    let columns = traverse(&table_name_extern, table, db);
+                    let columns: Result<Vec<ResponseGetterColumn>, syn::Error> =
+                        columns.try_collect_all_default();
+                    let columns = columns?;
+
                     let foreign_table_name_intern = name_intern((&db.name, &foreign_table.name));
                     let foreign_table_name_extern =
                         name_extern_triple((&table_name_extern, &foreign_table.name, name));
                     let foreign_table_id_name_intern =
                         name_intern((&*foreign_table_name_extern, &foreign_table_id.name));
-
-                    let columns = traverse(&foreign_table_name_extern, foreign_table, db);
-                    // let columns = traverse(table_name_extern, table, db);
-                    let columns: Result<Vec<ResponseGetterColumn>, syn::Error> =
-                        columns.try_collect_all_default();
-                    let columns = columns?;
 
                     let compound = ResponseGetterColumnCompound {
                         name_intern: column_name_intern,
