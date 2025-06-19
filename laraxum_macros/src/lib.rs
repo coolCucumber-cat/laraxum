@@ -32,14 +32,15 @@ fn db_syn(
     attr: proc_macro2::TokenStream,
     input: proc_macro2::TokenStream,
 ) -> syn::Result<proc_macro2::TokenStream> {
-    // stage 1: frontend -> parsing
+    // stage 1: frontend -> syntax
     let stage1_db_attr = db::stage1::DbAttr::try_from(attr)?;
     let stage1_db = syn::parse2::<db::stage1::Db>(input)?;
-    // stage 2: frontend -> checking
+    // stage 2: frontend -> processing
     let stage2_db = db::stage2::Db::try_new(stage1_db, stage1_db_attr)?;
 
-    // stage 3: backend -> codegen
-    let stage3_db = db::stage3::Db::try_from(stage2_db)?;
+    // stage 3: backend -> processing
+    let stage3_db = db::stage3::Db::try_from(&stage2_db)?;
+    // stage 4: backend -> syntax
 
     Ok(stage3_db)
 }

@@ -18,12 +18,14 @@ const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
 const COLUMN_MUST_BE_VEC: &str = "column must be Vec";
 const COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE: &str = "column must specify intermediate table";
 
+#[derive(Clone)]
 pub enum AtomicTyString {
     Varchar(stage1::StringLen),
     Char(stage1::StringLen),
     Text,
 }
 
+#[derive(Clone)]
 pub enum AtomicTyTime {
     ChronoDateTimeUtc,
     ChronoDateTimeLocal,
@@ -40,6 +42,7 @@ pub enum AtomicTyTime {
 }
 
 #[allow(non_camel_case_types)]
+#[derive(Clone)]
 pub enum AtomicTy {
     bool,
     u8,
@@ -88,6 +91,7 @@ impl From<stage1::AtomicTy> for AtomicTy {
     }
 }
 
+#[derive(Clone)]
 pub struct TyElementValue {
     pub ty: AtomicTy,
     pub optional: bool,
@@ -101,11 +105,13 @@ impl From<stage1::TyElementValue> for TyElementValue {
     }
 }
 
+#[derive(Clone)]
 pub enum AutoTimeEvent {
     OnCreate,
     OnUpdate,
 }
 
+#[derive(Clone)]
 pub struct TyElementAutoTime {
     pub ty: AtomicTyTime,
     pub event: AutoTimeEvent,
@@ -151,6 +157,7 @@ impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
     }
 }
 
+#[derive(Clone)]
 pub enum TyElement {
     Id,
     Value(TyElementValue),
@@ -352,7 +359,7 @@ pub enum Columns {
     },
 }
 impl Columns {
-    pub fn columns(&self) -> impl Iterator<Item = &Column> {
+    pub fn iter(&self) -> impl Iterator<Item = &Column> {
         let (a, b, c) = match self {
             Self::CollectionOnly { columns, .. } => (None, None, &**columns),
             Self::Model { id, columns, .. } => (Some(id), None, &**columns),
