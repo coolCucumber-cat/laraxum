@@ -1,6 +1,6 @@
 use super::stage3;
 
-use crate::utils::{collections::TryCollectAll, syn::from_str_to_rs_ident};
+use crate::utils::syn::from_str_to_rs_ident;
 
 use std::{borrow::Cow, vec};
 
@@ -234,7 +234,7 @@ impl stage3::RequestColumn<'_> {
                 setter: stage3::RequestColumnSetter { name, .. },
                 ..
             } => Some((name, "?")),
-            Self::AutoTime { name, time_ty } => Some((name, time_ty.ty())),
+            Self::AutoTime { name, time_ty } => Some((name, time_ty.current_time_func())),
             _ => None,
         }
     }
@@ -260,8 +260,8 @@ fn delete_table(table_name_intern: &str) -> String {
 fn get_all<'elements, 'compounds>(
     table_name_intern: &str,
     table_name_extern: &str,
-    response_getter_column_elements: &[stage3::ResponseColumnGetterElement<'elements>],
-    response_getter_column_compounds: &[stage3::ResponseColumnGetterCompound<'compounds>],
+    response_getter_column_elements: &[&stage3::ResponseColumnGetterElement<'elements>],
+    response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound<'compounds>],
 ) -> String {
     fmt2::fmt! { { str } =>
         "SELECT "
@@ -283,8 +283,8 @@ fn get_one<'elements, 'compounds>(
     table_name_intern: &str,
     table_name_extern: &str,
     id_name_intern: &str,
-    response_getter_column_elements: &[stage3::ResponseColumnGetterElement<'elements>],
-    response_getter_column_compounds: &[stage3::ResponseColumnGetterCompound<'compounds>],
+    response_getter_column_elements: &[&stage3::ResponseColumnGetterElement<'elements>],
+    response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound<'compounds>],
 ) -> String {
     let mut get_all = get_all(
         table_name_intern,
@@ -295,12 +295,13 @@ fn get_one<'elements, 'compounds>(
     fmt2::fmt! { (get_all) => " WHERE " {id_name_intern} "=?" };
     get_all
 }
-fn create_one<'request_columns>(
-    table_name_intern: &str,
-    columns: &[stage3::Column<'request_columns>],
-) -> String {
+fn create_one<'columns, I>(table_name_intern: &str, columns: I) -> String
+where
+    I: IntoIterator<Item = &'columns stage3::Column<'columns>>,
+    I::IntoIter: Iterator<Item = I::Item> + Clone,
+{
     let request_columns = columns
-        .iter()
+        .into_iter()
         .flat_map(|column| column.request.request_setter_column());
     fmt2::fmt! { { str } =>
         "INSERT INTO " {table_name_intern} " ("
@@ -310,13 +311,12 @@ fn create_one<'request_columns>(
         ")"
     }
 }
-fn update_one<'request_columns>(
-    table_name_intern: &str,
-    id_name: &str,
-    columns: &[stage3::Column<'request_columns>],
-) -> String {
+fn update_one<'columns, I>(table_name_intern: &str, id_name: &str, columns: I) -> String
+where
+    I: IntoIterator<Item = &'columns stage3::Column<'columns>>,
+{
     let request_columns = columns
-        .iter()
+        .into_iter()
         .flat_map(|column| column.request.request_setter_column());
     fmt2::fmt! { { str } =>
         "UPDATE " {table_name_intern} " SET "
@@ -391,10 +391,14 @@ impl From<stage3::Table<'_>> for Table {
         }
 
         fn serde_skip() -> proc_macro2::TokenStream {
-            quote! { #[serde(skip)] }
+            quote! {
+                #[serde(skip)]
+            }
         }
         fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
-            quote! { #[serde(rename = #serde_name)] }
+            quote! {
+                #[serde(rename = #serde_name)]
+            }
         }
 
         fn map_option_to_result(
@@ -423,44 +427,44 @@ impl From<stage3::Table<'_>> for Table {
             }
         }
 
-        fn response_getter_element(
-            name_extern: &str,
-            optional: bool,
-            foreign: bool,
-        ) -> proc_macro2::TokenStream {
-            let name_extern = from_str_to_rs_ident(name_extern);
-            let field_access = response_field_access(&name_extern);
-
-            let field_access = if foreign && !optional {
-                #[cfg(feature = "try_blocks")]
-                {
-                    quote! {
-                        #field_access?
-                    }
-                }
-                #[cfg(not(feature = "try_blocks"))]
-                {
-                    quote! {
-                        match #field_access {
-                            ::core::option::Option::Some(val) => val,
-                            ::core::option::Option::None => break 'response_block ::core::option::Option::None,
-                        }
-                    }
-                }
-            } else {
-                field_access
-            };
-
-            if optional {
-                quote! {
-                    ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
-                }
-            } else {
-                quote! {
-                    ::laraxum::Decode::decode(#field_access)
-                }
-            }
-        }
+        //         fn response_getter_element(
+        //             name_extern: &str,
+        //             optional: bool,
+        //             foreign: bool,
+        //         ) -> proc_macro2::TokenStream {
+        //             let name_extern = from_str_to_rs_ident(name_extern);
+        //             let field_access = response_field_access(&name_extern);
+        //
+        //             let field_access = if foreign && !optional {
+        //                 #[cfg(feature = "try_blocks")]
+        //                 {
+        //                     quote! {
+        //                         #field_access?
+        //                     }
+        //                 }
+        //                 #[cfg(not(feature = "try_blocks"))]
+        //                 {
+        //                     quote! {
+        //                         match #field_access {
+        //                             ::core::option::Option::Some(val) => val,
+        //                             ::core::option::Option::None => break 'response_block ::core::option::Option::None,
+        //                         }
+        //                     }
+        //                 }
+        //             } else {
+        //                 field_access
+        //             };
+        //
+        //             if optional {
+        //                 quote! {
+        //                     ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
+        //                 }
+        //             } else {
+        //                 quote! {
+        //                     ::laraxum::Decode::decode(#field_access)
+        //                 }
+        //             }
+        //         }
 
         fn response_getter_compound<'columns>(
             table_ty: &Ident,
@@ -574,7 +578,7 @@ impl From<stage3::Table<'_>> for Table {
         });
 
         let response_getter = response_getter_compound(
-            &table.rs_name,
+            table.rs_name,
             table.columns.iter().map(|column| &column.response.getter),
             true,
             false,
@@ -593,7 +597,7 @@ impl From<stage3::Table<'_>> for Table {
                 _ => None,
             })
             .map(|column| {
-                let &stage3::RequestColumnField {
+                let stage3::RequestColumnField {
                     rs_name,
                     rs_ty,
                     attr,
@@ -632,29 +636,25 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 }
             });
-        let request_column_setters = quote! { #(#request_column_setters,)* };
+        let request_column_setters = quote! {
+            #(#request_column_setters,)*
+        };
 
-        let create_table = create_table(
-            &table.name_intern,
-            table.columns.iter().map(|column| &column.create),
-        );
+        let create_table = create_table(&table.name_intern, table.columns.iter());
         let delete_table = delete_table(&table.name_intern);
 
         let get_all = get_all(
             &table.name_intern,
             &table.name_extern,
-            response_getter_column_elements.iter().copied(),
-            response_getter_column_compounds.iter().copied(),
+            &response_getter_column_elements,
+            &response_getter_column_compounds,
         );
-        let create_one = create_one(
-            &table.name_intern,
-            table.columns.iter().flat_map(|column| &column.request),
-        );
+        let create_one = create_one(&table.name_intern, table.columns.iter());
 
         let table_rs_name = &table.rs_name;
         let table_rs_name_request = quote::format_ident!("{}Request", table.rs_name);
-        let table_rs_attrs = &*table.rs_attrs;
-        let db_rs_name = &db.rs_name;
+        let table_rs_attrs = table.rs_attrs;
+        let db_rs_name = &table.db_rs_name;
         let doc = fmt2::fmt! { { str } => "`" {table.name_intern} "`"};
         let table_token_stream = quote! {
             #[doc = #doc]
@@ -711,15 +711,29 @@ impl From<stage3::Table<'_>> for Table {
         });
 
         let model_token_stream = table.columns.model().map(|table_id| {
+            let (table_id_name, table_id_name_intern) = match &table_id.response.getter {
+                stage3::ResponseColumnGetter::Element(stage3::ResponseColumnGetterElement {
+                    name,
+                    name_intern,
+                    ..
+                })
+                | stage3::ResponseColumnGetter::Compound(stage3::ResponseColumnGetterCompound {
+                    name,
+                    name_intern,
+                    ..
+                }) => (&**name, &**name_intern),
+                _ => todo!("table id management (use enum instead)"),
+            };
+
             let get_one = get_one(
                 &table.name_intern,
                 &table.name_extern,
-                &table_id.,
+                table_id_name_intern,
                 &response_getter_column_elements,
                 &response_getter_column_compounds,
             );
-            let update_one = update_one(&table.name_intern, &table_id.name, table.columns.iter().flat_map(|column|&column.request));
-            let delete_one = delete_one(&table.name_intern, &table_id.name);
+            let update_one = update_one(&table.name_intern, table_id_name, table.columns.iter());
+            let delete_one = delete_one(&table.name_intern, table_id_name);
 
             quote! {
                 impl ::laraxum::Model for #table_rs_name {
@@ -732,7 +746,15 @@ impl From<stage3::Table<'_>> for Table {
                     /// ```sql
                     #[doc = #get_one]
                     /// ```
-                    async fn get_one(db: &Self::Db, id: Self::Id) -> ::core::result::Result<Self::Response, ::laraxum::Error>{
+                    async fn get_one(
+                        db: &Self::Db,
+                        id: Self::Id,
+                    )
+                        -> ::core::result::Result<
+                            Self::Response,
+                            ::laraxum::Error,
+                        >
+                    {
                         let response = ::sqlx::query!(#get_one, id)
                             .try_map(|response| #response_getter)
                             .fetch_one(&db.pool)
@@ -742,7 +764,12 @@ impl From<stage3::Table<'_>> for Table {
                     async fn create_get_one(
                         db: &Self::Db,
                         request: Self::CreateRequest,
-                    ) -> ::core::result::Result<Self::Response, ::laraxum::ModelError<Self::CreateRequestError>> {
+                    )
+                        -> ::core::result::Result<
+                            Self::Response,
+                            ::laraxum::ModelError<Self::CreateRequestError>
+                        >
+                    {
                         let response = ::sqlx::query!(#create_one, #request_column_setters)
                             .execute(&db.pool)
                             .await?;
@@ -753,7 +780,12 @@ impl From<stage3::Table<'_>> for Table {
                         db: &Self::Db,
                         request: Self::UpdateRequest,
                         id: Self::Id,
-                    ) -> ::core::result::Result<(), ::laraxum::ModelError<Self::UpdateRequestError>> {
+                    )
+                        -> ::core::result::Result<
+                            (),
+                            ::laraxum::ModelError<Self::UpdateRequestError>,
+                        >
+                    {
                         ::sqlx::query!(#update_one, #request_column_setters id)
                             .execute(&db.pool)
                             .await?;
@@ -763,12 +795,25 @@ impl From<stage3::Table<'_>> for Table {
                         db: &Self::Db,
                         request: Self::UpdateRequest,
                         id: Self::Id,
-                    ) -> ::core::result::Result<Self::Response, ::laraxum::ModelError<Self::UpdateRequestError>> {
+                    )
+                        -> ::core::result::Result<
+                            Self::Response,
+                            ::laraxum::ModelError<Self::UpdateRequestError>,
+                        >
+                    {
                         Self::update_one(db, request, id).await?;
                         let response = Self::get_one(db, id).await?;
                         ::core::result::Result::Ok(response)
                     }
-                    async fn delete_one(db: &Self::Db, id: Self::Id) -> ::core::result::Result<(), ::laraxum::Error> {
+                    async fn delete_one(
+                        db: &Self::Db,
+                        id: Self::Id,
+                    )
+                        -> ::core::result::Result<
+                            (),
+                            ::laraxum::Error,
+                        >
+                    {
                         ::sqlx::query!(#delete_one, id)
                             .execute(&db.pool)
                             .await?;
@@ -821,25 +866,19 @@ impl From<stage3::Table<'_>> for Table {
             #many_model_token_stream
         };
 
-        Ok(Self {
+        Self {
             token_stream: table_token_stream,
             migration_up: create_table,
             migration_down: delete_table,
-        })
+        }
     }
 }
 
 pub use proc_macro2::TokenStream as Db;
 
-impl TryFrom<stage2::Db> for Db {
-    type Error = syn::Error;
-    fn try_from(db: stage2::Db) -> Result<Self, Self::Error> {
-        let tables: Result<Vec<Table>, syn::Error> = db
-            .tables
-            .iter()
-            .map(|table| Table::try_new(table, &db))
-            .try_collect_all_default();
-        let tables = tables?;
+impl From<stage3::Db<'_>> for Db {
+    fn from(db: stage3::Db) -> Self {
+        let tables: Vec<Table> = db.tables.into_iter().map(Table::from).collect();
 
         let tables_token_stream = tables.iter().map(|table| &table.token_stream);
 
@@ -886,7 +925,7 @@ impl TryFrom<stage2::Db> for Db {
             }
         };
 
-        Ok(quote! {
+        quote! {
             /// ```sql
             #[doc = #migration_up_full]
             /// ```
@@ -907,6 +946,6 @@ impl TryFrom<stage2::Db> for Db {
             }
 
             #(#tables_token_stream)*
-        })
+        }
     }
 }

@@ -62,7 +62,7 @@ impl Ty<'_> {
             Self::Element(element) => element.unique(),
         }
     }
-    pub const fn default_value(&self) -> Option<DefaultValue> {
+    pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
             Self::Element(element) => element.default_value(),
             _ => None,
@@ -76,6 +76,8 @@ pub struct CreateColumn<'a> {
 }
 
 pub struct ResponseColumnGetterElement<'a> {
+    // TODO: remove
+    pub name: &'a str,
     pub name_intern: String,
     pub name_extern: String,
     pub optional: bool,
@@ -83,6 +85,8 @@ pub struct ResponseColumnGetterElement<'a> {
 }
 
 pub struct ResponseColumnGetterCompound<'a> {
+    // TODO: remove
+    pub name: &'a str,
     pub name_intern: String,
     pub foreign_table_id_name_intern: String,
     pub foreign_table_name_intern: String,
@@ -166,6 +170,7 @@ pub struct Table<'a> {
     pub rs_name: &'a Ident,
     pub request_rs_name: Cow<'a, Ident>,
     pub db_rs_name: &'a Ident,
+    pub rs_attrs: &'a [syn::Attribute],
     pub columns: Columns<Column<'a>>,
 }
 
@@ -195,6 +200,7 @@ impl<'a> Table<'a> {
                 let response_getter_column = match ty {
                     stage2::Ty::Element(ty_element) => {
                         let element = ResponseColumnGetterElement {
+                            name,
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
                             rs_name,
@@ -222,6 +228,7 @@ impl<'a> Table<'a> {
                         let columns = columns?;
 
                         let compound = ResponseColumnGetterCompound {
+                            name,
                             name_intern: column_name_intern,
                             foreign_table_id_name_intern,
                             foreign_table_name_intern,
@@ -261,6 +268,7 @@ impl<'a> Table<'a> {
                         }),
                         response: ResponseColumn {
                             getter: ResponseColumnGetter::Element(ResponseColumnGetterElement {
+                                name,
                                 name_intern: column_name_intern,
                                 name_extern: column_name_extern,
                                 optional: ty_element.optional(),
@@ -317,6 +325,7 @@ impl<'a> Table<'a> {
                         let columns = columns?;
 
                         let compound = ResponseColumnGetterCompound {
+                            name,
                             name_intern: column_name_intern,
                             foreign_table_id_name_intern,
                             foreign_table_name_intern,
@@ -395,13 +404,14 @@ impl<'a> Table<'a> {
         let columns = columns?;
 
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
-        // let table_rs_attrs = &*table.rs_attrs;
+        let table_rs_attrs = &*table.rs_attrs;
         Ok(Self {
             name_intern: table_name_intern,
             name_extern: table_name_extern,
             rs_name: &table.rs_name,
             request_rs_name: Cow::Owned(table_request_rs_name),
             db_rs_name: &db.rs_name,
+            rs_attrs: table_rs_attrs,
             columns,
         })
     }

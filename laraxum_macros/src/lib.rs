@@ -41,6 +41,7 @@ fn db_syn(
     // stage 3: backend -> processing
     let stage3_db = db::stage3::Db::try_from(&stage2_db)?;
     // stage 4: backend -> syntax
+    let stage4_db = db::stage4::Db::from(stage3_db);
 
-    Ok(stage3_db)
+    Ok(stage4_db)
 }

@@ -179,7 +179,7 @@ impl TyElement {
             Self::AutoTime(_) => false,
         }
     }
-    pub const fn default_value(&self) -> Option<DefaultValue> {
+    pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
             Self::AutoTime(time_ty) => Some(DefaultValue::AutoTime(&time_ty.ty)),
             _ => None,
@@ -235,7 +235,7 @@ impl Ty {
             Self::Element(element) => element.unique(),
         }
     }
-    pub const fn default_value(&self) -> Option<DefaultValue> {
+    pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
             Self::Element(element) => element.default_value(),
             _ => None,
@@ -375,7 +375,7 @@ pub enum Columns<C> {
     },
 }
 impl<C> Columns<C> {
-    pub fn iter(&self) -> impl Iterator<Item = &C> {
+    pub fn iter(&self) -> impl Iterator<Item = &C> + Clone {
         let (a, b, c) = match self {
             Self::CollectionOnly { columns } => (None, None, &**columns),
             Self::Model { id, columns, .. } => (Some(id), None, &**columns),
