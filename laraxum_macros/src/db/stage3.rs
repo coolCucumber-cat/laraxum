@@ -76,8 +76,6 @@ pub struct CreateColumn<'a> {
 }
 
 pub struct ResponseColumnGetterElement<'a> {
-    // TODO: remove
-    pub name: &'a str,
     pub name_intern: String,
     pub name_extern: String,
     pub optional: bool,
@@ -85,16 +83,27 @@ pub struct ResponseColumnGetterElement<'a> {
 }
 
 pub struct ResponseColumnGetterCompound<'a> {
-    // TODO: remove
-    pub name: &'a str,
     pub name_intern: String,
     pub foreign_table_id_name_intern: String,
     pub foreign_table_name_intern: String,
     pub foreign_table_name_extern: String,
     pub optional: bool,
     pub rs_name: &'a Ident,
-    pub rs_ty_name: &'a Ident,
+    pub foreign_table_rs_name: &'a Ident,
     pub columns: Vec<ResponseColumnGetter<'a>>,
+}
+
+pub enum ResponseColumnGetterOne<'a> {
+    Element(ResponseColumnGetterElement<'a>),
+    Compound(ResponseColumnGetterCompound<'a>),
+}
+impl ResponseColumnGetterOne<'_> {
+    pub fn name_intern(&self) -> &str {
+        match self {
+            Self::Element(element) => &element.name_intern,
+            Self::Compound(compound) => &compound.name_intern,
+        }
+    }
 }
 
 pub struct ResponseColumnGetterCompounds<'a> {
@@ -102,12 +111,25 @@ pub struct ResponseColumnGetterCompounds<'a> {
     pub table_rs_name: &'a Ident,
     pub table_id_rs_name: &'a Ident,
     pub foreign_table_rs_name: &'a Ident,
+    pub many_foreign_table_rs_name: &'a Ident,
 }
 
 pub enum ResponseColumnGetter<'a> {
-    Element(ResponseColumnGetterElement<'a>),
-    Compound(ResponseColumnGetterCompound<'a>),
+    One(ResponseColumnGetterOne<'a>),
     Compounds(ResponseColumnGetterCompounds<'a>),
+}
+#[derive(Clone, Copy)]
+pub enum ResponseColumnGetterRef<'a> {
+    One(&'a ResponseColumnGetterOne<'a>),
+    Compounds(&'a ResponseColumnGetterCompounds<'a>),
+}
+impl<'a> From<&'a ResponseColumnGetter<'a>> for ResponseColumnGetterRef<'a> {
+    fn from(value: &'a ResponseColumnGetter<'a>) -> Self {
+        match value {
+            ResponseColumnGetter::One(one) => Self::One(one),
+            ResponseColumnGetter::Compounds(compounds) => Self::Compounds(compounds),
+        }
+    }
 }
 
 pub struct ResponseColumnField<'a> {
@@ -117,12 +139,17 @@ pub struct ResponseColumnField<'a> {
     pub rs_attrs: &'a [Attribute],
 }
 
-pub struct ResponseColumn<'a> {
-    pub getter: ResponseColumnGetter<'a>,
+pub struct ResponseColumnOne<'a> {
     pub field: ResponseColumnField<'a>,
+    pub getter: ResponseColumnGetterOne<'a>,
 }
 
-pub struct RequestColumnSetter<'a> {
+pub struct ResponseColumnCompounds<'a> {
+    pub field: ResponseColumnField<'a>,
+    pub getter: ResponseColumnGetterCompounds<'a>,
+}
+
+pub struct RequestColumnSetterOne<'a> {
     pub rs_name: &'a Ident,
     pub name: &'a str,
     pub optional: bool,
@@ -133,6 +160,7 @@ pub struct RequestColumnSetterCompounds<'a> {
     pub table_rs_name: &'a Ident,
     pub table_id_rs_name: &'a Ident,
     pub foreign_table_rs_name: &'a Ident,
+    pub many_foreign_table_rs_name: &'a Ident,
 }
 
 pub struct RequestColumnField<'a> {
@@ -142,14 +170,10 @@ pub struct RequestColumnField<'a> {
     pub rs_attrs: &'a [Attribute],
 }
 
-pub enum RequestColumn<'a> {
+pub enum RequestColumnOne<'a> {
     Some {
         field: RequestColumnField<'a>,
-        setter: RequestColumnSetter<'a>,
-    },
-    Compounds {
-        field: RequestColumnField<'a>,
-        setter: RequestColumnSetterCompounds<'a>,
+        setter: RequestColumnSetterOne<'a>,
     },
     AutoTime {
         name: &'a str,
@@ -158,10 +182,70 @@ pub enum RequestColumn<'a> {
     None,
 }
 
-pub struct Column<'a> {
-    pub create: Option<CreateColumn<'a>>,
-    pub response: ResponseColumn<'a>,
-    pub request: RequestColumn<'a>,
+pub struct RequestColumnCompounds<'a> {
+    pub field: RequestColumnField<'a>,
+    pub setter: RequestColumnSetterCompounds<'a>,
+}
+
+pub struct ColumnOne<'a> {
+    pub create: CreateColumn<'a>,
+    pub response: ResponseColumnOne<'a>,
+    pub request: RequestColumnOne<'a>,
+}
+
+pub struct ColumnCompounds<'a> {
+    pub response: ResponseColumnCompounds<'a>,
+    pub request: RequestColumnCompounds<'a>,
+}
+
+pub enum Column<'a> {
+    One(ColumnOne<'a>),
+    Compounds(ColumnCompounds<'a>),
+}
+
+impl Column<'_> {
+    pub fn create(&self) -> Option<&CreateColumn<'_>> {
+        match self {
+            Self::One(one) => Some(&one.create),
+            Self::Compounds(_) => None,
+        }
+    }
+    pub fn response_field(&self) -> &ResponseColumnField<'_> {
+        match self {
+            Self::One(one) => &one.response.field,
+            Self::Compounds(compounds) => &compounds.response.field,
+        }
+    }
+    pub fn response_getter(&self) -> ResponseColumnGetterRef<'_> {
+        match self {
+            Self::One(one) => ResponseColumnGetterRef::One(&one.response.getter),
+            Self::Compounds(compounds) => {
+                ResponseColumnGetterRef::Compounds(&compounds.response.getter)
+            }
+        }
+    }
+    pub fn request_field(&self) -> Option<&RequestColumnField<'_>> {
+        match self {
+            Self::One(ColumnOne {
+                request: RequestColumnOne::Some { field, .. },
+                ..
+            }) => Some(field),
+            Self::Compounds(compounds) => Some(&compounds.request.field),
+            _ => None,
+        }
+    }
+    pub fn request_one(&self) -> Option<&RequestColumnOne<'_>> {
+        match self {
+            Self::One(one) => Some(&one.request),
+            Self::Compounds(_) => None,
+        }
+    }
+    pub fn request_compounds(&self) -> Option<&RequestColumnCompounds<'_>> {
+        match self {
+            Self::One(_) => None,
+            Self::Compounds(compounds) => Some(&compounds.request),
+        }
+    }
 }
 
 pub struct Table<'a> {
@@ -183,6 +267,9 @@ impl<'a> Table<'a> {
                 syn::parse_quote!(u64)
             }
         }
+        fn rs_ty_compounds_request() -> Type {
+            syn::parse_quote!(Vec<u64>)
+        }
 
         fn traverse<'table: 'iter, 'iter>(
             table_name_extern: &str,
@@ -200,16 +287,18 @@ impl<'a> Table<'a> {
                 let response_getter_column = match ty {
                     stage2::Ty::Element(ty_element) => {
                         let element = ResponseColumnGetterElement {
-                            name,
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
                             rs_name,
                             optional: ty_element.optional(),
                         };
-                        ResponseColumnGetter::Element(element)
+                        ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
                     }
-                    stage2::Ty::Compound(ty_compound) => {
-                        let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)?;
+                    stage2::Ty::Compound(stage2::TyCompound {
+                        ty: foreign_table_rs_name,
+                        multiplicity: stage2::TyCompoundMultiplicity::One { optional },
+                    }) => {
+                        let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
                         let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
                             syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
@@ -228,17 +317,34 @@ impl<'a> Table<'a> {
                         let columns = columns?;
 
                         let compound = ResponseColumnGetterCompound {
-                            name,
                             name_intern: column_name_intern,
                             foreign_table_id_name_intern,
                             foreign_table_name_intern,
                             foreign_table_name_extern,
                             rs_name,
-                            rs_ty_name: &ty_compound.ty,
-                            optional: ty_compound.optional(),
+                            foreign_table_rs_name: &foreign_table.rs_name,
+                            optional: *optional,
                             columns,
                         };
-                        ResponseColumnGetter::Compound(compound)
+                        ResponseColumnGetter::One(ResponseColumnGetterOne::Compound(compound))
+                    }
+                    stage2::Ty::Compound(stage2::TyCompound {
+                        ty: foreign_table_rs_name,
+                        multiplicity:
+                            stage2::TyCompoundMultiplicity::Many(many_foreign_table_rs_name),
+                    }) => {
+                        let table_rs_name = &table.rs_name;
+                        let table_id = table.columns.model().ok_or_else(|| {
+                            syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
+                        })?;
+                        let table_id_rs_name = name_extern((table_name_extern, &table_id.name));
+                        ResponseColumnGetter::Compounds(ResponseColumnGetterCompounds {
+                            rs_name,
+                            table_rs_name,
+                            table_id_rs_name,
+                            foreign_table_rs_name,
+                            many_foreign_table_rs_name,
+                        })
                     }
                 };
                 Ok(response_getter_column)
@@ -261,14 +367,13 @@ impl<'a> Table<'a> {
                     name_intern_extern((&*table_name_extern, name));
 
                 let column0 = match ty {
-                    stage2::Ty::Element(ty_element) => Column {
-                        create: Some(CreateColumn {
+                    stage2::Ty::Element(ty_element) => Column::One(ColumnOne {
+                        create: CreateColumn {
                             name,
                             ty: Ty::Element(ty_element.clone()),
-                        }),
-                        response: ResponseColumn {
-                            getter: ResponseColumnGetter::Element(ResponseColumnGetterElement {
-                                name,
+                        },
+                        response: ResponseColumnOne {
+                            getter: ResponseColumnGetterOne::Element(ResponseColumnGetterElement {
                                 name_intern: column_name_intern,
                                 name_extern: column_name_extern,
                                 optional: ty_element.optional(),
@@ -282,14 +387,14 @@ impl<'a> Table<'a> {
                             },
                         },
                         request: match ty_element {
-                            TyElement::Value(_) => RequestColumn::Some {
+                            TyElement::Value(_) => RequestColumnOne::Some {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: Cow::Borrowed(rs_ty),
                                     attr: attr_request,
                                     rs_attrs,
                                 },
-                                setter: RequestColumnSetter {
+                                setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
                                     optional: ty_element.optional(),
@@ -298,15 +403,18 @@ impl<'a> Table<'a> {
                             TyElement::AutoTime(TyElementAutoTime {
                                 event: AutoTimeEvent::OnUpdate,
                                 ty,
-                            }) => RequestColumn::AutoTime {
+                            }) => RequestColumnOne::AutoTime {
                                 name,
                                 time_ty: ty.clone(),
                             },
-                            TyElement::AutoTime(_) | TyElement::Id => RequestColumn::None,
+                            TyElement::AutoTime(_) | TyElement::Id => RequestColumnOne::None,
                         },
-                    },
-                    stage2::Ty::Compound(ty_compound) => {
-                        let foreign_table = stage2::find_table(&db.tables, &ty_compound.ty)?;
+                    }),
+                    stage2::Ty::Compound(stage2::TyCompound {
+                        ty: foreign_table_rs_name,
+                        multiplicity: stage2::TyCompoundMultiplicity::One { optional },
+                    }) => {
+                        let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
                         let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
                             syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
@@ -325,76 +433,94 @@ impl<'a> Table<'a> {
                         let columns = columns?;
 
                         let compound = ResponseColumnGetterCompound {
-                            name,
                             name_intern: column_name_intern,
                             foreign_table_id_name_intern,
                             foreign_table_name_intern,
                             foreign_table_name_extern,
                             rs_name,
-                            rs_ty_name: &ty_compound.ty,
-                            optional: ty_compound.optional(),
+                            foreign_table_rs_name: &foreign_table.rs_name,
+                            optional: *optional,
                             columns,
                         };
 
-                        Column {
-                            create: Some(CreateColumn {
+                        Column::One(ColumnOne {
+                            create: CreateColumn {
                                 name,
                                 ty: Ty::Compound(TyCompound {
                                     foreign_table_name: &foreign_table.name,
                                     foreign_table_id_name: &foreign_table_id.name,
-                                    optional: ty_compound.optional(),
+                                    optional: *optional,
                                 }),
-                            }),
-                            response: ResponseColumn {
-                                getter: ResponseColumnGetter::Compound(compound),
+                            },
+                            response: ResponseColumnOne {
                                 field: ResponseColumnField {
                                     rs_name,
                                     rs_ty,
                                     attr: attr_response,
                                     rs_attrs,
                                 },
+                                getter: ResponseColumnGetterOne::Compound(compound),
                             },
-                            request: RequestColumn::Some {
+                            request: RequestColumnOne::Some {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: Cow::Owned(rs_ty_compound_request(
-                                        ty_compound.optional(),
-                                    )),
+                                    rs_ty: Cow::Owned(rs_ty_compound_request(*optional)),
                                     attr: attr_request,
                                     rs_attrs,
                                 },
-                                setter: RequestColumnSetter {
+                                setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
-                                    optional: ty_compound.optional(),
+                                    optional: *optional,
                                 },
                             },
-                        }
-                        // RequestColumn::Compounds {
-                        //     field: RequestColumnField {
-                        //         rs_name,
-                        //         rs_ty: Cow::Owned(rs_ty_compound_request(
-                        //             ty_compound.optional(),
-                        //         )),
-                        //         attr: attr_request,
-                        //         rs_attrs,
-                        //     },
-                        //     setter: RequestColumnSetterCompounds {
-                        //         rs_name,
-                        //         table_rs_name: &table.rs_name,
-                        //         table_id_rs_name: &table
-                        //             .columns
-                        //             .model()
-                        //             .ok_or_else(|| {
-                        //                 syn::Error::new(
-                        //                     table.rs_name.span(),
-                        //                     TABLE_MUST_HAVE_ID,
-                        //                 )
-                        //             })?
-                        //             .rs_name,
-                        //         foreign_table_rs_name: &foreign_table.rs_name,
-                        //     },
-                        // }
+                        })
+                    }
+                    stage2::Ty::Compound(stage2::TyCompound {
+                        ty: foreign_table_rs_name,
+                        multiplicity:
+                            stage2::TyCompoundMultiplicity::Many(many_foreign_table_rs_name),
+                    }) => {
+                        let table_rs_name = &table.rs_name;
+                        let table_id = table.columns.model().ok_or_else(|| {
+                            syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
+                        })?;
+                        let table_id_rs_name = &table_id.rs_name;
+                        let compounds_getter = ResponseColumnGetterCompounds {
+                            rs_name,
+                            table_rs_name,
+                            table_id_rs_name,
+                            foreign_table_rs_name,
+                            many_foreign_table_rs_name,
+                        };
+                        let compounds_setter = RequestColumnSetterCompounds {
+                            rs_name,
+                            table_rs_name,
+                            table_id_rs_name,
+                            foreign_table_rs_name,
+                            many_foreign_table_rs_name,
+                        };
+
+                        Column::Compounds(ColumnCompounds {
+                            response: ResponseColumnCompounds {
+                                field: ResponseColumnField {
+                                    rs_name,
+                                    rs_ty,
+                                    attr: attr_response,
+                                    rs_attrs,
+                                },
+                                getter: compounds_getter,
+                            },
+                            request: RequestColumnCompounds {
+                                field: RequestColumnField {
+                                    rs_name,
+                                    rs_ty: Cow::Owned(rs_ty_compounds_request()),
+                                    attr: attr_request,
+                                    rs_attrs,
+                                },
+                                setter: compounds_setter,
+                            },
+                        })
                     }
                 };
                 Ok(column0)

@@ -191,16 +191,12 @@ impl TyElement {
 }
 
 pub enum TyCompoundMultiplicity {
-    One,
-    OneOrZero,
+    One { optional: bool },
     Many(Ident),
 }
 impl TyCompoundMultiplicity {
     pub const fn optional(&self) -> bool {
-        match self {
-            Self::OneOrZero => true,
-            Self::One | Self::Many(_) => false,
-        }
+        matches!(*self, Self::One { optional } if optional)
     }
 }
 
@@ -281,8 +277,8 @@ impl TryFrom<stage1::Column> for Column {
                     multiplicity: ty_compound_multiplicity,
                 } = stage1::TyCompound::try_from(&*rs_ty)?;
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
-                    (CATC::One, M::One) => TCM::One,
-                    (CATC::One, M::OneOrZero) => TCM::OneOrZero,
+                    (CATC::One, M::One) => TCM::One { optional: false },
+                    (CATC::One, M::OneOrZero) => TCM::One { optional: true },
                     (CATC::One, M::Many) => {
                         return Err(syn::Error::new(
                             rs_ty.span(),
@@ -379,7 +375,7 @@ impl<C> Columns<C> {
         let (a, b, c) = match self {
             Self::CollectionOnly { columns } => (None, None, &**columns),
             Self::Model { id, columns, .. } => (Some(id), None, &**columns),
-            Self::ManyModel { a, b } => (Some(a), Some(b), <&[_]>::default()),
+            Self::ManyModel { a, b } => (Some(a), Some(b), &[][..]),
         };
         a.into_iter().chain(b).chain(c)
     }
