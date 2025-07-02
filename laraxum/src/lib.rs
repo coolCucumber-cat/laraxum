@@ -50,7 +50,7 @@ impl Error {
 impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
         match error {
-            sqlx::Error::RowNotFound => Self::NotFound,
+            // sqlx::Error::RowNotFound => Self::NotFound,
             sqlx::Error::Database(error) => {
                 eprintln!("sql database error: {error:?}");
                 Self::Conflict

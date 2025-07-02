@@ -109,7 +109,7 @@ impl ResponseColumnGetterOne<'_> {
 pub struct ResponseColumnGetterCompounds<'a> {
     pub rs_name: &'a Ident,
     pub table_rs_name: &'a Ident,
-    pub table_id_rs_name: &'a Ident,
+    pub table_id_name_extern: String,
     pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
@@ -337,11 +337,11 @@ impl<'a> Table<'a> {
                         let table_id = table.columns.model().ok_or_else(|| {
                             syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
-                        let table_id_rs_name = name_extern((table_name_extern, &table_id.name));
+                        let table_id_name_extern = name_extern((table_name_extern, &table_id.name));
                         ResponseColumnGetter::Compounds(ResponseColumnGetterCompounds {
                             rs_name,
                             table_rs_name,
-                            table_id_rs_name,
+                            table_id_name_extern,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         })
@@ -485,18 +485,19 @@ impl<'a> Table<'a> {
                         let table_id = table.columns.model().ok_or_else(|| {
                             syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
-                        let table_id_rs_name = &table_id.rs_name;
+                        let table_id_name_extern =
+                            name_extern((&table_name_extern, &table_id.name));
                         let compounds_getter = ResponseColumnGetterCompounds {
                             rs_name,
                             table_rs_name,
-                            table_id_rs_name,
+                            table_id_name_extern,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
                         let compounds_setter = RequestColumnSetterCompounds {
                             rs_name,
                             table_rs_name,
-                            table_id_rs_name,
+                            table_id_rs_name: &table_id.rs_name,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };

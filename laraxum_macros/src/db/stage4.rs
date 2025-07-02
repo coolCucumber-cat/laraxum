@@ -412,44 +412,45 @@ impl From<stage3::Table<'_>> for Table {
             }
         }
 
-        //         fn response_getter_element(
-        //             name_extern: &str,
-        //             optional: bool,
-        //             foreign: bool,
-        //         ) -> proc_macro2::TokenStream {
-        //             let name_extern = from_str_to_rs_ident(name_extern);
-        //             let field_access = response_field_access(&name_extern);
-        //
-        //             let field_access = if foreign && !optional {
-        //                 #[cfg(feature = "try_blocks")]
-        //                 {
-        //                     quote! {
-        //                         #field_access?
-        //                     }
-        //                 }
-        //                 #[cfg(not(feature = "try_blocks"))]
-        //                 {
-        //                     quote! {
-        //                         match #field_access {
-        //                             ::core::option::Option::Some(val) => val,
-        //                             ::core::option::Option::None => break 'response_block ::core::option::Option::None,
-        //                         }
-        //                     }
-        //                 }
-        //             } else {
-        //                 field_access
-        //             };
-        //
-        //             if optional {
-        //                 quote! {
-        //                     ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
-        //                 }
-        //             } else {
-        //                 quote! {
-        //                     ::laraxum::Decode::decode(#field_access)
-        //                 }
-        //             }
-        //         }
+        fn response_field_getter(
+            name_extern: &str,
+            optional: bool,
+            foreign: bool,
+        ) -> proc_macro2::TokenStream {
+            let name_extern = from_str_to_rs_ident(name_extern);
+            let field_access = response_field_access(&name_extern);
+
+            let field_access = if foreign && !optional {
+                #[cfg(feature = "try_blocks")]
+                {
+                    quote! {
+                        #field_access?
+                    }
+                }
+                #[cfg(not(feature = "try_blocks"))]
+                {
+                    quote! {
+                        match #field_access {
+                            ::core::option::Option::Some(val) => val,
+                            ::core::option::Option::None => {
+                                break 'response_block ::core::option::Option::None
+                            }
+                        }
+                    }
+                }
+            } else {
+                field_access
+            };
+            if optional {
+                quote! {
+                    ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
+                }
+            } else {
+                quote! {
+                    ::laraxum::Decode::decode(#field_access)
+                }
+            }
+        }
 
         fn response_getter(
             column: stage3::ResponseColumnGetterRef<'_>,
@@ -466,39 +467,7 @@ impl From<stage3::Table<'_>> for Table {
                         ..
                     } = element;
 
-                    let name_extern = from_str_to_rs_ident(name_extern);
-                    let field_access = response_field_access(&name_extern);
-
-                    let field_access = if foreign && !optional {
-                        #[cfg(feature = "try_blocks")]
-                        {
-                            quote! {
-                                #field_access?
-                            }
-                        }
-                        #[cfg(not(feature = "try_blocks"))]
-                        {
-                            quote! {
-                                match #field_access {
-                                    ::core::option::Option::Some(val) => val,
-                                    ::core::option::Option::None => {
-                                        break 'response_block ::core::option::Option::None
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        field_access
-                    };
-                    let getter = if *optional {
-                        quote! {
-                            ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
-                        }
-                    } else {
-                        quote! {
-                            ::laraxum::Decode::decode(#field_access)
-                        }
-                    };
+                    let getter = response_field_getter(name_extern, *optional, foreign);
                     (rs_name, getter)
                 }
                 stage3::ResponseColumnGetterRef::One(
@@ -527,19 +496,20 @@ impl From<stage3::Table<'_>> for Table {
                     let stage3::ResponseColumnGetterCompounds {
                         rs_name,
                         table_rs_name,
-                        table_id_rs_name,
+                        table_id_name_extern,
                         foreign_table_rs_name,
                         many_foreign_table_rs_name,
                     } = compounds;
-                    let table_id_rs_name_field_access = response_field_access(table_id_rs_name);
+                    let table_id_getter =
+                        response_field_getter(table_id_name_extern, false, foreign);
                     let getter = quote! {
                         match {
-                            <#many_foreign_table_rs_name as ::laraxum::ManyModel<
+                            <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
                                 #table_rs_name,
-                                ManyResponse = #foreign_table_rs_name,
+                                // ManyResponse = #foreign_table_rs_name,
                             >>::get_many(
                                 db,
-                                #table_id_rs_name_field_access,
+                                #table_id_getter,
                             ).await
                         } {
                             ::core::result::Result::Ok(response) => response,
@@ -587,13 +557,18 @@ impl From<stage3::Table<'_>> for Table {
         fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
             let getter = catch_option(getter);
             quote! {
-                |response| {
-                    futures::executor::block_on(async {
+                async |response| match response {
+                    ::core::result::Result::Ok(response) => {
                         match #getter {
-                            ::core::option::Option::Some(response) => ::core::result::Result::Ok(response),
-                            ::core::option::Option::None => ::core::result::Result::Err(::sqlx::Error::RowNotFound),
+                            ::core::option::Option::Some(response) => {
+                                ::core::result::Result::Ok(response)
+                            }
+                            ::core::option::Option::None => {
+                                ::core::result::Result::Err(::sqlx::Error::RowNotFound)
+                            }
                         }
-                    })
+                    }
+                    ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
                 }
             }
             // quote! {
@@ -738,10 +713,12 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::Error,
                         >
                     {
-                        let response = ::sqlx::query!(#get_all)
-                            .try_map(#response_getter)
-                            .fetch_all(&db.pool)
-                            .await?;
+                        let response = ::sqlx::query!(#get_all);
+                        let response = response.fetch(&db.pool);
+                        let response = ::futures::StreamExt::then(response, #response_getter);
+                        let response: ::std::vec::Vec<_> =
+                        // let response: ::core::result::Result<::std::vec::Vec<_>, _> =
+                            ::futures::TryStreamExt::try_collect(response).await?;
                         ::core::result::Result::Ok(response)
                     }
                     async fn create_one(
@@ -752,12 +729,8 @@ impl From<stage3::Table<'_>> for Table {
                             (),
                             ::laraxum::ModelError<Self::CreateRequestError>>
                     {
-                        ::sqlx::query!(
-                                #create_one,
-                                #request_column_setters
-                            )
-                            .execute(&db.pool)
-                            .await?;
+                        let response = ::sqlx::query!(#create_one, #request_column_setters);
+                        response.execute(&db.pool).await?;
                         ::core::result::Result::Ok(())
                     }
                 }
@@ -806,11 +779,12 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::Error,
                         >
                     {
-                        let response = ::sqlx::query!(#get_one, id)
-                            .try_map(#response_getter)
-                            .fetch_one(&db.pool)
-                            .await?;
-                        ::core::result::Result::Ok(response)
+                        let response = ::sqlx::query!(#get_one, id);
+                        let response = response.fetch(&db.pool);
+                        let mut response = ::futures::StreamExt::then(response, #response_getter);
+                        let mut response = ::core::pin::pin!(response);
+                        let response = ::futures::TryStreamExt::try_next(&mut response).await?;
+                        ::core::option::Option::ok_or(response, ::laraxum::Error::NotFound)
                     }
                     async fn create_get_one(
                         db: &Self::Db,
@@ -821,10 +795,10 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::ModelError<Self::CreateRequestError>
                         >
                     {
-                        let response = ::sqlx::query!(#create_one, #request_column_setters)
-                            .execute(&db.pool)
-                            .await?;
-                        let response = Self::get_one(db, response.last_insert_id()).await?;
+                        let response = ::sqlx::query!(#create_one, #request_column_setters);
+                        let response = response.execute(&db.pool).await?;
+                        let last_insert_id = response.last_insert_id();
+                        let response = Self::get_one(db, last_insert_id).await?;
                         ::core::result::Result::Ok(response)
                     }
                     async fn update_one(
@@ -837,9 +811,8 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::ModelError<Self::UpdateRequestError>,
                         >
                     {
-                        ::sqlx::query!(#update_one, #request_column_setters id)
-                            .execute(&db.pool)
-                            .await?;
+                        let response = ::sqlx::query!(#update_one, #request_column_setters id);
+                        response.execute(&db.pool).await?;
                         ::core::result::Result::Ok(())
                     }
                     async fn update_get_one(
@@ -865,9 +838,8 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::Error,
                         >
                     {
-                        ::sqlx::query!(#delete_one, id)
-                            .execute(&db.pool)
-                            .await?;
+                        let response = ::sqlx::query!(#delete_one, id);
+                        response.execute(&db.pool).await?;
                         ::core::result::Result::Ok(())
                     }
                 }
@@ -925,10 +897,12 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
-                            let response = ::sqlx::query!(#get_many, one)
-                                .try_map(#response_getter)
-                                .fetch_all(&db.pool)
-                                .await?;
+                            let response = ::sqlx::query!(#get_many, one);
+                            let response = response.fetch(&db.pool);
+                            let response = ::futures::StreamExt::then(response, #response_getter);
+                            let response: ::std::vec::Vec<_> =
+                            // let response: ::core::result::Result<::std::vec::Vec<_>, _> =
+                                ::futures::TryStreamExt::try_collect(response).await?;
                             ::core::result::Result::Ok(response)
                         }
                         async fn create_many(
