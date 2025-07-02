@@ -1,5 +1,6 @@
 use super::stage2;
 
+use crate::utils::borrow::DerefEither;
 use crate::utils::collections::TryCollectAll;
 
 use std::borrow::Cow;
@@ -165,7 +166,7 @@ pub struct RequestColumnSetterCompounds<'a> {
 
 pub struct RequestColumnField<'a> {
     pub rs_name: &'a Ident,
-    pub rs_ty: Cow<'a, Type>,
+    pub rs_ty: DerefEither<Type, &'a Type, Box<Type>>,
     pub attr: &'a stage2::ColumnAttrRequest,
     pub rs_attrs: &'a [Attribute],
 }
@@ -390,7 +391,7 @@ impl<'a> Table<'a> {
                             TyElement::Value(_) => RequestColumnOne::Some {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: Cow::Borrowed(rs_ty),
+                                    rs_ty: DerefEither::Left(rs_ty),
                                     attr: attr_request,
                                     rs_attrs,
                                 },
@@ -464,7 +465,9 @@ impl<'a> Table<'a> {
                             request: RequestColumnOne::Some {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: Cow::Owned(rs_ty_compound_request(*optional)),
+                                    rs_ty: DerefEither::Right(Box::new(rs_ty_compound_request(
+                                        *optional,
+                                    ))),
                                     attr: attr_request,
                                     rs_attrs,
                                 },
@@ -515,7 +518,7 @@ impl<'a> Table<'a> {
                             request: RequestColumnCompounds {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: Cow::Owned(rs_ty_compounds_request()),
+                                    rs_ty: DerefEither::Right(Box::new(rs_ty_compounds_request())),
                                     attr: attr_request,
                                     rs_attrs,
                                 },

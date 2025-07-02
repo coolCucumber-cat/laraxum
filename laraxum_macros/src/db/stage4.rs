@@ -497,7 +497,7 @@ impl From<stage3::Table<'_>> for Table {
                         rs_name,
                         table_rs_name,
                         table_id_name_extern,
-                        foreign_table_rs_name,
+                        foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = compounds;
                     let table_id_getter =
@@ -516,9 +516,6 @@ impl From<stage3::Table<'_>> for Table {
                             ::core::result::Result::Err(_) => {
                                 return ::core::result::Result::Err(::sqlx::Error::RowNotFound);
                             }
-                            // ::core::result::Result::Err(err) => {
-                            //     return ::core::result::Result::Err(err);
-                            // }
                         }
                     };
                     (rs_name, getter)
@@ -717,7 +714,6 @@ impl From<stage3::Table<'_>> for Table {
                         let response = response.fetch(&db.pool);
                         let response = ::futures::StreamExt::then(response, #response_getter);
                         let response: ::std::vec::Vec<_> =
-                        // let response: ::core::result::Result<::std::vec::Vec<_>, _> =
                             ::futures::TryStreamExt::try_collect(response).await?;
                         ::core::result::Result::Ok(response)
                     }
@@ -901,7 +897,6 @@ impl From<stage3::Table<'_>> for Table {
                             let response = response.fetch(&db.pool);
                             let response = ::futures::StreamExt::then(response, #response_getter);
                             let response: ::std::vec::Vec<_> =
-                            // let response: ::core::result::Result<::std::vec::Vec<_>, _> =
                                 ::futures::TryStreamExt::try_collect(response).await?;
                             ::core::result::Result::Ok(response)
                         }
