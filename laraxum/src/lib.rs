@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub type Id = u64;
 
+#[derive(Debug)]
 pub enum Error {
     /// [400 Bad Request](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1)
     BadRequest,
@@ -74,6 +75,7 @@ impl IntoResponse for Error {
     }
 }
 
+#[derive(Debug)]
 pub enum ModelError<UnprocessableEntity> {
     /// [422 Unprocessable Entity](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.21)
     UnprocessableEntity(UnprocessableEntity),

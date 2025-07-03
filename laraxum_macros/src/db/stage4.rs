@@ -297,12 +297,11 @@ fn get_filter<'elements, 'compounds>(
 }
 fn create_one<'columns, I>(table_name_intern: &str, columns: I) -> String
 where
-    I: IntoIterator<Item = &'columns stage3::Column<'columns>>,
+    I: IntoIterator<Item = &'columns stage3::RequestColumnOne<'columns>>,
     I::IntoIter: Iterator<Item = I::Item> + Clone,
 {
     let request_columns = columns
         .into_iter()
-        .flat_map(|column| column.request_one())
         .flat_map(|column| column.request_setter_column());
     fmt2::fmt! { { str } =>
         "INSERT INTO " {table_name_intern} " ("
@@ -314,11 +313,10 @@ where
 }
 fn update_one<'columns, I>(table_name_intern: &str, id_name: &str, columns: I) -> String
 where
-    I: IntoIterator<Item = &'columns stage3::Column<'columns>>,
+    I: IntoIterator<Item = &'columns stage3::RequestColumnOne<'columns>>,
 {
     let request_columns = columns
         .into_iter()
-        .flat_map(|column| column.request_one())
         .flat_map(|column| column.request_setter_column());
     fmt2::fmt! { { str } =>
         "UPDATE " {table_name_intern} " SET "
@@ -686,7 +684,8 @@ impl From<stage3::Table<'_>> for Table {
                 &response_getter_column_elements,
                 &response_getter_column_compounds,
             );
-            let create_one = create_one(&table.name_intern, table.columns.iter());
+            let request_columns = table.columns.iter().flat_map(|column| column.request_one());
+            let create_one = create_one(&table.name_intern, request_columns.clone());
 
             let collection_token_stream = quote! {
                 #[derive(::serde::Deserialize)]
@@ -739,7 +738,7 @@ impl From<stage3::Table<'_>> for Table {
             let (table_id_name, table_id_name_intern) = match table_id {
                 stage3::Column::One(one) => (one.create.name, one.response.getter.name_intern()),
                 stage3::Column::Compounds(_) => {
-                    unimplemented!("unreachable error. id does not have corresponding fields")
+                    unimplemented!("unreachable error. id does not have corresponding fields");
                 }
             };
 
@@ -750,7 +749,7 @@ impl From<stage3::Table<'_>> for Table {
                 &response_getter_column_elements,
                 &response_getter_column_compounds,
             );
-            let update_one = update_one(&table.name_intern, table_id_name, table.columns.iter());
+            let update_one = update_one(&table.name_intern, table_id_name, request_columns);
             let delete_one = delete_one(&table.name_intern, table_id_name);
 
             quote! {
@@ -875,6 +874,9 @@ impl From<stage3::Table<'_>> for Table {
                     &response_getter_column_elements,
                     &response_getter_column_compounds,
                 );
+                let request_columns = [&one.request, &many.request];
+                let create_one = create_one(&table.name_intern, request_columns);
+                let delete_many = delete_one(&table.name_intern, one.create.name);
 
                 let table_rs_name = table.rs_name;
 
@@ -910,6 +912,10 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
+                            for many in many {
+                                let response = ::sqlx::query!(#create_one, one, many);
+                                response.execute(&db.pool).await?;
+                            }
                             ::core::result::Result::Ok(())
                         }
                         async fn update_many(
@@ -922,6 +928,12 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
+                            <
+                                Self as ::laraxum::ManyModel<#one_response_rs_ty>
+                            >::delete_many(db, one).await?;
+                            <
+                                Self as ::laraxum::ManyModel<#one_response_rs_ty>
+                            >::create_many(db, one, many).await?;
                             ::core::result::Result::Ok(())
                         }
                         async fn delete_many(
@@ -933,6 +945,8 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
+                            let response = ::sqlx::query!(#delete_many, one);
+                            response.execute(&db.pool).await?;
                             ::core::result::Result::Ok(())
                         }
                     }
