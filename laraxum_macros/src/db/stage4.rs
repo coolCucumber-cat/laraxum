@@ -1118,13 +1118,18 @@ impl From<stage3::Db<'_>> for Db {
             impl ::laraxum::AnyDb for #db_ident {
                 type Db = Self;
                 type Driver = #db_pool_type;
-                async fn connect_with_str(s: &str) -> ::core::result::Result::<Self, ::sqlx::Error> {
-                }
-                fn default_options() -> <Self::Driver as sqlx::Connection>::Options {
+                type ConnectionOptions = <
+                    <
+                        Self::Driver as sqlx::Database
+                    >::Connection as sqlx::Connection
+                >::Options;
+                fn default_options()
+                -> Self::ConnectionOptions
+                {
                     ::core::default::Default::default()
                 }
                 async fn connect_with_options(
-                    options: <Self::Driver as sqlx::Connection>::Options,
+                    options: Self::ConnectionOptions,
                 ) -> Result<Self, sqlx::Error> {
                     ::core::result::Result::Ok(Self {
                         pool: ::sqlx::Pool::<Self::Driver>::connect_with(options).await?,

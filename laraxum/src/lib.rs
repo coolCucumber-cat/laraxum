@@ -1,6 +1,5 @@
 #![allow(async_fn_in_trait)]
 
-use core::str::FromStr;
 use std::sync::Arc;
 
 use axum::{
@@ -108,15 +107,15 @@ pub trait Db<Model> {}
 
 pub trait AnyDb: Sized {
     type Db;
-    type Driver: sqlx::Database + sqlx::Connection + FromStr;
-    fn default_options() -> <Self::Driver as sqlx::Connection>::Options;
-    async fn connect_with_options(
-        options: <Self::Driver as sqlx::Connection>::Options,
-    ) -> Result<Self, sqlx::Error>;
+    type Driver: sqlx::Database;
+    type ConnectionOptions: sqlx::ConnectOptions;
+    fn default_options() -> Self::ConnectionOptions;
+    async fn connect_with_options(options: Self::ConnectionOptions) -> Result<Self, sqlx::Error>;
     async fn connect() -> Result<Self, sqlx::Error> {
         let url = std::env::var("DATABASE_URL");
-        let options: <Self::Driver as sqlx::Connection>::Options = match url {
-            Ok(url) => <<Self::Driver as sqlx::Connection>::Options>::from_str(&url)
+        let options = match url {
+            Ok(url) => url
+                .parse()
                 .map_err(|e| sqlx::Error::Configuration(Box::new(e))),
             Err(std::env::VarError::NotPresent) => Ok(Self::default_options()),
             Err(e) => Err(sqlx::Error::Configuration(Box::new(e))),
