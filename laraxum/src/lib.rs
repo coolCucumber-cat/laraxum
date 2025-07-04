@@ -336,3 +336,22 @@ impl Encode for bool {
         }
     }
 }
+
+impl<T> Decode for &[T]
+where
+    T: Decode<Decode = T>,
+{
+    type Decode = Self;
+    fn decode(decode: Self::Decode) -> Self {
+        decode
+    }
+}
+impl<T> Encode for &[T]
+where
+    T: Encode<Encode = T>,
+{
+    type Encode = Self;
+    fn encode(self) -> Self::Encode {
+        self
+    }
+}

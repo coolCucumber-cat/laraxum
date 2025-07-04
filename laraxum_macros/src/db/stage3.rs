@@ -105,6 +105,18 @@ impl ResponseColumnGetterOne<'_> {
             Self::Compound(compound) => &compound.name_intern,
         }
     }
+    pub fn rs_name(&self) -> &Ident {
+        match self {
+            Self::Element(element) => element.rs_name,
+            Self::Compound(compound) => compound.rs_name,
+        }
+    }
+    pub fn optional(&self) -> bool {
+        match self {
+            Self::Element(element) => element.optional,
+            Self::Compound(compound) => compound.optional,
+        }
+    }
 }
 
 pub struct ResponseColumnGetterCompounds<'a> {
@@ -123,6 +135,14 @@ pub enum ResponseColumnGetter<'a> {
 pub enum ResponseColumnGetterRef<'a> {
     One(&'a ResponseColumnGetterOne<'a>),
     Compounds(&'a ResponseColumnGetterCompounds<'a>),
+}
+impl ResponseColumnGetterRef<'_> {
+    pub fn rs_name(&self) -> &Ident {
+        match self {
+            Self::One(one) => one.rs_name(),
+            Self::Compounds(compounds) => compounds.rs_name,
+        }
+    }
 }
 impl<'a> From<&'a ResponseColumnGetter<'a>> for ResponseColumnGetterRef<'a> {
     fn from(value: &'a ResponseColumnGetter<'a>) -> Self {
@@ -159,7 +179,7 @@ pub struct RequestColumnSetterOne<'a> {
 pub struct RequestColumnSetterCompounds<'a> {
     pub rs_name: &'a Ident,
     pub table_rs_name: &'a Ident,
-    pub table_id_rs_name: &'a Ident,
+    // pub table_id_rs_name: &'a Ident,
     pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
@@ -192,6 +212,14 @@ pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
     pub request: RequestColumnOne<'a>,
+}
+impl ColumnOne<'_> {
+    pub fn name(&self) -> &str {
+        self.create.name
+    }
+    pub fn name_intern(&self) -> &str {
+        self.response.getter.name_intern()
+    }
 }
 
 pub struct ColumnCompounds<'a> {
@@ -500,7 +528,7 @@ impl<'a> Table<'a> {
                         let compounds_setter = RequestColumnSetterCompounds {
                             rs_name,
                             table_rs_name,
-                            table_id_rs_name: &table_id.rs_name,
+                            // table_id_rs_name: &table_id.rs_name,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
