@@ -1,5 +1,6 @@
 #![allow(async_fn_in_trait)]
 
+use core::str::FromStr;
 use std::sync::Arc;
 
 use axum::{
@@ -107,11 +108,28 @@ pub trait Db<Model> {}
 
 pub trait AnyDb: Sized {
     type Db;
-    async fn connect_with_str(s: &str) -> Result<Self, sqlx::Error>;
+    type Driver: sqlx::Database + sqlx::Connection + FromStr;
+    fn default_options() -> <Self::Driver as sqlx::Connection>::Options;
+    async fn connect_with_options(
+        options: <Self::Driver as sqlx::Connection>::Options,
+    ) -> Result<Self, sqlx::Error>;
     async fn connect() -> Result<Self, sqlx::Error> {
         let url = std::env::var("DATABASE_URL");
-        let url = url.map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
-        Self::connect_with_str(&url).await
+        let options: <Self::Driver as sqlx::Connection>::Options = match url {
+            Ok(url) => <<Self::Driver as sqlx::Connection>::Options>::from_str(&url)
+                .map_err(|e| sqlx::Error::Configuration(Box::new(e))),
+            Err(std::env::VarError::NotPresent) => Ok(Self::default_options()),
+            Err(e) => Err(sqlx::Error::Configuration(Box::new(e))),
+        }?;
+        // let url: <Self::Driver as sqlx::Connection>::Options = "".parse().unwrap();
+
+        // sqlx::MySqlPool::connect_with(options)
+        // let url = <<Self::Driver as sqlx::Connection>::Options>::from_str("").unwrap();
+        // let url = url.or_else(|e| match e {
+        //     std::env::VarError::NotPresent => Ok(Self::default_options()),
+        //     e => Err(sqlx::Error::Configuration(Box::new(e))),
+        // })?;
+        Self::connect_with_options(options).await
     }
     fn db(&self) -> &Self::Db;
 }

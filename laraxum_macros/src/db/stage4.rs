@@ -476,6 +476,7 @@ impl From<stage3::Table<'_>> for Table {
                         true,
                     );
                     if *optional {
+                        // catch any early returns and replace it with `None`
                         catch_option(&getter)
                     } else {
                         getter
@@ -1116,9 +1117,17 @@ impl From<stage3::Db<'_>> for Db {
 
             impl ::laraxum::AnyDb for #db_ident {
                 type Db = Self;
+                type Driver = #db_pool_type;
                 async fn connect_with_str(s: &str) -> ::core::result::Result::<Self, ::sqlx::Error> {
+                }
+                fn default_options() -> <Self::Driver as sqlx::Connection>::Options {
+                    ::core::default::Default::default()
+                }
+                async fn connect_with_options(
+                    options: <Self::Driver as sqlx::Connection>::Options,
+                ) -> Result<Self, sqlx::Error> {
                     ::core::result::Result::Ok(Self {
-                        pool: ::sqlx::Pool::<#db_pool_type>::connect(s).await?,
+                        pool: ::sqlx::Pool::<Self::Driver>::connect_with(options).await?,
                     })
                 }
                 fn db(&self) -> &Self::Db {
