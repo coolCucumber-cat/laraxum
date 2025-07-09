@@ -189,9 +189,10 @@ where
 {
     type State: AnyDb<Db = Self::Db>;
 
+    #[allow(unused_variables)]
     async fn index(
         State(state): State<Arc<Self::State>>,
-        Query(_query): Query<Self::GetAllRequestQuery>,
+        Query(query): Query<Self::GetAllRequestQuery>,
     ) -> Result<Json<Vec<Self::Response>>, Error> {
         let rs = Self::get_all(state.db()).await?;
         Ok(Json(rs))
@@ -354,21 +355,21 @@ impl Encode for bool {
     }
 }
 
-impl<T> Decode for &[T]
-where
-    T: Decode<Decode = T>,
-{
-    type Decode = Self;
-    fn decode(decode: Self::Decode) -> Self {
-        decode
-    }
-}
-impl<T> Encode for &[T]
-where
-    T: Encode<Encode = T>,
-{
-    type Encode = Self;
-    fn encode(self) -> Self::Encode {
-        self
-    }
-}
+// impl<T> Decode for &[T]
+// where
+//     T: Decode<Decode = T>,
+// {
+//     type Decode = Self;
+//     fn decode(decode: Self::Decode) -> Self {
+//         decode
+//     }
+// }
+// impl<T> Encode for &[T]
+// where
+//     T: Encode<Encode = T>,
+// {
+//     type Encode = Self;
+//     fn encode(self) -> Self::Encode {
+//         self
+//     }
+// }

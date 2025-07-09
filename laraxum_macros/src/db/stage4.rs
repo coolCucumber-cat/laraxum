@@ -331,246 +331,243 @@ fn delete_one(table_name_intern: &str, id_name: &str) -> String {
     }
 }
 
+fn flatten_internal<'columns>(
+    response_getter_columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
+    response_getter_column_elements: &mut Vec<
+        &'columns stage3::ResponseColumnGetterElement<'columns>,
+    >,
+    response_getter_column_compounds: &mut Vec<
+        &'columns stage3::ResponseColumnGetterCompound<'columns>,
+    >,
+) {
+    for response_getter_column in response_getter_columns {
+        match response_getter_column {
+            stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(
+                element,
+            )) => {
+                response_getter_column_elements.push(element);
+            }
+            stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
+                compound,
+            )) => {
+                response_getter_column_compounds.push(compound);
+                flatten_internal(
+                    compound
+                        .columns
+                        .iter()
+                        .map(stage3::ResponseColumnGetterRef::from),
+                    response_getter_column_elements,
+                    response_getter_column_compounds,
+                );
+            }
+            stage3::ResponseColumnGetterRef::Compounds(_) => {}
+        }
+    }
+}
+fn flatten<'columns>(
+    response_getter_columns: impl Iterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
+) -> (
+    Vec<&'columns stage3::ResponseColumnGetterElement<'columns>>,
+    Vec<&'columns stage3::ResponseColumnGetterCompound<'columns>>,
+) {
+    let mut response_getter_column_elements = vec![];
+    let mut response_getter_column_compounds = vec![];
+
+    flatten_internal(
+        response_getter_columns,
+        &mut response_getter_column_elements,
+        &mut response_getter_column_compounds,
+    );
+
+    (
+        response_getter_column_elements,
+        response_getter_column_compounds,
+    )
+}
+
+fn serde_skip() -> proc_macro2::TokenStream {
+    quote! {
+        #[serde(skip)]
+    }
+}
+fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
+    quote! {
+        #[serde(rename = #serde_name)]
+    }
+}
+
+fn response_getter_column(
+    name_extern: &Ident,
+    optional: bool,
+    foreign: bool,
+) -> proc_macro2::TokenStream {
+    let field_access = quote! {
+        response.#name_extern
+    };
+
+    let field_access = if foreign && !optional {
+        #[cfg(feature = "try_blocks")]
+        {
+            quote! {
+                #field_access?
+            }
+        }
+        #[cfg(not(feature = "try_blocks"))]
+        {
+            quote! {
+                match #field_access {
+                    ::core::option::Option::Some(val) => val,
+                    ::core::option::Option::None => {
+                        break 'response_block ::core::option::Option::None
+                    }
+                }
+            }
+        }
+    } else {
+        field_access
+    };
+    if optional {
+        quote! {
+            ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
+        }
+    } else {
+        quote! {
+            ::laraxum::Decode::decode(#field_access)
+        }
+    }
+}
+
+fn response_getter(
+    column: stage3::ResponseColumnGetterRef<'_>,
+    foreign: bool,
+) -> proc_macro2::TokenStream {
+    match column {
+        stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(element)) => {
+            let stage3::ResponseColumnGetterElement {
+                name_extern,
+                optional,
+                ..
+            } = element;
+            let name_extern = from_str_to_rs_ident(name_extern);
+            response_getter_column(&name_extern, *optional, foreign)
+        }
+        stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
+            compound,
+        )) => {
+            let stage3::ResponseColumnGetterCompound {
+                optional,
+                foreign_table_rs_name: rs_ty_name,
+                columns,
+                ..
+            } = compound;
+            let getter = response_getter_compound(
+                rs_ty_name,
+                columns.iter().map(stage3::ResponseColumnGetterRef::from),
+                true,
+            );
+            if *optional {
+                // catch any early returns and replace it with `None`
+                catch_option(&getter)
+            } else {
+                getter
+            }
+        }
+        stage3::ResponseColumnGetterRef::Compounds(compounds) => {
+            let stage3::ResponseColumnGetterCompounds {
+                rs_name: _,
+                table_rs_name,
+                table_id_name_extern,
+                foreign_table_rs_name: _,
+                many_foreign_table_rs_name,
+            } = compounds;
+            let table_id_name_extern = from_str_to_rs_ident(table_id_name_extern);
+            let one_id = response_getter_column(&table_id_name_extern, false, foreign);
+            quote! {
+                match {
+                    <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                        #table_rs_name,
+                    >>::get_many(
+                        db,
+                        #one_id,
+                    ).await
+                } {
+                    ::core::result::Result::Ok(response) => response,
+                    ::core::result::Result::Err(_) => {
+                        return ::core::result::Result::Err(::sqlx::Error::RowNotFound);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn response_getter_compound<'columns>(
+    table_ty: &Ident,
+    columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
+    foreign: bool,
+) -> proc_macro2::TokenStream {
+    let columns = columns.into_iter().map(|column| {
+        let rs_name = column.rs_name();
+        let response_getter = response_getter(column, foreign);
+        quote! {
+            #rs_name: #response_getter
+        }
+    });
+
+    quote! {
+        #table_ty { #( #columns ),* }
+    }
+}
+
+fn catch_option(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    #[cfg(feature = "try_blocks")]
+    quote! {
+        try { #getter }
+    }
+    #[cfg(not(feature = "try_blocks"))]
+    quote! {
+        'response_block: { ::core::option::Option::Some(#getter) }
+    }
+}
+
+fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    let getter = catch_option(getter);
+    quote! {
+        async |response| match response {
+            ::core::result::Result::Ok(response) => {
+                match #getter {
+                    ::core::option::Option::Some(response) => {
+                        ::core::result::Result::Ok(response)
+                    }
+                    ::core::option::Option::None => {
+                        ::core::result::Result::Err(::sqlx::Error::RowNotFound)
+                    }
+                }
+            }
+            ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
+        }
+    }
+}
+
+// fn request_setter_column(rs_name: &Ident, optional: bool) -> proc_macro2::TokenStream {
+//     if optional {
+//         quote! {
+//             ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode)
+//         }
+//     } else {
+//         quote! {
+//             ::laraxum::Encode::encode(request.#rs_name)
+//         }
+//     }
+// }
+
 struct Table {
     token_stream: proc_macro2::TokenStream,
     migration_up: String,
     migration_down: String,
 }
-
 impl From<stage3::Table<'_>> for Table {
     fn from(table: stage3::Table) -> Self {
-        fn flatten_internal<'columns>(
-            response_getter_columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
-            response_getter_column_elements: &mut Vec<
-                &'columns stage3::ResponseColumnGetterElement<'columns>,
-            >,
-            response_getter_column_compounds: &mut Vec<
-                &'columns stage3::ResponseColumnGetterCompound<'columns>,
-            >,
-        ) {
-            for response_getter_column in response_getter_columns {
-                match response_getter_column {
-                    stage3::ResponseColumnGetterRef::One(
-                        stage3::ResponseColumnGetterOne::Element(element),
-                    ) => {
-                        response_getter_column_elements.push(element);
-                    }
-                    stage3::ResponseColumnGetterRef::One(
-                        stage3::ResponseColumnGetterOne::Compound(compound),
-                    ) => {
-                        response_getter_column_compounds.push(compound);
-                        flatten_internal(
-                            compound
-                                .columns
-                                .iter()
-                                .map(stage3::ResponseColumnGetterRef::from),
-                            response_getter_column_elements,
-                            response_getter_column_compounds,
-                        );
-                    }
-                    stage3::ResponseColumnGetterRef::Compounds(_) => {}
-                }
-            }
-        }
-        fn flatten<'columns>(
-            response_getter_columns: impl Iterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
-        ) -> (
-            Vec<&'columns stage3::ResponseColumnGetterElement<'columns>>,
-            Vec<&'columns stage3::ResponseColumnGetterCompound<'columns>>,
-        ) {
-            let mut response_getter_column_elements = vec![];
-            let mut response_getter_column_compounds = vec![];
-
-            flatten_internal(
-                response_getter_columns,
-                &mut response_getter_column_elements,
-                &mut response_getter_column_compounds,
-            );
-
-            (
-                response_getter_column_elements,
-                response_getter_column_compounds,
-            )
-        }
-
-        fn serde_skip() -> proc_macro2::TokenStream {
-            quote! {
-                #[serde(skip)]
-            }
-        }
-        fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
-            quote! {
-                #[serde(rename = #serde_name)]
-            }
-        }
-
-        fn response_getter_column(
-            name_extern: &Ident,
-            optional: bool,
-            foreign: bool,
-        ) -> proc_macro2::TokenStream {
-            let field_access = quote! {
-                response.#name_extern
-            };
-
-            let field_access = if foreign && !optional {
-                #[cfg(feature = "try_blocks")]
-                {
-                    quote! {
-                        #field_access?
-                    }
-                }
-                #[cfg(not(feature = "try_blocks"))]
-                {
-                    quote! {
-                        match #field_access {
-                            ::core::option::Option::Some(val) => val,
-                            ::core::option::Option::None => {
-                                break 'response_block ::core::option::Option::None
-                            }
-                        }
-                    }
-                }
-            } else {
-                field_access
-            };
-            if optional {
-                quote! {
-                    ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
-                }
-            } else {
-                quote! {
-                    ::laraxum::Decode::decode(#field_access)
-                }
-            }
-        }
-
-        fn response_getter(
-            column: stage3::ResponseColumnGetterRef<'_>,
-            foreign: bool,
-        ) -> proc_macro2::TokenStream {
-            match column {
-                stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(
-                    element,
-                )) => {
-                    let stage3::ResponseColumnGetterElement {
-                        name_extern,
-                        optional,
-                        ..
-                    } = element;
-                    let name_extern = from_str_to_rs_ident(name_extern);
-                    response_getter_column(&name_extern, *optional, foreign)
-                }
-                stage3::ResponseColumnGetterRef::One(
-                    stage3::ResponseColumnGetterOne::Compound(compound),
-                ) => {
-                    let stage3::ResponseColumnGetterCompound {
-                        optional,
-                        foreign_table_rs_name: rs_ty_name,
-                        columns,
-                        ..
-                    } = compound;
-                    let getter = response_getter_compound(
-                        rs_ty_name,
-                        columns.iter().map(stage3::ResponseColumnGetterRef::from),
-                        true,
-                    );
-                    if *optional {
-                        // catch any early returns and replace it with `None`
-                        catch_option(&getter)
-                    } else {
-                        getter
-                    }
-                }
-                stage3::ResponseColumnGetterRef::Compounds(compounds) => {
-                    let stage3::ResponseColumnGetterCompounds {
-                        rs_name: _,
-                        table_rs_name,
-                        table_id_name_extern,
-                        foreign_table_rs_name: _,
-                        many_foreign_table_rs_name,
-                    } = compounds;
-                    let table_id_name_extern = from_str_to_rs_ident(table_id_name_extern);
-                    let one_id = response_getter_column(&table_id_name_extern, false, foreign);
-                    quote! {
-                        match {
-                            <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                                #table_rs_name,
-                            >>::get_many(
-                                db,
-                                #one_id,
-                            ).await
-                        } {
-                            ::core::result::Result::Ok(response) => response,
-                            ::core::result::Result::Err(_) => {
-                                return ::core::result::Result::Err(::sqlx::Error::RowNotFound);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        fn response_getter_compound<'columns>(
-            table_ty: &Ident,
-            columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
-            foreign: bool,
-        ) -> proc_macro2::TokenStream {
-            let columns = columns.into_iter().map(|column| {
-                let rs_name = column.rs_name();
-                let response_getter = response_getter(column, foreign);
-                quote! {
-                    #rs_name: #response_getter
-                }
-            });
-
-            quote! {
-                #table_ty { #( #columns ),* }
-            }
-        }
-
-        fn catch_option(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-            #[cfg(feature = "try_blocks")]
-            quote! {
-                try { #getter }
-            }
-            #[cfg(not(feature = "try_blocks"))]
-            quote! {
-                'response_block: { ::core::option::Option::Some(#getter) }
-            }
-        }
-
-        fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-            let getter = catch_option(getter);
-            quote! {
-                async |response| match response {
-                    ::core::result::Result::Ok(response) => {
-                        match #getter {
-                            ::core::option::Option::Some(response) => {
-                                ::core::result::Result::Ok(response)
-                            }
-                            ::core::option::Option::None => {
-                                ::core::result::Result::Err(::sqlx::Error::RowNotFound)
-                            }
-                        }
-                    }
-                    ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
-                }
-            }
-        }
-
-        // fn request_setter_column(rs_name: &Ident, optional: bool) -> proc_macro2::TokenStream {
-        //     if optional {
-        //         quote! {
-        //             ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode)
-        //         }
-        //     } else {
-        //         quote! {
-        //             ::laraxum::Encode::encode(request.#rs_name)
-        //         }
-        //     }
-        // }
-
         let response_column_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
                 rs_name,
@@ -626,6 +623,22 @@ impl From<stage3::Table<'_>> for Table {
                 #(#response_column_fields),*
             }
 
+            impl ::laraxum::Decode for #table_rs_name {
+                type Decode = Self;
+                #[inline]
+                fn decode(decode: Self::Decode) -> Self {
+                    decode
+                }
+            }
+
+            impl ::laraxum::Encode for #table_rs_name {
+                type Encode = Self;
+                #[inline]
+                fn encode(self) -> Self::Encode {
+                    self
+                }
+            }
+
             impl ::laraxum::Db<#table_rs_name> for #db_rs_name {}
 
             impl ::laraxum::Table for #table_rs_name {
@@ -672,73 +685,75 @@ impl From<stage3::Table<'_>> for Table {
                 #(#request_setter_columns,)*
             };
 
-            let request_setter_compounds_columns = table
-                .columns
-                .iter()
-                .filter_map(|column| match column {
+            let request_setter_compounds_columns =
+                table.columns.iter().filter_map(|column| match column {
                     stage3::Column::Compounds(compounds) => Some(&compounds.request.setter),
                     _ => None,
-                })
-                .map(|column| {
+                });
+
+            let request_setter_compounds_create_many =
+                request_setter_compounds_columns.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
                         table_rs_name,
-                        // table_id_rs_name,
                         foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
-                    let many_request = quote! {
-                        &request.#rs_name
-                    };
-                    (
-                        quote! {{
-                            <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                                #table_rs_name,
-                            >>::create_many(
-                                db,
-                                id,
-                                #many_request,
-                            ).await?;
-                        }},
-                        quote! {{
-                            <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                                #table_rs_name,
-                            >>::update_many(
-                                db,
-                                id,
-                                #many_request,
-                            ).await?;
-                        }},
-                        quote! {{
-                            <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                                #table_rs_name,
-                            >>::delete_many(
-                                db,
-                                id,
-                            ).await?;
-                        }},
-                    )
+                    quote! {{
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #table_rs_name,
+                        >>::create_many(
+                            db,
+                            id,
+                            &request.#rs_name,
+                        ).await?;
+                    }}
                 });
-            let request_setter_compounds_columns =
-                request_setter_compounds_columns.collect::<Vec<_>>();
-
-            let request_setter_compounds_create_many = request_setter_compounds_columns
-                .iter()
-                .map(|(create_many, _, _)| create_many);
             let request_setter_compounds_create_many = quote! {
-                #( { #request_setter_compounds_create_many } )*
+                #( #request_setter_compounds_create_many )*
             };
-            let request_setter_compounds_update_many = request_setter_compounds_columns
-                .iter()
-                .map(|(_, update_many, _)| update_many);
+
+            let request_setter_compounds_update_many =
+                request_setter_compounds_columns.clone().map(|column| {
+                    let stage3::RequestColumnSetterCompounds {
+                        rs_name,
+                        table_rs_name,
+                        foreign_table_rs_name: _,
+                        many_foreign_table_rs_name,
+                    } = column;
+                    quote! {{
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #table_rs_name,
+                        >>::update_many(
+                            db,
+                            id,
+                            &request.#rs_name,
+                        ).await?;
+                    }}
+                });
             let request_setter_compounds_update_many = quote! {
-                #( { #request_setter_compounds_update_many } )*
+                #( #request_setter_compounds_update_many )*
             };
-            let request_setter_compounds_delete_many = request_setter_compounds_columns
-                .iter()
-                .map(|(_, _, delete_many)| delete_many);
+
+            let request_setter_compounds_delete_many =
+                request_setter_compounds_columns.clone().map(|column| {
+                    let stage3::RequestColumnSetterCompounds {
+                        rs_name: _,
+                        table_rs_name,
+                        foreign_table_rs_name: _,
+                        many_foreign_table_rs_name,
+                    } = column;
+                    quote! {{
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #table_rs_name,
+                        >>::delete_many(
+                            db,
+                            id,
+                        ).await?;
+                    }}
+                });
             let request_setter_compounds_delete_many = quote! {
-                #( { #request_setter_compounds_delete_many } )*
+                #( #request_setter_compounds_delete_many )*
             };
 
             let get_all = get_all(
@@ -1057,7 +1072,6 @@ impl From<stage3::Table<'_>> for Table {
 }
 
 pub use proc_macro2::TokenStream as Db;
-
 impl From<stage3::Db<'_>> for Db {
     fn from(db: stage3::Db) -> Self {
         let tables: Vec<Table> = db.tables.into_iter().map(Table::from).collect();

@@ -1,12 +1,9 @@
 /// laraxum macros
 ///
 /// todo:
-/// - many foreign keys
-/// - encode/decode custom types like enums
 /// - enum types (maybe attr to make enum type)
 /// - schema generator
 /// - unique
-/// - auto increment
 /// - sql types for all DBs
 mod db;
 mod router;
