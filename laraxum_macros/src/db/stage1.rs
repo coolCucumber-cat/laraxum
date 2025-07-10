@@ -1,8 +1,8 @@
 use crate::utils::{multiplicity, syn::parse_type};
 
 use syn::{
-    Attribute, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
-    parse::Parse, spanned::Spanned,
+    Attribute, Expr, ExprRange, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type,
+    Visibility, parse::Parse, spanned::Spanned,
 };
 
 const DB_ITEM_MUST_BE_MOD: &str = "db item must be module";
@@ -171,13 +171,32 @@ pub struct ColumnAttrResponse {
     pub skip: bool,
 }
 
+// #[derive(darling::FromMeta)]
+// #[darling(rename_all = "snake_case")]
+// pub enum ValidateRule {
+//     Fn(Expr),
+// }
+#[derive(darling::FromMeta)]
+#[darling(rename_all = "snake_case")]
+pub enum ValidateRule {
+    // use `ExprAttr` because it can be parsed by `darling`
+    // Func(crate::utils::syn::ExprAttr),
+    // use `TokenStreamAttr` because it can be parsed by `darling`
+    Func(crate::utils::syn::TokenStreamAttr<Expr>),
+    Range(crate::utils::syn::TokenStreamAttr<ExprRange>),
+    // Func(Expr),
+}
+// pub type ValidateRule = Expr;
+
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
     // pub ty: Option<Type>,
-    #[darling(default)]
-    pub skip: bool,
+    #[darling(multiple)]
+    pub validate: Vec<ValidateRule>,
+    // #[darling(multiple)]
+    // pub validate: Option<Vec<ValidateRule>>,
 }
 
 #[derive(darling::FromAttributes, Default)]

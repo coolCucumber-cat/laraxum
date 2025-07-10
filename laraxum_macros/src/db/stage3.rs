@@ -282,6 +282,7 @@ pub struct Table<'a> {
     pub name_extern: String,
     pub rs_name: &'a Ident,
     pub request_rs_name: Cow<'a, Ident>,
+    pub request_error_rs_name: Cow<'a, Ident>,
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
     pub columns: Columns<Column<'a>>,
@@ -562,12 +563,14 @@ impl<'a> Table<'a> {
         let columns = columns?;
 
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
+        let table_request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
         let table_rs_attrs = &*table.rs_attrs;
         Ok(Self {
             name_intern: table_name_intern,
             name_extern: table_name_extern,
             rs_name: &table.rs_name,
             request_rs_name: Cow::Owned(table_request_rs_name),
+            request_error_rs_name: Cow::Owned(table_request_error_rs_name),
             db_rs_name: &db.rs_name,
             rs_attrs: table_rs_attrs,
             columns,

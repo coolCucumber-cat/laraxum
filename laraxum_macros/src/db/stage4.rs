@@ -4,7 +4,7 @@ use crate::utils::syn::from_str_to_rs_ident;
 
 use std::{borrow::Cow, vec};
 
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::Ident;
 
 impl stage3::AtomicTyString {
@@ -598,11 +598,10 @@ impl From<stage3::Table<'_>> for Table {
                     ..
                 } = column;
 
-                let serde_skip = attr.skip.then(serde_skip);
                 let serde_name = attr.name.as_deref().map(serde_name);
 
                 quote! {
-                    #(#rs_attrs)* #serde_skip #serde_name
+                    #(#rs_attrs)* #serde_name
                     pub #rs_name: #rs_ty
                 }
             });
@@ -611,7 +610,8 @@ impl From<stage3::Table<'_>> for Table {
         let delete_table = delete_table(&table.name_intern);
 
         let table_rs_name = &table.rs_name;
-        let table_rs_name_request = &table.request_rs_name;
+        let table_request_rs_name = &table.request_rs_name;
+        let table_request_error_rs_name = &table.request_error_rs_name;
         let table_rs_attrs = table.rs_attrs;
         let db_rs_name = &table.db_rs_name;
         let doc = fmt2::fmt! { { str } => "`" {table.name_intern} "`"};
@@ -756,6 +756,122 @@ impl From<stage3::Table<'_>> for Table {
                 #( #request_setter_compounds_delete_many )*
             };
 
+            let request_column_validate = table
+                .columns
+                .iter()
+                .filter_map(|column| column.request_field())
+                .filter(|column| !column.attr.validate.is_empty());
+            let request_error_token_stream = if request_column_validate.clone().next().is_some() {
+                let request_error_columns = request_column_validate.clone().map(
+                    |stage3::RequestColumnField { rs_name, .. }| {
+                        quote! {
+                            // #[serde(skip_serializing_if = "(|v| v.is_empty())")]
+                            #[serde(skip_serializing_if = "<[&'static str]>::is_empty")]
+                            pub #rs_name: ::std::vec::Vec::<&'static str>
+                            // #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+                            // pub #rs_name: ::core::option::Option::<::std::vec::Vec::<&'static str>>
+                        }
+                    },
+                );
+                let request_column_validate_rules = request_column_validate
+                    .flat_map(|stage3::RequestColumnField { rs_name, attr, .. }| {
+                        attr.validate
+                            .iter()
+                            .map(|validate_rule| (*rs_name, validate_rule))
+                    })
+                    .map(|(rs_name, validate_rule)| {
+                        use super::stage1::ValidateRule;
+                        use crate::utils::syn::TokenStreamAttr;
+                        // let result = quote! {
+                        //     (#validate_rule)(&self.#rs_name)
+                        // };
+                        let result = match validate_rule {
+                            ValidateRule::Func(TokenStreamAttr(f)) => {
+                                quote! {
+                                    (#f)(&self.#rs_name)
+                                }
+                            }
+                            ValidateRule::Range(TokenStreamAttr(range)) => {
+                                let err_message =
+                                    format!("value must be in range {}", range.to_token_stream());
+                                quote! {
+                                    if (#range).contains(&self.#rs_name) {
+                                        ::core::result::Result::Ok(())
+                                    } else {
+                                        ::core::result::Result::Err(#err_message)
+                                    }
+                                }
+                            }
+                        };
+                        quote! {
+                            if let ::core::result::Result::Err(err) = #result {
+                                ::laraxum::error_builder::<(), #table_request_error_rs_name>(
+                                    &mut e,
+                                    |e| e.#rs_name.push(err),
+                                );
+                            }
+                        }
+                    });
+
+                quote! {
+                    #[derive(Default, ::serde::Serialize)]
+                    pub struct #table_request_error_rs_name {
+                        #( #request_error_columns ),*
+                    }
+                    impl ::core::convert::From<#table_request_error_rs_name>
+                        for ::laraxum::ModelError<#table_request_error_rs_name>
+                    {
+                        fn from(value: #table_request_error_rs_name) -> Self {
+                            Self::UnprocessableEntity(value)
+                        }
+                    }
+
+                    impl ::laraxum::Request::<::laraxum::request_type::Create>
+                        for #table_request_rs_name
+                    {
+                        type Error = #table_request_error_rs_name;
+                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                            let mut e = ::core::result::Result::Ok(());
+                            #( #request_column_validate_rules )*
+                            e
+                        }
+                    }
+                    impl ::laraxum::Request::<::laraxum::request_type::Update>
+                        for #table_request_rs_name
+                    {
+                        type Error = #table_request_error_rs_name;
+                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                            <
+                                Self as ::laraxum::Request::<::laraxum::request_type::Create>
+                            >::validate(self)
+                        }
+                    }
+
+                }
+            } else {
+                quote! {
+                    pub type #table_request_error_rs_name = ();
+                    // pub type #table_request_error_rs_name = ::core::convert::Infallible;
+                    impl ::laraxum::Request::<::laraxum::request_type::Create>
+                        for #table_request_rs_name
+                    {
+                        type Error = #table_request_error_rs_name;
+                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                            ::core::result::Result::Ok(())
+                        }
+                    }
+                    impl ::laraxum::Request::<::laraxum::request_type::Update>
+                        for #table_request_rs_name
+                    {
+                        type Error = #table_request_error_rs_name;
+                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                            ::core::result::Result::Ok(())
+                        }
+                    }
+
+                }
+            };
+
             let get_all = get_all(
                 &table.name_intern,
                 &table.name_extern,
@@ -767,14 +883,14 @@ impl From<stage3::Table<'_>> for Table {
 
             let collection_token_stream = quote! {
                 #[derive(::serde::Deserialize)]
-                pub struct #table_rs_name_request {
+                pub struct #table_request_rs_name {
                     #(#request_column_fields),*
                 }
 
                 impl ::laraxum::Collection for #table_rs_name {
                     type GetAllRequestQuery = ();
-                    type CreateRequest = #table_rs_name_request;
-                    type CreateRequestError = ();
+                    type CreateRequest = #table_request_rs_name;
+                    type CreateRequestError = #table_request_error_rs_name;
 
                     /// `get_all`
                     ///
@@ -802,6 +918,10 @@ impl From<stage3::Table<'_>> for Table {
                             (),
                             ::laraxum::ModelError<Self::CreateRequestError>>
                     {
+                        <
+                            Self::CreateRequest
+                            as ::laraxum::Request::<::laraxum::request_type::Create>
+                        >::validate(&request)?;
                         let response = ::sqlx::query!(#create_one, #request_setter);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
@@ -833,12 +953,13 @@ impl From<stage3::Table<'_>> for Table {
             let delete_one = delete_one(&table.name_intern, table_id_name);
 
             quote! {
+                #request_error_token_stream
                 #collection_token_stream
 
                 impl ::laraxum::Model for #table_rs_name {
                     type Id = u64;
-                    type UpdateRequest = #table_rs_name_request;
-                    type UpdateRequestError = ();
+                    type UpdateRequest = #table_request_rs_name;
+                    type UpdateRequestError = #table_request_error_rs_name;
 
                     /// `get_one`
                     ///
@@ -870,6 +991,10 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::ModelError<Self::CreateRequestError>
                         >
                     {
+                        <
+                            Self::CreateRequest
+                            as ::laraxum::Request::<::laraxum::request_type::Create>
+                        >::validate(&request)?;
                         let response = ::sqlx::query!(#create_one, #request_setter);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
@@ -887,6 +1012,11 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::ModelError<Self::UpdateRequestError>,
                         >
                     {
+                        <
+                            Self::UpdateRequest
+                            as ::laraxum::Request::<::laraxum::request_type::Update>
+                        >::validate(&request)?;
+
                         let response = ::sqlx::query!(#update_one, #request_setter id);
                         response.execute(&db.pool).await?;
                         #request_setter_compounds_update_many

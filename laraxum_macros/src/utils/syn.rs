@@ -3,11 +3,62 @@ mod kw {
 }
 
 use syn::{
-    GenericArgument, Ident, Path, PathSegment, Token, Type, TypePath,
+    GenericArgument, Ident, Meta, Path, PathSegment, Token, Type, TypePath,
     parse::{ParseBuffer, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
 };
+
+// pub struct ExprAttr(pub Expr);
+// impl darling::FromMeta for ExprAttr {
+//     fn from_meta(item: &Meta) -> darling::Result<Self> {
+//         (match *item {
+//             Meta::Path(_) => Self::from_word(),
+//             Meta::List(ref value) => syn::parse2::<Expr>(value.tokens.to_owned())
+//                 .map(Self)
+//                 .map_err(From::from),
+//             Meta::NameValue(ref value) => Self::from_expr(&value.value),
+//         })
+//         .map_err(|e| e.with_span(item))
+//     }
+//     fn from_expr(expr: &Expr) -> darling::Result<Self> {
+//         Ok(Self(expr.to_owned()))
+//     }
+//     fn from_string(value: &str) -> darling::Result<Self> {
+//         Expr::from_string(value).map(Self)
+//     }
+//     fn from_value(value: &syn::Lit) -> darling::Result<Self> {
+//         Expr::from_value(value).map(Self)
+//     }
+// }
+
+pub struct TokenStreamAttr<T>(pub T)
+where
+    T: syn::parse::Parse;
+impl<T> darling::FromMeta for TokenStreamAttr<T>
+where
+    T: syn::parse::Parse,
+{
+    fn from_meta(item: &Meta) -> darling::Result<Self> {
+        (match *item {
+            Meta::Path(_) => Self::from_word(),
+            Meta::List(ref value) => syn::parse2::<T>(value.tokens.to_owned())
+                .map(Self)
+                .map_err(From::from),
+            Meta::NameValue(ref value) => Self::from_expr(&value.value),
+        })
+        .map_err(|e| e.with_span(item))
+    }
+    // fn from_expr(expr: &Expr) -> darling::Result<Self> {
+    //     Ok(Self(expr.to_owned()))
+    // }
+    // fn from_string(value: &str) -> darling::Result<Self> {
+    //     Expr::from_string(value).map(Self)
+    // }
+    // fn from_value(value: &syn::Lit) -> darling::Result<Self> {
+    //     Expr::from_value(value).map(Self)
+    // }
+}
 
 const EXPECTED_IDENT: &str = "expected identifier";
 

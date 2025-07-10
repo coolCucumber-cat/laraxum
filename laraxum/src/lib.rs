@@ -90,6 +90,16 @@ where
         Self::Other(other.into())
     }
 }
+impl From<()> for ModelError<()> {
+    fn from(value: ()) -> Self {
+        ModelError::UnprocessableEntity(value)
+    }
+}
+impl From<core::convert::Infallible> for ModelError<core::convert::Infallible> {
+    fn from(value: core::convert::Infallible) -> Self {
+        ModelError::UnprocessableEntity(value)
+    }
+}
 
 impl<UnprocessableEntity> IntoResponse for ModelError<UnprocessableEntity>
 where
@@ -97,7 +107,9 @@ where
 {
     fn into_response(self) -> Response {
         match self {
-            Self::UnprocessableEntity(err) => Json(err).into_response(),
+            Self::UnprocessableEntity(err) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, Json(err)).into_response()
+            }
             Self::Other(err) => err.status_code().into_response(),
         }
     }
@@ -128,6 +140,7 @@ pub trait AnyDb: Sized {
         //     std::env::VarError::NotPresent => Ok(Self::default_options()),
         //     e => Err(sqlx::Error::Configuration(Box::new(e))),
         // })?;
+
         Self::connect_with_options(options).await
     }
     fn db(&self) -> &Self::Db;
@@ -250,12 +263,17 @@ pub trait ManyModel<OneResponse>: Table {
     async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
 }
 
-// pub trait AdvancedModelMany<Id>: Table {
-//     type AdvancedModelManyResponse: Serialize;
-//
-//     async fn get_many(db: &Self::Db, id: Id)
-//     -> Result<Vec<Self::AdvancedModelManyResponse>, Error>;
-// }
+pub mod request_type {
+    pub struct Get;
+    pub struct Create;
+    pub struct Update;
+    pub struct Delete;
+}
+
+pub trait Request<RequestType> {
+    type Error;
+    fn validate(&self) -> Result<(), Self::Error>;
+}
 
 pub trait Decode {
     type Decode;
@@ -266,28 +284,53 @@ pub trait Encode {
     fn encode(self) -> Self::Encode;
 }
 
+pub fn error_builder<T, E>(result: &mut Result<T, E>, f: impl FnOnce(&mut E))
+where
+    E: Default,
+{
+    match *result {
+        Ok(_) => {
+            let mut e = E::default();
+            f(&mut e);
+            *result = Err(e);
+        }
+        Err(ref mut e) => {
+            f(e);
+        }
+    }
+}
+
+#[macro_export]
 macro_rules! impl_encode_decode {
-    { $($ty:ty),* $(,)* } => {
+    { $($ty:ty => $inner:ty),* $(,)? } => {
         $(
-            impl Decode for $ty {
-                type Decode = Self;
+            impl $crate::Decode for $ty {
+                type Decode = $inner;
                 #[inline]
                 fn decode(decode: Self::Decode) -> Self {
-                    decode
+                    <Self as ::core::convert::From<Self::Decode>>::from(decode)
                 }
             }
-            impl Encode for $ty {
-                type Encode = Self;
+            impl $crate::Encode for $ty {
+                type Encode = $inner;
                 #[inline]
                 fn encode(self) -> Self::Encode {
-                    self
+                    <Self::Encode as ::core::convert::From<Self>>::from(self)
                 }
             }
         )*
     };
 }
+#[macro_export]
+macro_rules! impl_encode_decode_self {
+    { $($ty:ty),* $(,)? } => {
+        $crate::impl_encode_decode! {
+            $($ty => $ty),*
+        }
+    };
+}
 
-impl_encode_decode! {
+impl_encode_decode_self! {
     String,
     u8,
     i8,
@@ -301,7 +344,7 @@ impl_encode_decode! {
     f64,
 }
 #[cfg(feature = "time")]
-impl_encode_decode! {
+impl_encode_decode_self! {
     time::OffsetDateTime,
     time::PrimitiveDateTime,
     time::Date,
@@ -309,7 +352,7 @@ impl_encode_decode! {
     time::Duration,
 }
 #[cfg(feature = "chrono")]
-impl_encode_decode! {
+impl_encode_decode_self! {
     chrono::DateTime::<chrono::Utc>,
     chrono::DateTime::<chrono::Local>,
     chrono::NaiveDateTime,
@@ -355,21 +398,42 @@ impl Encode for bool {
     }
 }
 
-// impl<T> Decode for &[T]
-// where
-//     T: Decode<Decode = T>,
-// {
-//     type Decode = Self;
-//     fn decode(decode: Self::Decode) -> Self {
-//         decode
-//     }
-// }
-// impl<T> Encode for &[T]
-// where
-//     T: Encode<Encode = T>,
-// {
-//     type Encode = Self;
-//     fn encode(self) -> Self::Encode {
-//         self
-//     }
-// }
+#[macro_export]
+macro_rules! impl_serde {
+    { $($ty:ty => $inner:ty),* $(,)? } => {
+        $(
+            impl ::serde::Serialize for $ty {
+                fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
+                where
+                    S: ::serde::Serializer,
+                {
+                    <$inner as ::serde::Serialize>::serialize(
+                        &<$inner as ::core::convert::From<$ty>>::from(*self),
+                        serializer,
+                    )
+                }
+            }
+            impl<'de> ::serde::Deserialize<'de> for $ty {
+                fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+                where
+                    D: ::serde::Deserializer<'de>,
+                {
+                    ::core::result::Result::map(
+                        <$inner as ::serde::Deserialize>::deserialize(deserializer),
+                        <$ty as ::core::convert::From<$inner>>::from,
+                    )
+                }
+            }
+        )*
+    };
+}
+
+#[macro_export]
+macro_rules! impl_serde_encode_decode {
+    { $($ty:ty => $inner:ty),* $(,)? } => {
+        $(
+            $crate::impl_encode_decode! { $ty => $inner }
+            $crate::impl_serde! { $ty => $inner }
+        )*
+    };
+}
