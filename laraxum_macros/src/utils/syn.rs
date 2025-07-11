@@ -3,11 +3,19 @@ mod kw {
 }
 
 use syn::{
-    GenericArgument, Ident, Meta, Path, PathSegment, Token, Type, TypePath,
-    parse::{ParseBuffer, ParseStream},
+    GenericArgument, Ident, Meta, Pat, Path, PathSegment, Token, Type, TypePath,
+    parse::{Parse, ParseBuffer, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
 };
+
+/// Allow `syn::Pat` to be parsed by `syn::parse::Parse`
+pub struct ParsePat(pub Pat);
+impl Parse for ParsePat {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Pat::parse_multi(input).map(Self)
+    }
+}
 
 pub struct TokenStreamAttr<T>(pub T)
 where

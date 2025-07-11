@@ -549,6 +549,50 @@ fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenSt
     }
 }
 
+impl super::stage2::ValidateRule {
+    fn to_token_stream(&self, value: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        match self {
+            Self::Func(f) => {
+                quote! {
+                    (#f)(#value)
+                }
+            }
+            Self::Matches(matches) => {
+                let matches = matches.to_token_stream();
+                let err_message = format!("value must match pattern {matches}");
+                quote! {
+                    match #value {
+                        #matches => ::core::result::Result::Ok(()),
+                        _ => ::core::result::Result::Err(#err_message),
+                    }
+                }
+            }
+            Self::MinLen(min_len) => {
+                let min_len = min_len.to_token_stream();
+                let err_message = format!("min length is {min_len}");
+                quote! {
+                    if #value.len() >= #min_len {
+                        ::core::result::Result::Ok(())
+                    } else {
+                        ::core::result::Result::Err(#err_message)
+                    }
+                }
+            }
+            Self::MaxLen(max_len) => {
+                let max_len = max_len.to_token_stream();
+                let err_message = format!("max length is {max_len}");
+                quote! {
+                    if #value.len() <= #max_len {
+                        ::core::result::Result::Ok(())
+                    } else {
+                        ::core::result::Result::Err(#err_message)
+                    }
+                }
+            }
+        }
+    }
+}
+
 // fn request_setter_column(rs_name: &Ident, optional: bool) -> proc_macro2::TokenStream {
 //     if optional {
 //         quote! {
@@ -760,7 +804,7 @@ impl From<stage3::Table<'_>> for Table {
                 .columns
                 .iter()
                 .filter_map(|column| column.request_field())
-                .filter(|column| !column.attr.validate.0.is_empty());
+                .filter(|column| !column.attr.validate.is_empty());
             let request_error_token_stream = if request_column_validate.clone().next().is_some() {
                 let request_error_columns = request_column_validate.clone().map(
                     |stage3::RequestColumnField { rs_name, .. }| {
@@ -776,34 +820,14 @@ impl From<stage3::Table<'_>> for Table {
                 let request_column_validate_rules = request_column_validate
                     .flat_map(|stage3::RequestColumnField { rs_name, attr, .. }| {
                         attr.validate
-                            .0
                             .iter()
                             .map(|validate_rule| (*rs_name, validate_rule))
                     })
                     .map(|(rs_name, validate_rule)| {
-                        use super::stage1::ValidateRule;
-                        use crate::utils::syn::TokenStreamAttr;
-                        // let result = quote! {
-                        //     (#validate_rule)(&self.#rs_name)
-                        // };
-                        let result = match validate_rule {
-                            ValidateRule::Func(TokenStreamAttr(f)) => {
-                                quote! {
-                                    (#f)(&self.#rs_name)
-                                }
-                            }
-                            ValidateRule::Range(TokenStreamAttr(range)) => {
-                                let err_message =
-                                    format!("value must be in range {}", range.to_token_stream());
-                                quote! {
-                                    if (#range).contains(&self.#rs_name) {
-                                        ::core::result::Result::Ok(())
-                                    } else {
-                                        ::core::result::Result::Err(#err_message)
-                                    }
-                                }
-                            }
+                        let field_access = quote! {
+                            &self.#rs_name
                         };
+                        let result = validate_rule.to_token_stream(&field_access);
                         quote! {
                             if let ::core::result::Result::Err(err) = #result {
                                 ::laraxum::error_builder::<(), #table_request_error_rs_name>(

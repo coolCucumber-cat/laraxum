@@ -1,8 +1,8 @@
 use crate::utils::{multiplicity, syn::parse_type};
 
 use syn::{
-    Attribute, Expr, ExprRange, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type,
-    Visibility, parse::Parse, spanned::Spanned,
+    Attribute, Expr, Field, FieldMutability, Ident, Item, ItemMod, ItemStruct, Type, Visibility,
+    parse::Parse, spanned::Spanned,
 };
 
 const DB_ITEM_MUST_BE_MOD: &str = "db item must be module";
@@ -153,7 +153,6 @@ pub enum ColumnAttrTy {
 
     Id,
 
-    Value(Box<Type>),
     Varchar(StringLen),
     Char(StringLen),
     Text,
@@ -166,7 +165,7 @@ pub enum ColumnAttrTy {
 #[darling(default)]
 pub struct ColumnAttrResponse {
     pub name: Option<String>,
-    // pub ty: Option<Type>,
+    pub ty: Option<Box<Type>>,
     #[darling(default)]
     pub skip: bool,
 }
@@ -176,7 +175,15 @@ pub struct ColumnAttrResponse {
 #[darling(rename_all = "snake_case")]
 pub enum ValidateRule {
     Func(crate::utils::syn::TokenStreamAttr<Expr>),
-    Range(crate::utils::syn::TokenStreamAttr<ExprRange>),
+    Matches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
+    // NMatches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
+    // Eq(crate::utils::syn::TokenStreamAttr<Expr>),
+    // NEq(crate::utils::syn::TokenStreamAttr<Expr>),
+    // Gt(crate::utils::syn::TokenStreamAttr<Expr>),
+    // Lt(crate::utils::syn::TokenStreamAttr<Expr>),
+    // Gte(crate::utils::syn::TokenStreamAttr<Expr>),
+    // Lte(crate::utils::syn::TokenStreamAttr<Expr>),
+    MinLen(u16),
 }
 
 // use `EnumMetaListAttr` because it can be parsed by `darling`
@@ -184,9 +191,8 @@ pub enum ValidateRule {
 #[darling(default)]
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
-    // pub ty: Option<Type>,
+    // pub ty: Option<Box<Type>>,
     pub validate: crate::utils::syn::EnumMetaListAttr<ValidateRule>,
-    pub test: Option<ValidateRule>,
 }
 
 #[derive(darling::FromAttributes, Default)]

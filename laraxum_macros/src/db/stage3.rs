@@ -22,14 +22,10 @@ fn name_intern_extern(parent_child: (&str, &str)) -> (String, String) {
     (name_intern(parent_child), name_extern(parent_child))
 }
 
-pub use stage2::AtomicTy;
-pub use stage2::AtomicTyString;
-pub use stage2::AtomicTyTime;
-pub use stage2::AutoTimeEvent;
-pub use stage2::Columns;
-pub use stage2::DefaultValue;
-pub use stage2::TyElement;
-pub use stage2::TyElementAutoTime;
+pub use stage2::{
+    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, TyElement,
+    TyElementAutoTime,
+};
 
 pub struct TyCompound<'a> {
     pub foreign_table_name: &'a str,

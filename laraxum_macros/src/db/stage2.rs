@@ -1,9 +1,8 @@
 use super::stage1;
-pub use super::stage1::{ColumnAttrRequest, ColumnAttrResponse};
 
 use crate::utils::{collections::TryCollectAll, multiplicity};
 
-use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
+use syn::{Attribute, Expr, Ident, Pat, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
@@ -120,7 +119,6 @@ pub struct TyElementAutoTime {
 enum ColumnAttrTyElement {
     Id,
     None,
-    Value(Box<Type>),
     String(AtomicTyString),
     AutoTime(AutoTimeEvent),
 }
@@ -144,7 +142,6 @@ impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
             Some(S1CAT::Compound(S1CATC { many: Some(many) })) => Self::Compound(CATC::Many(many)),
 
             None => Self::Element(CATE::None),
-            Some(S1CAT::Value(rs_ty)) => Self::Element(CATE::Value(rs_ty)),
             Some(S1CAT::Id) => Self::Element(CATE::Id),
 
             Some(S1CAT::Varchar(len)) => Self::Element(CATE::String(AtomicTyString::Varchar(len))),
@@ -188,6 +185,15 @@ impl TyElement {
     pub const fn is_updatable(&self) -> bool {
         matches!(self, Self::Value(_))
     }
+    pub const fn max_len(&self) -> Option<u16> {
+        match self {
+            Self::Value(TyElementValue {
+                ty: AtomicTy::String(AtomicTyString::Varchar(len) | AtomicTyString::Char(len)),
+                ..
+            }) => Some(*len),
+            _ => None,
+        }
+    }
 }
 
 pub enum TyCompoundMultiplicity {
@@ -211,6 +217,9 @@ impl TyCompound {
     pub const fn unique(&self) -> bool {
         // TODO: unique
         false
+    }
+    pub const fn max_len(&self) -> Option<u16> {
+        None
     }
 }
 
@@ -237,6 +246,31 @@ impl Ty {
             _ => None,
         }
     }
+    pub const fn max_len(&self) -> Option<u16> {
+        match self {
+            Self::Compound(compound) => compound.max_len(),
+            Self::Element(element) => element.max_len(),
+        }
+    }
+}
+
+pub struct ColumnAttrResponse {
+    pub name: Option<String>,
+    pub ty: Option<Box<Type>>,
+    pub skip: bool,
+}
+
+pub enum ValidateRule {
+    Func(Expr),
+    Matches(Pat),
+    MinLen(usize),
+    MaxLen(usize),
+}
+
+pub struct ColumnAttrRequest {
+    pub name: Option<String>,
+    // pub ty: Option<Type>,
+    pub validate: Vec<ValidateRule>,
 }
 
 pub struct Column {
@@ -266,6 +300,9 @@ impl TryFrom<stage1::Column> for Column {
 
         let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
 
+        // the real type that we actually want to parse, while keeping the type in the field the same
+        let rs_ty2 = attr.attr_response.ty.as_deref().unwrap_or(&*rs_ty);
+
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {
             ColumnAttrTy::Compound(attr_ty_compound) => {
@@ -275,19 +312,19 @@ impl TryFrom<stage1::Column> for Column {
                 let stage1::TyCompound {
                     ty,
                     multiplicity: ty_compound_multiplicity,
-                } = stage1::TyCompound::try_from(&*rs_ty)?;
+                } = stage1::TyCompound::try_from(rs_ty2)?;
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
                     (CATC::One, M::One) => TCM::One { optional: false },
                     (CATC::One, M::OneOrZero) => TCM::One { optional: true },
                     (CATC::One, M::Many) => {
                         return Err(syn::Error::new(
-                            rs_ty.span(),
+                            rs_ty2.span(),
                             COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE,
                         ));
                     }
                     (CATC::Many(many), M::Many) => TCM::Many(many),
                     (CATC::Many(_), _) => {
-                        return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_VEC));
+                        return Err(syn::Error::new(rs_ty2.span(), COLUMN_MUST_BE_VEC));
                     }
                 };
                 Ty::Compound(TyCompound {
@@ -297,14 +334,10 @@ impl TryFrom<stage1::Column> for Column {
             }
             ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
-                let rs_ty = match attr_ty_element {
-                    CATE::Value(ref rs_ty) => rs_ty,
-                    _ => &rs_ty,
-                };
-                let ty_element_value = stage1::TyElementValue::try_from(&**rs_ty)?;
+                let ty_element_value = stage1::TyElementValue::try_from(rs_ty2)?;
                 let ty_element_value = TyElementValue::from(ty_element_value);
                 match attr_ty_element {
-                    CATE::None | CATE::Value(_) => Ty::Element(TyElement::Value(ty_element_value)),
+                    CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
                         let TyElementValue { ty, optional } = ty_element_value;
                         let AtomicTy::u64 = ty else {
@@ -344,13 +377,40 @@ impl TryFrom<stage1::Column> for Column {
             }
         };
 
+        let attr_response = ColumnAttrResponse {
+            name: attr.attr_response.name,
+            ty: attr.attr_response.ty,
+            skip: attr.attr_response.skip,
+        };
+
+        let validate = attr
+            .attr_request
+            .validate
+            .0
+            .into_iter()
+            .map(|validate_rule| match validate_rule {
+                stage1::ValidateRule::Func(func) => ValidateRule::Func(func.0),
+                stage1::ValidateRule::Matches(matches) => ValidateRule::Matches(matches.0.0),
+                stage1::ValidateRule::MinLen(min_len) => ValidateRule::MinLen(min_len.into()),
+            });
+        let max_len_validate_rule = ty
+            .max_len()
+            .map(|max_len| ValidateRule::MaxLen(max_len.into()));
+        let validate = validate.chain(max_len_validate_rule);
+        let validate = validate.collect();
+
+        let attr_request = ColumnAttrRequest {
+            name: attr.attr_request.name,
+            validate,
+        };
+
         Ok(Self {
             name,
             rs_name,
             ty,
             rs_ty,
-            attr_response: attr.attr_response,
-            attr_request: attr.attr_request,
+            attr_response,
+            attr_request,
             rs_attrs: attr.attrs,
         })
     }
