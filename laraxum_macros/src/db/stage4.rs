@@ -760,7 +760,7 @@ impl From<stage3::Table<'_>> for Table {
                 .columns
                 .iter()
                 .filter_map(|column| column.request_field())
-                .filter(|column| !column.attr.validate.is_empty());
+                .filter(|column| !column.attr.validate.0.is_empty());
             let request_error_token_stream = if request_column_validate.clone().next().is_some() {
                 let request_error_columns = request_column_validate.clone().map(
                     |stage3::RequestColumnField { rs_name, .. }| {
@@ -776,6 +776,7 @@ impl From<stage3::Table<'_>> for Table {
                 let request_column_validate_rules = request_column_validate
                     .flat_map(|stage3::RequestColumnField { rs_name, attr, .. }| {
                         attr.validate
+                            .0
                             .iter()
                             .map(|validate_rule| (*rs_name, validate_rule))
                     })

@@ -9,29 +9,6 @@ use syn::{
     spanned::Spanned,
 };
 
-// pub struct ExprAttr(pub Expr);
-// impl darling::FromMeta for ExprAttr {
-//     fn from_meta(item: &Meta) -> darling::Result<Self> {
-//         (match *item {
-//             Meta::Path(_) => Self::from_word(),
-//             Meta::List(ref value) => syn::parse2::<Expr>(value.tokens.to_owned())
-//                 .map(Self)
-//                 .map_err(From::from),
-//             Meta::NameValue(ref value) => Self::from_expr(&value.value),
-//         })
-//         .map_err(|e| e.with_span(item))
-//     }
-//     fn from_expr(expr: &Expr) -> darling::Result<Self> {
-//         Ok(Self(expr.to_owned()))
-//     }
-//     fn from_string(value: &str) -> darling::Result<Self> {
-//         Expr::from_string(value).map(Self)
-//     }
-//     fn from_value(value: &syn::Lit) -> darling::Result<Self> {
-//         Expr::from_value(value).map(Self)
-//     }
-// }
-
 pub struct TokenStreamAttr<T>(pub T)
 where
     T: syn::parse::Parse;
@@ -42,22 +19,71 @@ where
     fn from_meta(item: &Meta) -> darling::Result<Self> {
         (match *item {
             Meta::Path(_) => Self::from_word(),
-            Meta::List(ref value) => syn::parse2::<T>(value.tokens.to_owned())
-                .map(Self)
-                .map_err(From::from),
+            Meta::List(ref value) => {
+                let parse2 = syn::parse2::<T>(value.tokens.to_owned())?;
+                Ok(Self(parse2))
+            }
             Meta::NameValue(ref value) => Self::from_expr(&value.value),
         })
         .map_err(|e| e.with_span(item))
     }
-    // fn from_expr(expr: &Expr) -> darling::Result<Self> {
-    //     Ok(Self(expr.to_owned()))
-    // }
-    // fn from_string(value: &str) -> darling::Result<Self> {
-    //     Expr::from_string(value).map(Self)
-    // }
-    // fn from_value(value: &syn::Lit) -> darling::Result<Self> {
-    //     Expr::from_value(value).map(Self)
-    // }
+}
+
+#[expect(dead_code)]
+pub struct TokenStreamListAttr<T>(pub Vec<T>)
+where
+    T: syn::parse::Parse;
+impl<T> darling::FromMeta for TokenStreamListAttr<T>
+where
+    T: syn::parse::Parse,
+{
+    fn from_meta(item: &Meta) -> darling::Result<Self> {
+        (match *item {
+            Meta::Path(_) => Self::from_word(),
+            Meta::List(ref value) => {
+                let punctuated = syn::parse::Parser::parse2(
+                    syn::punctuated::Punctuated::<T, Token![,]>::parse_terminated,
+                    value.tokens.to_owned(),
+                )?;
+                let collect = punctuated.into_iter().collect::<Vec<T>>();
+                Ok(Self(collect))
+            }
+            Meta::NameValue(ref value) => Self::from_expr(&value.value),
+        })
+        .map_err(|e| e.with_span(item))
+    }
+}
+
+/// Allow enum variants to be parsed in a list by `darling`
+///
+/// Darling only allows enum variants to be parsed in a list as the only element.
+/// To bypass this, we put it in its own list with `core::slice::windows`.
+/// The expected way to handle this would be to call `darling::FromMeta::from_nested_meta`,
+/// but this doesn't work since it assumes you are calling it from one level higher.
+pub struct EnumMetaListAttr<T>(pub Vec<T>)
+where
+    T: darling::FromMeta;
+impl<T> darling::FromMeta for EnumMetaListAttr<T>
+where
+    T: darling::FromMeta,
+{
+    fn from_list(items: &[darling::ast::NestedMeta]) -> darling::Result<Self> {
+        items
+            .windows(1)
+            .map(T::from_list)
+            // .iter()
+            // .map(T::from_nested_meta)
+            .collect::<Result<Vec<T>, darling::Error>>()
+            .map(Self)
+    }
+}
+impl<T> Default for EnumMetaListAttr<T>
+where
+    T: darling::FromMeta,
+{
+    fn default() -> Self {
+        Self(Default::default())
+    }
 }
 
 const EXPECTED_IDENT: &str = "expected identifier";
