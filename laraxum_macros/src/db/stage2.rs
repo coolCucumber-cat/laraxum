@@ -308,7 +308,7 @@ impl TryFrom<stage1::Column> for Column {
         let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         // the real type that we actually want to parse, while keeping the type in the field the same
-        let rs_ty2 = attr.real_ty.as_deref().unwrap_or(&*rs_ty);
+        let real_rs_ty = attr.real_ty.as_deref().unwrap_or(&*rs_ty);
 
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {
@@ -319,19 +319,19 @@ impl TryFrom<stage1::Column> for Column {
                 let stage1::TyCompound {
                     ty,
                     multiplicity: ty_compound_multiplicity,
-                } = stage1::TyCompound::try_from(rs_ty2)?;
+                } = stage1::TyCompound::try_from(real_rs_ty)?;
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
                     (CATC::One, M::One) => TCM::One { optional: false },
                     (CATC::One, M::OneOrZero) => TCM::One { optional: true },
                     (CATC::One, M::Many) => {
                         return Err(syn::Error::new(
-                            rs_ty2.span(),
+                            real_rs_ty.span(),
                             COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE,
                         ));
                     }
                     (CATC::Many(many), M::Many) => TCM::Many(many),
                     (CATC::Many(_), _) => {
-                        return Err(syn::Error::new(rs_ty2.span(), COLUMN_MUST_BE_VEC));
+                        return Err(syn::Error::new(real_rs_ty.span(), COLUMN_MUST_BE_VEC));
                     }
                 };
                 Ty::Compound(TyCompound {
@@ -341,7 +341,7 @@ impl TryFrom<stage1::Column> for Column {
             }
             ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
-                let ty_element_value = stage1::TyElementValue::try_from(rs_ty2)?;
+                let ty_element_value = stage1::TyElementValue::try_from(real_rs_ty)?;
                 let ty_element_value = TyElementValue::from(ty_element_value);
                 match attr_ty_element {
                     CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
@@ -384,11 +384,6 @@ impl TryFrom<stage1::Column> for Column {
             }
         };
 
-        let attr_response = ColumnAttrResponse {
-            name: attr.attr_response.name,
-            skip: attr.attr_response.skip,
-        };
-
         let validate = attr
             .attr_request
             .validate
@@ -415,6 +410,10 @@ impl TryFrom<stage1::Column> for Column {
         let validate = validate.chain(max_len_validate_rule);
         let validate = validate.collect();
 
+        let attr_response = ColumnAttrResponse {
+            name: attr.attr_response.name,
+            skip: attr.attr_response.skip,
+        };
         let attr_request = ColumnAttrRequest {
             name: attr.attr_request.name,
         };
