@@ -165,7 +165,6 @@ pub enum ColumnAttrTy {
 #[darling(default)]
 pub struct ColumnAttrResponse {
     pub name: Option<String>,
-    pub ty: Option<Box<Type>>,
     #[darling(default)]
     pub skip: bool,
 }
@@ -191,7 +190,6 @@ pub enum ValidateRule {
 #[darling(default)]
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
-    // pub ty: Option<Box<Type>>,
     pub validate: crate::utils::syn::EnumMetaListAttr<ValidateRule>,
 }
 
@@ -204,6 +202,7 @@ pub struct ColumnAttr {
     pub attr_response: ColumnAttrResponse,
     #[darling(rename = "request")]
     pub attr_request: ColumnAttrRequest,
+    pub real_ty: Option<Box<Type>>,
 
     pub attrs: Vec<Attribute>,
 }

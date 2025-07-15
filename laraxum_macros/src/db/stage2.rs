@@ -256,7 +256,6 @@ impl Ty {
 
 pub struct ColumnAttrResponse {
     pub name: Option<String>,
-    pub ty: Option<Box<Type>>,
     pub skip: bool,
 }
 
@@ -309,7 +308,7 @@ impl TryFrom<stage1::Column> for Column {
         let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         // the real type that we actually want to parse, while keeping the type in the field the same
-        let rs_ty2 = attr.attr_response.ty.as_deref().unwrap_or(&*rs_ty);
+        let rs_ty2 = attr.real_ty.as_deref().unwrap_or(&*rs_ty);
 
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {
@@ -387,7 +386,6 @@ impl TryFrom<stage1::Column> for Column {
 
         let attr_response = ColumnAttrResponse {
             name: attr.attr_response.name,
-            ty: attr.attr_response.ty,
             skip: attr.attr_response.skip,
         };
 
@@ -396,17 +394,20 @@ impl TryFrom<stage1::Column> for Column {
             .validate
             .0
             .into_iter()
-            .map(|validate_rule| match validate_rule {
-                stage1::ValidateRule::MinLen(min_len) => ValidateRule::MinLen(min_len.into()),
-                stage1::ValidateRule::Func(func) => ValidateRule::Func(func.0),
-                stage1::ValidateRule::Matches(matches) => ValidateRule::Matches(matches.0.0),
-                stage1::ValidateRule::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
-                stage1::ValidateRule::Eq(eq) => ValidateRule::Eq(eq.0),
-                stage1::ValidateRule::NEq(n_eq) => ValidateRule::NEq(n_eq.0),
-                stage1::ValidateRule::Gt(gt) => ValidateRule::Gt(gt.0),
-                stage1::ValidateRule::Lt(lt) => ValidateRule::Lt(lt.0),
-                stage1::ValidateRule::Gte(gte) => ValidateRule::Gte(gte.0),
-                stage1::ValidateRule::Lte(lte) => ValidateRule::Lte(lte.0),
+            .map(|validate_rule| {
+                use stage1::ValidateRule as S1VR;
+                match validate_rule {
+                    S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.into()),
+                    S1VR::Func(func) => ValidateRule::Func(func.0),
+                    S1VR::Matches(matches) => ValidateRule::Matches(matches.0.0),
+                    S1VR::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
+                    S1VR::Eq(eq) => ValidateRule::Eq(eq.0),
+                    S1VR::NEq(n_eq) => ValidateRule::NEq(n_eq.0),
+                    S1VR::Gt(gt) => ValidateRule::Gt(gt.0),
+                    S1VR::Lt(lt) => ValidateRule::Lt(lt.0),
+                    S1VR::Gte(gte) => ValidateRule::Gte(gte.0),
+                    S1VR::Lte(lte) => ValidateRule::Lte(lte.0),
+                }
             });
         let max_len_validate_rule = ty
             .max_len()
@@ -416,7 +417,6 @@ impl TryFrom<stage1::Column> for Column {
 
         let attr_request = ColumnAttrRequest {
             name: attr.attr_request.name,
-            // validate,
         };
 
         Ok(Self {
