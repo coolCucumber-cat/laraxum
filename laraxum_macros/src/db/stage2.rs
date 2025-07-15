@@ -261,16 +261,23 @@ pub struct ColumnAttrResponse {
 }
 
 pub enum ValidateRule {
-    Func(Expr),
-    Matches(Pat),
     MinLen(usize),
     MaxLen(usize),
+    Func(Expr),
+    Matches(Pat),
+    NMatches(Pat),
+    Eq(Expr),
+    NEq(Expr),
+    Gt(Expr),
+    Lt(Expr),
+    Gte(Expr),
+    Lte(Expr),
 }
 
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
     // pub ty: Option<Type>,
-    pub validate: Vec<ValidateRule>,
+    // pub validate: Vec<ValidateRule>,
 }
 
 pub struct Column {
@@ -286,6 +293,7 @@ pub struct Column {
     pub attr_response: ColumnAttrResponse,
     /// the request attribute of the column
     pub attr_request: ColumnAttrRequest,
+    pub validate: Vec<ValidateRule>,
 
     pub rs_attrs: Vec<Attribute>,
 }
@@ -389,9 +397,16 @@ impl TryFrom<stage1::Column> for Column {
             .0
             .into_iter()
             .map(|validate_rule| match validate_rule {
+                stage1::ValidateRule::MinLen(min_len) => ValidateRule::MinLen(min_len.into()),
                 stage1::ValidateRule::Func(func) => ValidateRule::Func(func.0),
                 stage1::ValidateRule::Matches(matches) => ValidateRule::Matches(matches.0.0),
-                stage1::ValidateRule::MinLen(min_len) => ValidateRule::MinLen(min_len.into()),
+                stage1::ValidateRule::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
+                stage1::ValidateRule::Eq(eq) => ValidateRule::Eq(eq.0),
+                stage1::ValidateRule::NEq(n_eq) => ValidateRule::NEq(n_eq.0),
+                stage1::ValidateRule::Gt(gt) => ValidateRule::Gt(gt.0),
+                stage1::ValidateRule::Lt(lt) => ValidateRule::Lt(lt.0),
+                stage1::ValidateRule::Gte(gte) => ValidateRule::Gte(gte.0),
+                stage1::ValidateRule::Lte(lte) => ValidateRule::Lte(lte.0),
             });
         let max_len_validate_rule = ty
             .max_len()
@@ -401,7 +416,7 @@ impl TryFrom<stage1::Column> for Column {
 
         let attr_request = ColumnAttrRequest {
             name: attr.attr_request.name,
-            validate,
+            // validate,
         };
 
         Ok(Self {
@@ -412,6 +427,7 @@ impl TryFrom<stage1::Column> for Column {
             attr_response,
             attr_request,
             rs_attrs: attr.attrs,
+            validate,
         })
     }
 }

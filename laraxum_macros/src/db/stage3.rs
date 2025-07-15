@@ -170,6 +170,7 @@ pub struct RequestColumnSetterOne<'a> {
     pub rs_name: &'a Ident,
     pub name: &'a str,
     pub optional: bool,
+    pub validate: &'a [stage2::ValidateRule],
 }
 
 pub struct RequestColumnSetterCompounds<'a> {
@@ -388,6 +389,7 @@ impl<'a> Table<'a> {
                     attr_response,
                     attr_request,
                     rs_attrs,
+                    validate,
                 } = column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
@@ -424,6 +426,7 @@ impl<'a> Table<'a> {
                                     rs_name,
                                     name,
                                     optional: ty_element.optional(),
+                                    validate,
                                 },
                             },
                             TyElement::AutoTime(TyElementAutoTime {
@@ -500,6 +503,7 @@ impl<'a> Table<'a> {
                                     rs_name,
                                     name,
                                     optional: *optional,
+                                    validate,
                                 },
                             },
                         })

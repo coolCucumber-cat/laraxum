@@ -174,16 +174,16 @@ pub struct ColumnAttrResponse {
 #[derive(darling::FromMeta)]
 #[darling(rename_all = "snake_case")]
 pub enum ValidateRule {
+    MinLen(u16),
     Func(crate::utils::syn::TokenStreamAttr<Expr>),
     Matches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
-    // NMatches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
-    // Eq(crate::utils::syn::TokenStreamAttr<Expr>),
-    // NEq(crate::utils::syn::TokenStreamAttr<Expr>),
-    // Gt(crate::utils::syn::TokenStreamAttr<Expr>),
-    // Lt(crate::utils::syn::TokenStreamAttr<Expr>),
-    // Gte(crate::utils::syn::TokenStreamAttr<Expr>),
-    // Lte(crate::utils::syn::TokenStreamAttr<Expr>),
-    MinLen(u16),
+    NMatches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
+    Eq(crate::utils::syn::TokenStreamAttr<Expr>),
+    NEq(crate::utils::syn::TokenStreamAttr<Expr>),
+    Gt(crate::utils::syn::TokenStreamAttr<Expr>),
+    Lt(crate::utils::syn::TokenStreamAttr<Expr>),
+    Gte(crate::utils::syn::TokenStreamAttr<Expr>),
+    Lte(crate::utils::syn::TokenStreamAttr<Expr>),
 }
 
 // use `EnumMetaListAttr` because it can be parsed by `darling`
