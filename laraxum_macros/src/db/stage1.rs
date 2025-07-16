@@ -142,7 +142,7 @@ impl TryFrom<&Type> for TyCompound {
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrTyCompound {
-    pub many: Option<Ident>,
+    pub many: Option<crate::utils::syn::TokenStreamAttr<Ident>>,
 }
 
 #[derive(darling::FromMeta)]
@@ -202,7 +202,7 @@ pub struct ColumnAttr {
     pub attr_response: ColumnAttrResponse,
     #[darling(rename = "request")]
     pub attr_request: ColumnAttrRequest,
-    pub real_ty: Option<Box<Type>>,
+    pub real_ty: Option<Box<crate::utils::syn::TokenStreamAttr<Type>>>,
 
     pub attrs: Vec<Attribute>,
 }

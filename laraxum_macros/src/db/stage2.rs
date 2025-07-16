@@ -136,10 +136,14 @@ impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
     fn from(attr_ty: Option<stage1::ColumnAttrTy>) -> Self {
         use ColumnAttrTyCompound as CATC;
         use ColumnAttrTyElement as CATE;
-        use stage1::{ColumnAttrTy as S1CAT, ColumnAttrTyCompound as S1CATC};
+        use stage1::ColumnAttrTy as S1CAT;
         match attr_ty {
-            Some(S1CAT::Compound(S1CATC { many: None })) => Self::Compound(CATC::One),
-            Some(S1CAT::Compound(S1CATC { many: Some(many) })) => Self::Compound(CATC::Many(many)),
+            Some(S1CAT::Compound(stage1::ColumnAttrTyCompound { many: None })) => {
+                Self::Compound(CATC::One)
+            }
+            Some(S1CAT::Compound(stage1::ColumnAttrTyCompound { many: Some(many) })) => {
+                Self::Compound(CATC::Many(many.0))
+            }
 
             None => Self::Element(CATE::None),
             Some(S1CAT::Id) => Self::Element(CATE::Id),
@@ -308,7 +312,10 @@ impl TryFrom<stage1::Column> for Column {
         let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         // the real type that we actually want to parse, while keeping the type in the field the same
-        let real_rs_ty = attr.real_ty.as_deref().unwrap_or(&*rs_ty);
+        let real_rs_ty = attr
+            .real_ty
+            .as_deref()
+            .map_or(&*rs_ty, |real_rs_ty| &real_rs_ty.0);
 
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {

@@ -428,11 +428,14 @@ fn response_getter_column(
     };
     if optional {
         quote! {
-            ::core::option::Option::map(#field_access, ::laraxum::Decode::decode)
+            ::core::option::Option::map(
+                #field_access,
+                ::laraxum::backend::Decode::decode,
+            )
         }
     } else {
         quote! {
-            ::laraxum::Decode::decode(#field_access)
+            ::laraxum::backend::Decode::decode(#field_access)
         }
     }
 }
@@ -742,7 +745,7 @@ impl From<stage3::Table<'_>> for Table {
                 #(#response_column_fields),*
             }
 
-            impl ::laraxum::Decode for #table_rs_name {
+            impl ::laraxum::backend::Decode for #table_rs_name {
                 type Decode = Self;
                 #[inline]
                 fn decode(decode: Self::Decode) -> Self {
@@ -750,7 +753,7 @@ impl From<stage3::Table<'_>> for Table {
                 }
             }
 
-            impl ::laraxum::Encode for #table_rs_name {
+            impl ::laraxum::backend::Encode for #table_rs_name {
                 type Encode = Self;
                 #[inline]
                 fn encode(self) -> Self::Encode {
@@ -789,11 +792,14 @@ impl From<stage3::Table<'_>> for Table {
                 } = column;
                 if *optional {
                     quote! {
-                        ::core::option::Option::map(request.#rs_name, ::laraxum::Encode::encode)
+                        ::core::option::Option::map(
+                            request.#rs_name,
+                            ::laraxum::backend::Encode::encode
+                        )
                     }
                 } else {
                     quote! {
-                        ::laraxum::Encode::encode(request.#rs_name)
+                        ::laraxum::backend::Encode::encode(request.#rs_name)
                     }
                 }
             });
@@ -830,7 +836,7 @@ impl From<stage3::Table<'_>> for Table {
                         let result = validate_rule.to_token_stream(&var);
                         let validate = quote! {
                             if let ::core::result::Result::Err(err) = #result {
-                                ::laraxum::error_builder::<(), #table_request_error_rs_name>(
+                                ::laraxum::request::error_builder::<(), #table_request_error_rs_name>(
                                     &mut e,
                                     |e| e.#rs_name.push(err),
                                 );
@@ -863,7 +869,7 @@ impl From<stage3::Table<'_>> for Table {
                         }
                     }
 
-                    impl ::laraxum::Request::<::laraxum::request_type::Create>
+                    impl ::laraxum::Request::<::laraxum::request::method::Create>
                         for #table_request_rs_name
                     {
                         type Error = #table_request_error_rs_name;
@@ -873,13 +879,13 @@ impl From<stage3::Table<'_>> for Table {
                             e
                         }
                     }
-                    impl ::laraxum::Request::<::laraxum::request_type::Update>
+                    impl ::laraxum::Request::<::laraxum::request::method::Update>
                         for #table_request_rs_name
                     {
                         type Error = #table_request_error_rs_name;
                         fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
                             <
-                                Self as ::laraxum::Request::<::laraxum::request_type::Create>
+                                Self as ::laraxum::Request::<::laraxum::request::method::Create>
                             >::validate(self)
                         }
                     }
@@ -889,7 +895,7 @@ impl From<stage3::Table<'_>> for Table {
                 quote! {
                     pub type #table_request_error_rs_name = ();
                     // pub type #table_request_error_rs_name = ::core::convert::Infallible;
-                    impl ::laraxum::Request::<::laraxum::request_type::Create>
+                    impl ::laraxum::Request::<::laraxum::request::method::Create>
                         for #table_request_rs_name
                     {
                         type Error = #table_request_error_rs_name;
@@ -897,7 +903,7 @@ impl From<stage3::Table<'_>> for Table {
                             ::core::result::Result::Ok(())
                         }
                     }
-                    impl ::laraxum::Request::<::laraxum::request_type::Update>
+                    impl ::laraxum::Request::<::laraxum::request::method::Update>
                         for #table_request_rs_name
                     {
                         type Error = #table_request_error_rs_name;
@@ -1028,7 +1034,7 @@ impl From<stage3::Table<'_>> for Table {
                     {
                         <
                             Self::CreateRequest
-                            as ::laraxum::Request::<::laraxum::request_type::Create>
+                            as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
                         let response = ::sqlx::query!(#create_one, #request_setter);
                         let response = response.execute(&db.pool).await?;
@@ -1101,7 +1107,7 @@ impl From<stage3::Table<'_>> for Table {
                     {
                         <
                             Self::CreateRequest
-                            as ::laraxum::Request::<::laraxum::request_type::Create>
+                            as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
                         let response = ::sqlx::query!(#create_one, #request_setter);
                         let response = response.execute(&db.pool).await?;
@@ -1122,7 +1128,7 @@ impl From<stage3::Table<'_>> for Table {
                     {
                         <
                             Self::UpdateRequest
-                            as ::laraxum::Request::<::laraxum::request_type::Update>
+                            as ::laraxum::Request::<::laraxum::request::method::Update>
                         >::validate(&request)?;
 
                         let response = ::sqlx::query!(#update_one, #request_setter id);
@@ -1166,6 +1172,7 @@ impl From<stage3::Table<'_>> for Table {
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
+                    type Headers = ();
                 }
             }
         });
