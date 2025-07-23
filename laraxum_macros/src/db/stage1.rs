@@ -169,11 +169,11 @@ pub struct ColumnAttrResponse {
     pub skip: bool,
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`
+/// use `TokenStreamAttr` because it can be parsed by `darling`
 #[derive(darling::FromMeta)]
 #[darling(rename_all = "snake_case")]
 pub enum ValidateRule {
-    MinLen(u16),
+    MinLen(crate::utils::syn::TokenStreamAttr<Expr>),
     Func(crate::utils::syn::TokenStreamAttr<Expr>),
     Matches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
     NMatches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
@@ -185,7 +185,7 @@ pub enum ValidateRule {
     Lte(crate::utils::syn::TokenStreamAttr<Expr>),
 }
 
-// use `EnumMetaListAttr` because it can be parsed by `darling`
+/// use `EnumMetaListAttr` because it can be parsed by `darling`
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrRequest {

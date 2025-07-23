@@ -554,17 +554,7 @@ fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenSt
 
 impl super::stage2::ValidateRule {
     fn to_token_stream(&self, value: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        match self {
-            Self::MinLen(min_len) => {
-                let err_message = format!("min length is {min_len}");
-                quote! {
-                    if #value.len() >= #min_len {
-                        ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
-                }
-            }
+        match *self {
             Self::MaxLen(max_len) => {
                 let err_message = format!("max length is {max_len}");
                 quote! {
@@ -575,12 +565,23 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::Func(f) => {
+            Self::MinLen(ref min_len) => {
+                let min_len = min_len.to_token_stream();
+                let err_message = format!("min length is {min_len}");
+                quote! {
+                    if #value.len() >= #min_len {
+                        ::core::result::Result::Ok(())
+                    } else {
+                        ::core::result::Result::Err(#err_message)
+                    }
+                }
+            }
+            Self::Func(ref f) => {
                 quote! {
                     (#f)(#value)
                 }
             }
-            Self::Matches(matches) => {
+            Self::Matches(ref matches) => {
                 let matches = matches.to_token_stream();
                 let err_message = format!("must match pattern {matches}");
                 quote! {
@@ -590,7 +591,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::NMatches(n_matches) => {
+            Self::NMatches(ref n_matches) => {
                 let n_matches = n_matches.to_token_stream();
                 let err_message = format!("must not match pattern {n_matches}");
                 quote! {
@@ -600,7 +601,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::Eq(eq) => {
+            Self::Eq(ref eq) => {
                 let eq = eq.to_token_stream();
                 let err_message = format!("must be equal to {eq}");
                 quote! {
@@ -611,7 +612,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::NEq(n_eq) => {
+            Self::NEq(ref n_eq) => {
                 let n_eq = n_eq.to_token_stream();
                 let err_message = format!("must not be equal to {n_eq}");
                 quote! {
@@ -622,7 +623,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::Gt(gt) => {
+            Self::Gt(ref gt) => {
                 let gt = gt.to_token_stream();
                 let err_message = format!("must be greater than {gt}");
 
@@ -634,7 +635,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::Lt(lt) => {
+            Self::Lt(ref lt) => {
                 let lt = lt.to_token_stream();
                 let err_message = format!("must be less than {lt}");
                 quote! {
@@ -645,7 +646,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::Gte(gte) => {
+            Self::Gte(ref gte) => {
                 let gte = gte.to_token_stream();
                 let err_message = format!("must be greater than or equal to {gte}");
                 quote! {
@@ -656,7 +657,7 @@ impl super::stage2::ValidateRule {
                     }
                 }
             }
-            Self::Lte(lte) => {
+            Self::Lte(ref lte) => {
                 let lte = lte.to_token_stream();
                 let err_message = format!("must less than or equal to {lte}");
                 quote! {

@@ -264,7 +264,7 @@ pub struct ColumnAttrResponse {
 }
 
 pub enum ValidateRule {
-    MinLen(usize),
+    MinLen(Expr),
     MaxLen(usize),
     Func(Expr),
     Matches(Pat),
@@ -399,7 +399,7 @@ impl TryFrom<stage1::Column> for Column {
             .map(|validate_rule| {
                 use stage1::ValidateRule as S1VR;
                 match validate_rule {
-                    S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.into()),
+                    S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.0),
                     S1VR::Func(func) => ValidateRule::Func(func.0),
                     S1VR::Matches(matches) => ValidateRule::Matches(matches.0.0),
                     S1VR::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
