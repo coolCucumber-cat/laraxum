@@ -1,15 +1,15 @@
+use crate::frontend::Json;
+
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
 
-use crate::frontend::Json;
-
 #[derive(Debug)]
 pub enum Error {
-    /// [400 Bad Request](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1)
-    BadRequest,
+    // /// [400 Bad Request](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1)
+    // BadRequest,
     /// [401 Unauthorized](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.2)
     ///
     /// Although the status code is called Unauthorized, it means the identity of the user is unknown and therefore unauthenticated
@@ -27,11 +27,10 @@ pub enum Error {
     /// [500 Internal Server Error](https://datatracker.ietf.org/doc/html/rfc9110#section-15.6.1)
     Internal,
 }
-
 impl Error {
     pub(crate) const fn status_code(self) -> StatusCode {
         match self {
-            Self::BadRequest => StatusCode::BAD_REQUEST,
+            // Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::Unauthenticated => StatusCode::UNAUTHORIZED,
             Self::Unauthorized => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
@@ -41,7 +40,6 @@ impl Error {
         }
     }
 }
-
 impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
         match error {
@@ -57,7 +55,6 @@ impl From<sqlx::Error> for Error {
         }
     }
 }
-
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         self.status_code().into_response()
@@ -70,7 +67,6 @@ pub enum ModelError<UnprocessableEntity> {
     UnprocessableEntity(UnprocessableEntity),
     Other(Error),
 }
-
 impl<UnprocessableEntity, E> From<E> for ModelError<UnprocessableEntity>
 where
     E: Into<Error>,
@@ -79,19 +75,16 @@ where
         Self::Other(other.into())
     }
 }
-
 impl From<()> for ModelError<()> {
     fn from(value: ()) -> Self {
         ModelError::UnprocessableEntity(value)
     }
 }
-
 impl From<core::convert::Infallible> for ModelError<core::convert::Infallible> {
     fn from(value: core::convert::Infallible) -> Self {
         ModelError::UnprocessableEntity(value)
     }
 }
-
 impl<UnprocessableEntity> IntoResponse for ModelError<UnprocessableEntity>
 where
     UnprocessableEntity: Serialize,

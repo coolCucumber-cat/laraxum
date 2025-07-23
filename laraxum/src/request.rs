@@ -10,6 +10,9 @@ pub trait Request<RequestType> {
     fn validate(&self) -> Result<(), Self::Error>;
 }
 
+// #[doc(alias = "RequestError")]
+// pub enum Error {}
+
 pub fn error_builder<T, E>(result: &mut Result<T, E>, f: impl FnOnce(&mut E))
 where
     E: Default,

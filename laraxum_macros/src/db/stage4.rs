@@ -604,7 +604,7 @@ impl super::stage2::ValidateRule {
                 let eq = eq.to_token_stream();
                 let err_message = format!("must be equal to {eq}");
                 quote! {
-                    if #value &== #eq {
+                    if #value == &#eq {
                         ::core::result::Result::Ok(())
                     } else {
                         ::core::result::Result::Err(#err_message)
@@ -809,111 +809,146 @@ impl From<stage3::Table<'_>> for Table {
 
             let request_column_validate =
                 request_setters.filter(|column| !column.validate.is_empty());
-            let request_error_token_stream = if request_column_validate.clone().next().is_some() {
-                let request_error_columns = request_column_validate.clone().map(
-                    |stage3::RequestColumnSetterOne { rs_name, .. }| {
-                        quote! {
-                            // #[serde(skip_serializing_if = "(|v| v.is_empty())")]
-                            #[serde(skip_serializing_if = "<[&'static str]>::is_empty")]
-                            pub #rs_name: ::std::vec::Vec::<&'static str>
-                            // #[serde(skip_serializing_if = "::core::option::Option::is_none")]
-                            // pub #rs_name: ::core::option::Option::<::std::vec::Vec::<&'static str>>
+            // let request_error_token_stream = if request_column_validate.clone().next().is_some() {
+            let request_error_columns = request_column_validate.clone().map(
+                |stage3::RequestColumnSetterOne { rs_name, .. }| {
+                    quote! {
+                        // #[serde(skip_serializing_if = "(|v| v.is_empty())")]
+                        #[serde(skip_serializing_if = "<[&str]>::is_empty")]
+                        pub #rs_name: ::std::vec::Vec::<&'static str>
+                        // #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+                        // pub #rs_name: ::core::option::Option::<::std::vec::Vec::<&'static str>>
+                    }
+                },
+            );
+            let request_column_validate_rules = request_column_validate
+                .flat_map(|column| {
+                    column
+                        .validate
+                        .iter()
+                        .map(|validate_rule| (validate_rule, column.optional, column.rs_name))
+                })
+                .map(|(validate_rule, optional, rs_name)| {
+                    let var = quote! { value };
+                    let value = quote! {
+                        &self.#rs_name
+                    };
+                    let result = validate_rule.to_token_stream(&var);
+                    let validate = quote! {
+                        if let ::core::result::Result::Err(err) = #result {
+                            ::laraxum::request::error_builder::<(), #table_request_error_rs_name>(
+                                &mut e,
+                                |e| e.#rs_name.push(err),
+                            );
                         }
-                    },
-                );
-                let request_column_validate_rules = request_column_validate
-                    .flat_map(|column| {
-                        column
-                            .validate
-                            .iter()
-                            .map(|validate_rule| (validate_rule, column.optional, column.rs_name))
-                    })
-                    .map(|(validate_rule, optional, rs_name)| {
-                        let var = quote! { value };
-                        let value = quote! {
-                            &self.#rs_name
-                        };
-                        let result = validate_rule.to_token_stream(&var);
-                        let validate = quote! {
-                            if let ::core::result::Result::Err(err) = #result {
-                                ::laraxum::request::error_builder::<(), #table_request_error_rs_name>(
-                                    &mut e,
-                                    |e| e.#rs_name.push(err),
-                                );
-                            }
-                        };
-                        if optional {
-                            quote! {
-                                if let ::core::option::Option::Some(#var) = #value {
-                                    #validate
-                                }
-                            }
-                        } else {
-                            quote! {
-                                let #var = #value;
+                    };
+                    if optional {
+                        quote! {
+                            if let ::core::option::Option::Some(#var) = #value {
                                 #validate
                             }
                         }
-                    });
-
-                quote! {
-                    #[derive(Default, ::serde::Serialize)]
-                    pub struct #table_request_error_rs_name {
-                        #( #request_error_columns ),*
-                    }
-                    impl ::core::convert::From<#table_request_error_rs_name>
-                        for ::laraxum::ModelError<#table_request_error_rs_name>
-                    {
-                        fn from(value: #table_request_error_rs_name) -> Self {
-                            Self::UnprocessableEntity(value)
+                    } else {
+                        quote! {
+                            let #var = #value;
+                            #validate
                         }
                     }
+                });
 
-                    impl ::laraxum::Request::<::laraxum::request::method::Create>
-                        for #table_request_rs_name
-                    {
-                        type Error = #table_request_error_rs_name;
-                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-                            let mut e = ::core::result::Result::Ok(());
-                            #( #request_column_validate_rules )*
-                            e
-                        }
-                    }
-                    impl ::laraxum::Request::<::laraxum::request::method::Update>
-                        for #table_request_rs_name
-                    {
-                        type Error = #table_request_error_rs_name;
-                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-                            <
-                                Self as ::laraxum::Request::<::laraxum::request::method::Create>
-                            >::validate(self)
-                        }
-                    }
-
+            let request_error_token_stream = quote! {
+                #[derive(Default, ::serde::Serialize)]
+                pub struct #table_request_error_rs_name {
+                    #( #request_error_columns ),*
                 }
-            } else {
-                quote! {
-                    pub type #table_request_error_rs_name = ();
-                    // pub type #table_request_error_rs_name = ::core::convert::Infallible;
-                    impl ::laraxum::Request::<::laraxum::request::method::Create>
-                        for #table_request_rs_name
-                    {
-                        type Error = #table_request_error_rs_name;
-                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-                            ::core::result::Result::Ok(())
-                        }
+                impl ::core::convert::From<#table_request_error_rs_name>
+                    for ::laraxum::ModelError<#table_request_error_rs_name>
+                {
+                    fn from(value: #table_request_error_rs_name) -> Self {
+                        Self::UnprocessableEntity(value)
                     }
-                    impl ::laraxum::Request::<::laraxum::request::method::Update>
-                        for #table_request_rs_name
-                    {
-                        type Error = #table_request_error_rs_name;
-                        fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-                            ::core::result::Result::Ok(())
-                        }
-                    }
+                }
 
+                impl ::laraxum::Request::<::laraxum::request::method::Create>
+                    for #table_request_rs_name
+                {
+                    type Error = #table_request_error_rs_name;
+                    fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                        let mut e = ::core::result::Result::Ok(());
+                        #( #request_column_validate_rules )*
+                        e
+                    }
+                }
+                impl ::laraxum::Request::<::laraxum::request::method::Update>
+                    for #table_request_rs_name
+                {
+                    type Error = #table_request_error_rs_name;
+                    fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                        <
+                            Self as ::laraxum::Request::<::laraxum::request::method::Create>
+                        >::validate(self)
+                    }
                 }
             };
+
+            //             let request_error_token_stream = quote! {
+            //                 #[derive(Default, ::serde::Serialize)]
+            //                 pub struct #table_request_error_rs_name<'error> {
+            //                     #( #request_error_columns ),*
+            //                 }
+            //                 impl ::core::convert::From<#table_request_error_rs_name<'_>>
+            //                     for ::laraxum::ModelError<#table_request_error_rs_name<'_>>
+            //                 {
+            //                     fn from(value: #table_request_error_rs_name<'_>) -> Self {
+            //                         Self::UnprocessableEntity(value)
+            //                     }
+            //                 }
+            //
+            //                 impl ::laraxum::Request::<::laraxum::request::method::Create>
+            //                     for #table_request_rs_name
+            //                 {
+            //                     type Error = #table_request_error_rs_name<'_>;
+            //                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+            //                         let mut e = ::core::result::Result::Ok(());
+            //                         #( #request_column_validate_rules )*
+            //                         e
+            //                     }
+            //                 }
+            //                 impl ::laraxum::Request::<::laraxum::request::method::Update>
+            //                     for #table_request_rs_name
+            //                 {
+            //                     type Error = #table_request_error_rs_name<'_>;
+            //                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+            //                         <
+            //                             Self as ::laraxum::Request::<::laraxum::request::method::Create>
+            //                         >::validate(self)
+            //                     }
+            //                 }
+            //             };
+
+            //             } else {
+            //                 quote! {
+            //                     pub type #table_request_error_rs_name = ();
+            //                     // pub type #table_request_error_rs_name = ::core::convert::Infallible;
+            //                     impl ::laraxum::Request::<::laraxum::request::method::Create>
+            //                         for #table_request_rs_name
+            //                     {
+            //                         type Error = #table_request_error_rs_name;
+            //                         fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+            //                             ::core::result::Result::Ok(())
+            //                         }
+            //                     }
+            //                     impl ::laraxum::Request::<::laraxum::request::method::Update>
+            //                         for #table_request_rs_name
+            //                     {
+            //                         type Error = #table_request_error_rs_name;
+            //                         fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+            //                             ::core::result::Result::Ok(())
+            //                         }
+            //                     }
+            //
+            //                 }
+            //             };
 
             let request_setter_compounds_columns =
                 table.columns.iter().filter_map(|column| match column {
