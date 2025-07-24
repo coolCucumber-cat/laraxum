@@ -64,6 +64,122 @@ where
     }
 }
 
+pub trait Controller2: crate::backend::Model2
+where
+    <Self as Table>::Response: Serialize,
+    <Self as crate::backend::Collection2>::GetAllRequestQuery: for<'a> Deserialize<'a>,
+    <Self as crate::backend::Collection2>::CreateRequest: for<'a> Deserialize<'a>,
+    <Self as crate::backend::Collection2>::CreateRequestError: Serialize,
+    <Self as crate::backend::Model2>::Id: Serialize + for<'a> Deserialize<'a>,
+    <Self as crate::backend::Model2>::UpdateRequest: for<'a> Deserialize<'a>,
+    <Self as crate::backend::Model2>::UpdateRequestError: Serialize,
+{
+    type State: AnyDb<Db = Self::Db> + Sync + Send;
+    type Headers;
+
+    #[allow(unused_variables)]
+    fn index(
+        State(state): State<Arc<Self::State>>,
+        Query(query): Query<Self::GetAllRequestQuery>,
+    ) -> impl Future<Output = Result<Json<Vec<Self::Response>>, Error>> + Send {
+        async move {
+            let rs = Self::get_all(state.db()).await?;
+            Ok(Json(rs))
+        }
+    }
+    fn get(
+        State(state): State<Arc<Self::State>>,
+        Path(id): Path<Self::Id>,
+    ) -> impl Future<Output = Result<Json<Self::Response>, Error>> + Send {
+        async move {
+            let rs = Self::get_one(state.db(), id).await?;
+            Ok(Json(rs))
+        }
+    }
+    fn create(
+        State(state): State<Arc<Self::State>>,
+        Json(rq): Json<Self::CreateRequest>,
+    ) -> impl Future<Output = Result<Json<Self::Response>, ModelError<Self::CreateRequestError>>> + Send
+    {
+        async move {
+            let rs = Self::create_get_one(state.db(), rq).await?;
+            Ok(Json(rs))
+        }
+    }
+    fn update(
+        State(state): State<Arc<Self::State>>,
+        Path(id): Path<Self::Id>,
+        Json(rq): Json<Self::UpdateRequest>,
+    ) -> impl Future<Output = Result<Json<Self::Response>, ModelError<Self::UpdateRequestError>>> + Send
+    {
+        async move {
+            let rs = Self::update_get_one(state.db(), rq, id).await?;
+            Ok(Json(rs))
+        }
+    }
+    fn delete(
+        State(state): State<Arc<Self::State>>,
+        Path(id): Path<Self::Id>,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async move {
+            Self::delete_one(state.db(), id).await?;
+            Ok(())
+        }
+    }
+}
+
+// pub trait Route {
+//     type State;
+//     fn route() -> axum::routing::MethodRouter<Self::State>;
+// }
+// impl<T> Route for T
+// where
+//     Self: Controller2,
+//     <Self as Controller2>::State: Send + Sync,
+//     <Self as Table>::Response: Serialize,
+//     <Self as crate::backend::Collection2>::GetAllRequestQuery: for<'a> Deserialize<'a>,
+//     <Self as crate::backend::Collection2>::CreateRequest: for<'a> Deserialize<'a>,
+//     <Self as crate::backend::Collection2>::CreateRequestError: Serialize,
+//     <Self as crate::backend::Model2>::Id: Serialize + for<'a> Deserialize<'a>,
+//     <Self as crate::backend::Model2>::UpdateRequest: for<'a> Deserialize<'a>,
+//     <Self as crate::backend::Model2>::UpdateRequestError: Serialize,
+// {
+//     type State = std::sync::Arc<<T as Controller2>::State>;
+//     fn route() -> axum::routing::MethodRouter<<Self as Route>::State> {
+//         axum::routing::MethodRouter::new()
+//             .get(Self::index)
+//             .post(Self::create)
+//     }
+// }
+
+// pub trait Route {
+//     fn route() -> axum::routing::MethodRouter;
+// }
+// impl<T> Route for T
+// where
+//     T: Controller,
+// {
+//     fn route() -> axum::routing::MethodRouter<std::sync::Arc<T::State>> {
+//         axum::routing::MethodRouter::new()
+//             .get(Self::index)
+//             .post(Self::create)
+//     }
+// }
+pub trait RouteId {
+    fn route_id() -> axum::routing::MethodRouter;
+}
+// impl<T> RouteId for T
+// where
+//     T: Controller2,
+// {
+//     fn route_id() -> axum::routing::MethodRouter {
+//         axum::routing::MethodRouter::new()
+//             .get(Self::get)
+//             .put(Self::update)
+//             .delete(Self::delete)
+//     }
+// }
+
 // pub trait DeserializeRequest: Sized {
 //     type Item: for<'de> Deserialize<'de>;
 //     type UnprocessableEntityError;

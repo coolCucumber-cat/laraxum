@@ -24,12 +24,12 @@ time = { version = "0.3.41", optional = true }
 
 [features]
 default = ["mysql", "macros"]
-
 macros = ["dep:laraxum_macros"]
-
 mysql = ["sqlx/mysql"]
 postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
-
 chrono = ["dep:chrono"]
 time = ["dep:time"]
+
+[lints.clippy]
+async_fn_in_trait = "allow"

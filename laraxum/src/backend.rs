@@ -34,8 +34,8 @@ pub trait AnyDb: Sized {
 }
 
 pub trait Table: Sized {
-    type Db: Db<Self>;
-    type Response;
+    type Db: Db<Self> + Send + Sync;
+    type Response: Send + Sync;
 }
 
 pub trait Collection: Table {
@@ -48,6 +48,17 @@ pub trait Collection: Table {
         db: &Self::Db,
         r: Self::CreateRequest,
     ) -> Result<(), ModelError<Self::CreateRequestError>>;
+}
+pub trait Collection2: Table {
+    type GetAllRequestQuery;
+    type CreateRequest: Send;
+    type CreateRequestError;
+
+    fn get_all(db: &Self::Db) -> impl Future<Output = Result<Vec<Self::Response>, Error>> + Send;
+    fn create_one(
+        db: &Self::Db,
+        r: Self::CreateRequest,
+    ) -> impl Future<Output = Result<(), ModelError<Self::CreateRequestError>>> + Send;
 }
 
 pub trait Model: Collection {
@@ -75,6 +86,39 @@ pub trait Model: Collection {
         Ok(rs)
     }
     async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
+}
+
+pub trait Model2: Collection2 {
+    type Id: Copy + Send + Sync;
+    type UpdateRequest: Send;
+    type UpdateRequestError;
+
+    fn get_one(
+        db: &Self::Db,
+        id: Self::Id,
+    ) -> impl Future<Output = Result<Self::Response, Error>> + Send;
+    fn create_get_one(
+        db: &Self::Db,
+        rq: Self::CreateRequest,
+    ) -> impl Future<Output = Result<Self::Response, ModelError<Self::CreateRequestError>>> + Send;
+    fn update_one(
+        db: &Self::Db,
+        rq: Self::UpdateRequest,
+        id: Self::Id,
+    ) -> impl Future<Output = Result<(), ModelError<Self::UpdateRequestError>>> + Send;
+    fn update_get_one(
+        db: &Self::Db,
+        rq: Self::UpdateRequest,
+        id: Self::Id,
+    ) -> impl Future<Output = Result<Self::Response, ModelError<Self::UpdateRequestError>>> + Send
+    {
+        async move {
+            Self::update_one(db, rq, id).await?;
+            let rs = Self::get_one(db, id).await?;
+            Ok(rs)
+        }
+    }
+    fn delete_one(db: &Self::Db, id: Self::Id) -> impl Future<Output = Result<(), Error>> + Send;
 }
 
 pub trait ManyModel<OneResponse>: Table {
