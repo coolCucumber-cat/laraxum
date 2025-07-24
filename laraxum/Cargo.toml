@@ -2,29 +2,33 @@
 name = "laraxum"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/coolCucumber-cat/laraxum.git"
+readme = "../README.md"
+description = """
+
+"""
+categories = ["database"]
 
 [dependencies]
 axum = "0.8.4"
+sqlx = { version = "0.8.6", features = ["runtime-tokio"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "mysql"] }
-# sqlx = { version = "0.8.6", features = ["runtime-tokio", "mysql", "tls-native-tls"] }
 tokio = { version = "1.46.1", features = ["rt-multi-thread"] }
-
-chrono = { version = "0.4.41", optional = true }
-time = { version = "0.3.41", optional = true }
 mime = "0.3.17"
 bytes = "1.10.1"
+chrono = { version = "0.4.41", optional = true }
+time = { version = "0.3.41", optional = true }
 
 [features]
-default = [
-	# temp
-	"mysql",
-]
+default = ["mysql"]
 
-mysql = []
-postgres = []
-sqlite = []
+macros = []
+
+mysql = ["sqlx/mysql"]
+postgres = ["sqlx/postgres"]
+sqlite = ["sqlx/sqlite"]
 
 chrono = ["dep:chrono"]
 time = ["dep:time"]

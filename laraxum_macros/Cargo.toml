@@ -2,26 +2,29 @@
 name = "laraxum_macros"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/coolCucumber-cat/laraxum.git"
+readme = "README.md"
+description = """
+Macros for the laraxum crate
+"""
+categories = ["database"]
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "2.0.104", features = ["full", "extra-traits"] }
-quote = "1.0.40"
 proc-macro2 = "1.0.95"
-fmt2 = "0.3.4"
+syn = { version = "2.0.104", features = ["full", "extra-traits"] }
 darling = "0.21.0"
+quote = "1.0.40"
+fmt2 = "0.3.4"
 
 [features]
-default = [
-	# temp
-	"mysql",
-]
+default = ["mysql"]
 
 mysql = []
 postgres = []
 sqlite = []
 
-nightly = ["try_blocks"]
 try_blocks = []
