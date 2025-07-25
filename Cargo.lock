@@ -846,12 +846,12 @@ dependencies = [
 
 [[package]]
 name = "laraxum"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "axum",
  "bytes",
  "chrono",
- "laraxum_macros 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "laraxum_macros 0.1.0",
  "mime",
  "serde",
  "serde_json",
@@ -863,6 +863,8 @@ dependencies = [
 [[package]]
 name = "laraxum_macros"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dc5fa15bfce54e740fd5371f6aaa64c61e3b0399ff105c2ae80b9b09b701dec"
 dependencies = [
  "darling",
  "fmt2",
@@ -873,9 +875,7 @@ dependencies = [
 
 [[package]]
 name = "laraxum_macros"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dc5fa15bfce54e740fd5371f6aaa64c61e3b0399ff105c2ae80b9b09b701dec"
+version = "0.1.1"
 dependencies = [
  "darling",
  "fmt2",

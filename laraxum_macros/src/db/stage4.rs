@@ -406,22 +406,8 @@ fn response_getter_column(
     };
 
     let field_access = if foreign && !optional {
-        #[cfg(feature = "try_blocks")]
-        {
-            quote! {
-                #field_access?
-            }
-        }
-        #[cfg(not(feature = "try_blocks"))]
-        {
-            quote! {
-                match #field_access {
-                    ::core::option::Option::Some(val) => val,
-                    ::core::option::Option::None => {
-                        break 'response_block ::core::option::Option::None
-                    }
-                }
-            }
+        quote! {
+            #field_access?
         }
     } else {
         field_access
@@ -529,7 +515,7 @@ fn catch_option(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     }
     #[cfg(not(feature = "try_blocks"))]
     quote! {
-        'response_block: { ::core::option::Option::Some(#getter) }
+        (|| { ::core::option::Option::Some(#getter) })()
     }
 }
 

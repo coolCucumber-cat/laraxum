@@ -1,6 +1,6 @@
 [package]
 name = "laraxum"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/coolCucumber-cat/laraxum.git"
@@ -30,6 +30,7 @@ postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
 chrono = ["dep:chrono"]
 time = ["dep:time"]
+try_blocks = ["laraxum_macros?/try_blocks"]
 
-[lints.clippy]
+[lints.rust]
 async_fn_in_trait = "allow"
