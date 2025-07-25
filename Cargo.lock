@@ -846,7 +846,7 @@ dependencies = [
 
 [[package]]
 name = "laraxum"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "axum",
  "bytes",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "laraxum_macros"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "darling",
  "fmt2",
