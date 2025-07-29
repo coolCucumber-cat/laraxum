@@ -240,6 +240,40 @@ impl stage3::RequestColumnOne<'_> {
     }
 }
 
+struct ResponseColumnGetterElement<'a> {
+    element: &'a stage3::ResponseColumnGetterElement<'a>,
+    parent_optional: bool,
+}
+impl fmt2::write_to::WriteTo for ResponseColumnGetterElement<'_> {
+    fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
+    where
+        W: fmt2::write::Write + ?Sized,
+    {
+        if self.parent_optional || self.element.optional {
+            fmt2::fmt! { (? w) =>
+                {self.element.name_intern}
+                " AS "
+                {self.element.name_extern}
+            }
+        } else {
+            #[cfg(feature = "mysql")]
+            fmt2::fmt! { (? w) =>
+                {self.element.name_intern}
+                " AS `"
+                {self.element.name_extern}
+                "!`"
+            }
+            #[cfg(any(feature = "sqlite", feature = "postgres"))]
+            fmt2::fmt! { (? w) =>
+                {self.element.name_intern}
+                " AS \""
+                {self.element.name_extern}
+                "!\""
+            }
+        }
+    }
+}
+
 fn create_table<'columns>(
     table_name_intern: &str,
     columns: impl IntoIterator<Item = &'columns stage3::Column<'columns>>,
@@ -260,15 +294,13 @@ fn delete_table(table_name_intern: &str) -> String {
 fn get_all<'elements, 'compounds>(
     table_name_intern: &str,
     table_name_extern: &str,
-    response_getter_column_elements: &[&stage3::ResponseColumnGetterElement<'elements>],
+    response_getter_column_elements: &[ResponseColumnGetterElement<'elements>],
     response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound<'compounds>],
 ) -> String {
     fmt2::fmt! { { str } =>
         "SELECT "
         @..join(response_getter_column_elements => "," => |element|
-            {element.name_intern}
-            " AS "
-            {element.name_extern}
+            {element}
         )
         " FROM " {table_name_intern} " AS " {table_name_extern}
         @..(response_getter_column_compounds => |compound|
@@ -283,7 +315,7 @@ fn get_filter<'elements, 'compounds>(
     table_name_intern: &str,
     table_name_extern: &str,
     id_name_intern: &str,
-    response_getter_column_elements: &[&stage3::ResponseColumnGetterElement<'elements>],
+    response_getter_column_elements: &[ResponseColumnGetterElement<'elements>],
     response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound<'compounds>],
 ) -> String {
     let mut get_all = get_all(
@@ -333,9 +365,8 @@ fn delete_one(table_name_intern: &str, id_name: &str) -> String {
 
 fn flatten_internal<'columns>(
     response_getter_columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
-    response_getter_column_elements: &mut Vec<
-        &'columns stage3::ResponseColumnGetterElement<'columns>,
-    >,
+    parent_optional: bool,
+    response_getter_column_elements: &mut Vec<ResponseColumnGetterElement<'columns>>,
     response_getter_column_compounds: &mut Vec<
         &'columns stage3::ResponseColumnGetterCompound<'columns>,
     >,
@@ -345,17 +376,23 @@ fn flatten_internal<'columns>(
             stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(
                 element,
             )) => {
-                response_getter_column_elements.push(element);
+                response_getter_column_elements.push(ResponseColumnGetterElement {
+                    element,
+                    parent_optional,
+                });
             }
             stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
                 compound,
             )) => {
+                let optional = compound.optional;
+                let parent_optional = parent_optional || optional;
                 response_getter_column_compounds.push(compound);
                 flatten_internal(
                     compound
                         .columns
                         .iter()
                         .map(stage3::ResponseColumnGetterRef::from),
+                    parent_optional,
                     response_getter_column_elements,
                     response_getter_column_compounds,
                 );
@@ -367,7 +404,7 @@ fn flatten_internal<'columns>(
 fn flatten<'columns>(
     response_getter_columns: impl Iterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
 ) -> (
-    Vec<&'columns stage3::ResponseColumnGetterElement<'columns>>,
+    Vec<ResponseColumnGetterElement<'columns>>,
     Vec<&'columns stage3::ResponseColumnGetterCompound<'columns>>,
 ) {
     let mut response_getter_column_elements = vec![];
@@ -375,6 +412,7 @@ fn flatten<'columns>(
 
     flatten_internal(
         response_getter_columns,
+        false,
         &mut response_getter_column_elements,
         &mut response_getter_column_compounds,
     );
@@ -396,18 +434,24 @@ fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
     }
 }
 
+// TODO: use ! and ? in sqlx to force it to recognise when a column is nullable. use recursion when flattening to store parent_optional
 fn response_getter_column(
     name_extern: &Ident,
     optional: bool,
     foreign: bool,
+    parent_optional: bool,
 ) -> proc_macro2::TokenStream {
     let field_access = quote! {
         response.#name_extern
     };
 
-    let field_access = if foreign && !optional {
+    let field_access = if parent_optional && !optional {
         quote! {
-            #field_access?
+            if let ::core::option::Option::Some(v) = #field_access {
+                v
+            } else {
+                ::core::result::Result::Ok(::core::option::Option::None)?
+            }
         }
     } else {
         field_access
@@ -426,9 +470,29 @@ fn response_getter_column(
     }
 }
 
+fn response_getter_compound<'columns>(
+    table_ty: &Ident,
+    columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
+    foreign: bool,
+    parent_optional: bool,
+) -> proc_macro2::TokenStream {
+    let columns = columns.into_iter().map(|column| {
+        let rs_name = column.rs_name();
+        let response_getter = response_getter(column, foreign, parent_optional);
+        quote! {
+            #rs_name: #response_getter
+        }
+    });
+
+    quote! {
+        #table_ty { #( #columns ),* }
+    }
+}
+
 fn response_getter(
     column: stage3::ResponseColumnGetterRef<'_>,
     foreign: bool,
+    parent_optional: bool,
 ) -> proc_macro2::TokenStream {
     match column {
         stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(element)) => {
@@ -437,8 +501,9 @@ fn response_getter(
                 optional,
                 ..
             } = element;
+            let optional = *optional;
             let name_extern = from_str_to_rs_ident(name_extern);
-            response_getter_column(&name_extern, *optional, foreign)
+            response_getter_column(&name_extern, optional, foreign, parent_optional)
         }
         stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
             compound,
@@ -449,12 +514,16 @@ fn response_getter(
                 columns,
                 ..
             } = compound;
+            let optional = *optional;
+            let parent_optional = parent_optional || optional;
+
             let getter = response_getter_compound(
                 rs_ty_name,
                 columns.iter().map(stage3::ResponseColumnGetterRef::from),
                 true,
+                parent_optional,
             );
-            if *optional {
+            if optional {
                 // catch any early returns and replace it with `None`
                 catch_option(&getter)
             } else {
@@ -470,72 +539,71 @@ fn response_getter(
                 many_foreign_table_rs_name,
             } = compounds;
             let table_id_name_extern = from_str_to_rs_ident(table_id_name_extern);
-            let one_id = response_getter_column(&table_id_name_extern, false, foreign);
+            let one_id =
+                response_getter_column(&table_id_name_extern, false, foreign, parent_optional);
             quote! {
-                match {
-                    <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                        #table_rs_name,
-                    >>::get_many(
-                        db,
-                        #one_id,
-                    ).await
-                } {
-                    ::core::result::Result::Ok(response) => response,
-                    ::core::result::Result::Err(_) => {
-                        return ::core::result::Result::Err(::sqlx::Error::RowNotFound);
-                    }
-                }
+                <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                    #table_rs_name,
+                >>::get_many(
+                    db,
+                    #one_id,
+                ).await?
+                // match {
+                //     <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                //         #table_rs_name,
+                //     >>::get_many(
+                //         db,
+                //         #one_id,
+                //     ).await
+                // } {
+                //     ::core::result::Result::Ok(response) => response,
+                //     ::core::result::Result::Err(_) => {
+                //         return ::core::result::Result::Err(::sqlx::Error::RowNotFound);
+                //     }
+                // }
             }
         }
-    }
-}
-
-fn response_getter_compound<'columns>(
-    table_ty: &Ident,
-    columns: impl IntoIterator<Item = stage3::ResponseColumnGetterRef<'columns>>,
-    foreign: bool,
-) -> proc_macro2::TokenStream {
-    let columns = columns.into_iter().map(|column| {
-        let rs_name = column.rs_name();
-        let response_getter = response_getter(column, foreign);
-        quote! {
-            #rs_name: #response_getter
-        }
-    });
-
-    quote! {
-        #table_ty { #( #columns ),* }
     }
 }
 
 fn catch_option(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     #[cfg(feature = "try_blocks")]
     quote! {
-        try { #getter }
+        try {
+            ::core::option::Option::Some(#getter)
+        }?
     }
     #[cfg(not(feature = "try_blocks"))]
     quote! {
-        (|| { ::core::option::Option::Some(#getter) })()
+        (async || {
+            ::core::result::Result::Ok(::core::option::Option::Some(#getter))
+        })().await?
     }
 }
 
 fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-    let getter = catch_option(getter);
     quote! {
         async |response| match response {
-            ::core::result::Result::Ok(response) => {
-                match #getter {
-                    ::core::option::Option::Some(response) => {
-                        ::core::result::Result::Ok(response)
-                    }
-                    ::core::option::Option::None => {
-                        ::core::result::Result::Err(::sqlx::Error::RowNotFound)
-                    }
-                }
-            }
+            ::core::result::Result::Ok(response) => ::core::result::Result::Ok(#getter),
             ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
         }
     }
+    // let getter = catch_option(getter);
+    // quote! {
+    //     async |response| match response {
+    //         ::core::result::Result::Ok(response) => {
+    //             match #getter {
+    //                 ::core::option::Option::Some(response) => {
+    //                     ::core::result::Result::Ok(response)
+    //                 }
+    //                 ::core::option::Option::None => {
+    //                     ::core::result::Result::Err(::sqlx::Error::RowNotFound)
+    //                 }
+    //             }
+    //         }
+    //         ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
+    //     }
+    // }
 }
 
 impl super::stage2::ValidateRule {
@@ -759,8 +827,12 @@ impl From<stage3::Table<'_>> for Table {
         let collection_model_token_stream = table.columns.is_collection().then(|| {
             let response_getter_columns =
                 table.columns.iter().map(|column| column.response_getter());
-            let response_getter =
-                &response_getter_compound(table.rs_name, response_getter_columns.clone(), false);
+            let response_getter = &response_getter_compound(
+                table.rs_name,
+                response_getter_columns.clone(),
+                false,
+                false,
+            );
             let response_getter = response_getter_fn(response_getter);
 
             let (response_getter_column_elements, response_getter_column_compounds) =
@@ -1211,7 +1283,7 @@ impl From<stage3::Table<'_>> for Table {
                 let many_response_getter =
                     stage3::ResponseColumnGetterRef::One(&many.response.getter);
 
-                let response_getter = response_getter(many_response_getter, false);
+                let response_getter = response_getter(many_response_getter, false, false);
                 let response_getter = response_getter_fn(&response_getter);
 
                 let (response_getter_column_elements, response_getter_column_compounds) =
