@@ -10,14 +10,6 @@ use serde::Serialize;
 pub enum Error {
     // /// [400 Bad Request](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1)
     // BadRequest,
-    /// [401 Unauthorized](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.2)
-    ///
-    /// Although the status code is called Unauthorized, it means the identity of the user is unknown and therefore unauthenticated
-    Unauthenticated,
-    /// [403 Forbidden](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.4)
-    ///
-    /// Although this has the name of the name of the `401` status code, it means the identity of the user is known and unauthorized
-    Unauthorized,
     /// [404 Not Found](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.5)
     NotFound,
     /// [409 Conflict](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.10)
@@ -28,11 +20,11 @@ pub enum Error {
     Internal,
 }
 impl Error {
-    pub(crate) const fn status_code(self) -> StatusCode {
+    const fn status_code(self) -> StatusCode {
         match self {
             // Self::BadRequest => StatusCode::BAD_REQUEST,
-            Self::Unauthenticated => StatusCode::UNAUTHORIZED,
-            Self::Unauthorized => StatusCode::FORBIDDEN,
+            // Self::Unauthenticated => StatusCode::UNAUTHORIZED,
+            // Self::Unauthorized => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Conflict => StatusCode::CONFLICT,
             Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
@@ -56,6 +48,31 @@ impl From<sqlx::Error> for Error {
     }
 }
 impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        self.status_code().into_response()
+    }
+}
+
+#[derive(Debug)]
+pub enum AuthError {
+    /// [401 Unauthorized](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.2)
+    ///
+    /// Although the status code is called Unauthorized, it means the identity of the user is unknown and therefore unauthenticated
+    Unauthenticated,
+    /// [403 Forbidden](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.4)
+    ///
+    /// Although this has the name of the name of the `401` status code, it means the identity of the user is known and unauthorized
+    Unauthorized,
+}
+impl AuthError {
+    const fn status_code(self) -> StatusCode {
+        match self {
+            Self::Unauthenticated => StatusCode::UNAUTHORIZED,
+            Self::Unauthorized => StatusCode::FORBIDDEN,
+        }
+    }
+}
+impl IntoResponse for AuthError {
     fn into_response(self) -> axum::response::Response {
         self.status_code().into_response()
     }

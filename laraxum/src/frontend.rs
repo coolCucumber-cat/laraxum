@@ -1,6 +1,6 @@
 use crate::{
     backend::{AnyDb, Collection, Model, Table},
-    error::{Error, ModelError},
+    error::{AuthError, Error, ModelError},
 };
 
 use std::sync::Arc;
@@ -18,7 +18,7 @@ where
     <Self as Collection>::GetAllRequestQuery: for<'a> Deserialize<'a>,
     <Self as Collection>::CreateRequest: for<'a> Deserialize<'a>,
     <Self as Collection>::CreateRequestError: Serialize,
-    <Self as Model>::Id: Serialize + for<'a> Deserialize<'a>,
+    <Self as Model>::Id: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequest: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequestError: Serialize,
 {
@@ -165,13 +165,16 @@ where
         T::deserialize(&mut deserializer).map(Json)
     }
 }
-impl<T, S> FromRequest<S> for Json<T>
+impl<T, State> FromRequest<State> for Json<T>
 where
     T: serde::de::DeserializeOwned,
-    S: Send + Sync,
+    State: Send + Sync,
 {
     type Rejection = DeserializeRequestError<serde_json::Error>;
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(
+        req: axum::extract::Request,
+        state: &State,
+    ) -> Result<Self, Self::Rejection> {
         match req.headers().get(axum::http::header::CONTENT_TYPE) {
             Some(content_type_header) if json_content_type(content_type_header) => {
                 let bytes = bytes::Bytes::from_request(req, state)
@@ -183,15 +186,15 @@ where
         }
     }
 }
-impl<T, S> OptionalFromRequest<S> for Json<T>
+impl<T, State> OptionalFromRequest<State> for Json<T>
 where
     T: serde::de::DeserializeOwned,
-    S: Send + Sync,
+    State: Send + Sync,
 {
     type Rejection = DeserializeRequestError<serde_json::Error>;
     async fn from_request(
         req: axum::extract::Request,
-        state: &S,
+        state: &State,
     ) -> Result<Option<Self>, Self::Rejection> {
         match req.headers().get(axum::http::header::CONTENT_TYPE) {
             Some(content_type_header) if json_content_type(content_type_header) => {
@@ -340,3 +343,28 @@ where
 //         }
 //     }
 // }
+
+pub trait Auth: Sized {
+    type State;
+    fn auth(auth: &str, state: &Self::State) -> Result<Self, AuthError>;
+}
+
+pub struct AuthHeader<T>(pub T);
+impl<T, State> FromRequest<State> for AuthHeader<T>
+where
+    T: Auth<State = State>,
+    State: Send + Sync,
+{
+    type Rejection = AuthError;
+    async fn from_request(
+        req: axum::extract::Request,
+        state: &State,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .ok_or(AuthError::Unauthenticated)?;
+        let auth = auth.to_str().map_err(|_| AuthError::Unauthenticated)?;
+        T::auth(auth, state).map(Self)
+    }
+}

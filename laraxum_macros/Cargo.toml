@@ -22,9 +22,6 @@ fmt2 = "0.3.4"
 
 [features]
 default = ["mysql"]
-
 mysql = []
 postgres = []
 sqlite = []
-
-try_blocks = []

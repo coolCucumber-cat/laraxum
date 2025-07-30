@@ -30,7 +30,6 @@ postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
 chrono = ["dep:chrono"]
 time = ["dep:time"]
-try_blocks = ["laraxum_macros?/try_blocks"]
 
 [lints.rust]
 async_fn_in_trait = "allow"

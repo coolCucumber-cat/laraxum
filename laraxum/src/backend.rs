@@ -19,15 +19,6 @@ pub trait AnyDb: Sized {
             Err(std::env::VarError::NotPresent) => Ok(Self::default_options()),
             Err(e) => Err(sqlx::Error::Configuration(Box::new(e))),
         }?;
-        // let url: <Self::Driver as sqlx::Connection>::Options = "".parse().unwrap();
-
-        // sqlx::MySqlPool::connect_with(options)
-        // let url = <<Self::Driver as sqlx::Connection>::Options>::from_str("").unwrap();
-        // let url = url.or_else(|e| match e {
-        //     std::env::VarError::NotPresent => Ok(Self::default_options()),
-        //     e => Err(sqlx::Error::Configuration(Box::new(e))),
-        // })?;
-
         Self::connect_with_options(options).await
     }
     fn db(&self) -> &Self::Db;
@@ -49,17 +40,17 @@ pub trait Collection: Table {
         r: Self::CreateRequest,
     ) -> Result<(), ModelError<Self::CreateRequestError>>;
 }
-pub trait Collection2: Table {
-    type GetAllRequestQuery;
-    type CreateRequest: Send;
-    type CreateRequestError;
-
-    fn get_all(db: &Self::Db) -> impl Future<Output = Result<Vec<Self::Response>, Error>> + Send;
-    fn create_one(
-        db: &Self::Db,
-        r: Self::CreateRequest,
-    ) -> impl Future<Output = Result<(), ModelError<Self::CreateRequestError>>> + Send;
-}
+// pub trait Collection2: Table {
+//     type GetAllRequestQuery;
+//     type CreateRequest: Send;
+//     type CreateRequestError;
+//
+//     fn get_all(db: &Self::Db) -> impl Future<Output = Result<Vec<Self::Response>, Error>> + Send;
+//     fn create_one(
+//         db: &Self::Db,
+//         r: Self::CreateRequest,
+//     ) -> impl Future<Output = Result<(), ModelError<Self::CreateRequestError>>> + Send;
+// }
 
 pub trait Model: Collection {
     type Id: Copy;
@@ -88,38 +79,38 @@ pub trait Model: Collection {
     async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
 }
 
-pub trait Model2: Collection2 {
-    type Id: Copy + Send + Sync;
-    type UpdateRequest: Send;
-    type UpdateRequestError;
-
-    fn get_one(
-        db: &Self::Db,
-        id: Self::Id,
-    ) -> impl Future<Output = Result<Self::Response, Error>> + Send;
-    fn create_get_one(
-        db: &Self::Db,
-        rq: Self::CreateRequest,
-    ) -> impl Future<Output = Result<Self::Response, ModelError<Self::CreateRequestError>>> + Send;
-    fn update_one(
-        db: &Self::Db,
-        rq: Self::UpdateRequest,
-        id: Self::Id,
-    ) -> impl Future<Output = Result<(), ModelError<Self::UpdateRequestError>>> + Send;
-    fn update_get_one(
-        db: &Self::Db,
-        rq: Self::UpdateRequest,
-        id: Self::Id,
-    ) -> impl Future<Output = Result<Self::Response, ModelError<Self::UpdateRequestError>>> + Send
-    {
-        async move {
-            Self::update_one(db, rq, id).await?;
-            let rs = Self::get_one(db, id).await?;
-            Ok(rs)
-        }
-    }
-    fn delete_one(db: &Self::Db, id: Self::Id) -> impl Future<Output = Result<(), Error>> + Send;
-}
+// pub trait Model2: Collection2 {
+//     type Id: Copy + Send + Sync;
+//     type UpdateRequest: Send;
+//     type UpdateRequestError;
+//
+//     fn get_one(
+//         db: &Self::Db,
+//         id: Self::Id,
+//     ) -> impl Future<Output = Result<Self::Response, Error>> + Send;
+//     fn create_get_one(
+//         db: &Self::Db,
+//         rq: Self::CreateRequest,
+//     ) -> impl Future<Output = Result<Self::Response, ModelError<Self::CreateRequestError>>> + Send;
+//     fn update_one(
+//         db: &Self::Db,
+//         rq: Self::UpdateRequest,
+//         id: Self::Id,
+//     ) -> impl Future<Output = Result<(), ModelError<Self::UpdateRequestError>>> + Send;
+//     fn update_get_one(
+//         db: &Self::Db,
+//         rq: Self::UpdateRequest,
+//         id: Self::Id,
+//     ) -> impl Future<Output = Result<Self::Response, ModelError<Self::UpdateRequestError>>> + Send
+//     {
+//         async move {
+//             Self::update_one(db, rq, id).await?;
+//             let rs = Self::get_one(db, id).await?;
+//             Ok(rs)
+//         }
+//     }
+//     fn delete_one(db: &Self::Db, id: Self::Id) -> impl Future<Output = Result<(), Error>> + Send;
+// }
 
 pub trait ManyModel<OneResponse>: Table {
     type OneRequest;
