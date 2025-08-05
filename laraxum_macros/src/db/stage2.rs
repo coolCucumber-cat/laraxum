@@ -298,11 +298,13 @@ pub struct Column {
     /// the type of the column in the rust struct
     pub rs_ty: Box<Type>,
     /// the response attribute of the column
-    pub attr_response: ColumnAttrResponse,
+    pub response: ColumnAttrResponse,
     /// the request attribute of the column
-    pub attr_request: ColumnAttrRequest,
+    pub request: ColumnAttrRequest,
     /// validation rules
     pub validate: Vec<ValidateRule>,
+    /// index
+    pub index: Option<Ident>,
 
     pub rs_attrs: Vec<Attribute>,
 }
@@ -312,17 +314,27 @@ impl TryFrom<stage1::Column> for Column {
         let stage1::Column {
             rs_name,
             rs_ty,
-            attr,
+            attr:
+                stage1::ColumnAttr {
+                    name,
+                    ty: attr_ty,
+                    response: attr_response,
+                    request: attr_request,
+                    real_ty,
+                    unique,
+                    index,
+                    attrs: rs_attrs,
+                },
         } = column;
 
-        let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
+        let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         // the real type that we actually want to parse, while keeping the type in the field the same
-        let real_rs_ty = attr.real_ty.map(|real_rs_ty| real_rs_ty.0);
+        let real_rs_ty = real_ty.map(|real_rs_ty| real_rs_ty.0);
         let real_rs_ty = real_rs_ty.as_deref();
         let real_rs_ty = real_rs_ty.unwrap_or(&*rs_ty);
         // let real_rs_ty = attr.real_ty.map_or(&*rs_ty, |real_rs_ty| real_rs_ty.0);
-        let attr_ty = ColumnAttrTy::from(attr.ty);
+        let attr_ty = ColumnAttrTy::from(attr_ty);
         let ty = match attr_ty {
             ColumnAttrTy::Compound(attr_ty_compound) => {
                 use ColumnAttrTyCompound as CATC;
@@ -335,11 +347,11 @@ impl TryFrom<stage1::Column> for Column {
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
                     (CATC::One, M::One) => TCM::One {
                         optional: false,
-                        unique: attr.unique,
+                        unique,
                     },
                     (CATC::One, M::OneOrZero) => TCM::One {
                         optional: true,
-                        unique: attr.unique,
+                        unique,
                     },
                     (CATC::One, M::Many) => {
                         return Err(syn::Error::new(
@@ -360,7 +372,7 @@ impl TryFrom<stage1::Column> for Column {
             ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
                 let ty_element_value = stage1::TyElementValue::try_from(real_rs_ty)?;
-                let ty_element_value = TyElementValue::new(ty_element_value, attr.unique);
+                let ty_element_value = TyElementValue::new(ty_element_value, unique);
                 match attr_ty_element {
                     CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
@@ -421,26 +433,21 @@ impl TryFrom<stage1::Column> for Column {
             }
         };
 
-        let validate = attr
-            .attr_request
-            .validate
-            .0
-            .into_iter()
-            .map(|validate_rule| {
-                use stage1::ValidateRule as S1VR;
-                match validate_rule {
-                    S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.0),
-                    S1VR::Func(func) => ValidateRule::Func(func.0),
-                    S1VR::Matches(matches) => ValidateRule::Matches(matches.0.0),
-                    S1VR::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
-                    S1VR::Eq(eq) => ValidateRule::Eq(eq.0),
-                    S1VR::NEq(n_eq) => ValidateRule::NEq(n_eq.0),
-                    S1VR::Gt(gt) => ValidateRule::Gt(gt.0),
-                    S1VR::Lt(lt) => ValidateRule::Lt(lt.0),
-                    S1VR::Gte(gte) => ValidateRule::Gte(gte.0),
-                    S1VR::Lte(lte) => ValidateRule::Lte(lte.0),
-                }
-            });
+        let validate = attr_request.validate.0.into_iter().map(|validate_rule| {
+            use stage1::ValidateRule as S1VR;
+            match validate_rule {
+                S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.0),
+                S1VR::Func(func) => ValidateRule::Func(func.0),
+                S1VR::Matches(matches) => ValidateRule::Matches(matches.0.0),
+                S1VR::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
+                S1VR::Eq(eq) => ValidateRule::Eq(eq.0),
+                S1VR::NEq(n_eq) => ValidateRule::NEq(n_eq.0),
+                S1VR::Gt(gt) => ValidateRule::Gt(gt.0),
+                S1VR::Lt(lt) => ValidateRule::Lt(lt.0),
+                S1VR::Gte(gte) => ValidateRule::Gte(gte.0),
+                S1VR::Lte(lte) => ValidateRule::Lte(lte.0),
+            }
+        });
         let max_len_validate_rule = ty
             .max_len()
             .map(|max_len| ValidateRule::MaxLen(max_len.into()));
@@ -448,22 +455,24 @@ impl TryFrom<stage1::Column> for Column {
         let validate = validate.collect();
 
         let attr_response = ColumnAttrResponse {
-            name: attr.attr_response.name,
-            skip: attr.attr_response.skip,
+            name: attr_response.name,
+            skip: attr_response.skip,
         };
         let attr_request = ColumnAttrRequest {
-            name: attr.attr_request.name,
+            name: attr_request.name,
         };
+        let index = index.map(|index| index.0);
 
         Ok(Self {
             name,
             rs_name,
             ty,
             rs_ty,
-            attr_response,
-            attr_request,
+            response: attr_response,
+            request: attr_request,
             validate,
-            rs_attrs: attr.attrs,
+            index,
+            rs_attrs,
         })
     }
 }

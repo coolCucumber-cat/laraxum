@@ -208,6 +208,7 @@ pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
     pub request: RequestColumnOne<'a>,
+    pub index: Option<&'a Ident>,
 }
 impl ColumnOne<'_> {
     pub fn name(&self) -> &str {
@@ -390,9 +391,10 @@ impl<'a> Table<'a> {
                     rs_name,
                     ty,
                     rs_ty,
-                    attr_response,
-                    attr_request,
+                    response: attr_response,
+                    request: attr_request,
                     validate,
+                    index,
                     rs_attrs,
                 } = column;
                 let (column_name_intern, column_name_extern) =
@@ -442,6 +444,7 @@ impl<'a> Table<'a> {
                             },
                             TyElement::AutoTime(_) | TyElement::Id => RequestColumnOne::None,
                         },
+                        index: index.as_ref(),
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: foreign_table_rs_name,
@@ -511,6 +514,7 @@ impl<'a> Table<'a> {
                                     validate,
                                 },
                             },
+                            index: index.as_ref(),
                         })
                     }
                     stage2::Ty::Compound(stage2::TyCompound {

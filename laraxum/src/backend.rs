@@ -134,6 +134,43 @@ pub trait ManyModel<OneResponse>: Table {
     async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
 }
 
+pub trait CollectionIndexMany<Index>: Collection {
+    type OneRequest;
+    type ManyResponse;
+    async fn get_index_many(
+        db: &Self::Db,
+        one: Self::OneRequest,
+    ) -> Result<Vec<Self::ManyResponse>, Error>;
+}
+pub trait CollectionIndexOne<Index>: Collection {
+    type OneRequest;
+    type OneResponse;
+    async fn get_index_one(
+        db: &Self::Db,
+        one: Self::OneRequest,
+    ) -> Result<Self::OneResponse, Error>;
+    async fn get_index_one_optional(
+        db: &Self::Db,
+        one: Self::OneRequest,
+    ) -> Result<Option<Self::OneResponse>, Error> {
+        match Self::get_index_one(db, one).await {
+            Ok(rs) => Ok(Some(rs)),
+            Err(Error::NotFound) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+    // async fn get_index_one_or_else(
+    //     db: &Self::Db,
+    //     one: Self::OneRequest,
+    //     f: impl FnOnce() -> Error,
+    // ) -> Result<Self::OneResponse, Error> {
+    //     Self::get_index_one(db, one).await.map_err(|err| match err {
+    //         Error::NotFound => f(),
+    //         _ => err,
+    //     })
+    // }
+}
+
 pub trait Decode {
     type Decode;
     fn decode(decode: Self::Decode) -> Self;

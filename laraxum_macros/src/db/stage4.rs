@@ -854,8 +854,139 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 }
             });
-            let request_setter = quote! {
+            let request_setter_token_stream = quote! {
                 #(#request_setter_columns,)*
+            };
+
+            let request_setter_compounds_columns =
+                table.columns.iter().filter_map(|column| match column {
+                    stage3::Column::Compounds(compounds) => Some(&compounds.request.setter),
+                    _ => None,
+                });
+
+            let request_setter_compounds_create_many =
+                request_setter_compounds_columns.clone().map(|column| {
+                    let stage3::RequestColumnSetterCompounds {
+                        rs_name,
+                        table_rs_name,
+                        foreign_table_rs_name: _,
+                        many_foreign_table_rs_name,
+                    } = column;
+                    quote! {{
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #table_rs_name,
+                        >>::create_many(
+                            db,
+                            id,
+                            &request.#rs_name,
+                        ).await?;
+                    }}
+                });
+            let request_setter_compounds_create_many = quote! {
+                #( #request_setter_compounds_create_many )*
+            };
+
+            let request_setter_compounds_update_many =
+                request_setter_compounds_columns.clone().map(|column| {
+                    let stage3::RequestColumnSetterCompounds {
+                        rs_name,
+                        table_rs_name,
+                        foreign_table_rs_name: _,
+                        many_foreign_table_rs_name,
+                    } = column;
+                    quote! {{
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #table_rs_name,
+                        >>::update_many(
+                            db,
+                            id,
+                            &request.#rs_name,
+                        ).await?;
+                    }}
+                });
+            let request_setter_compounds_update_many = quote! {
+                #( #request_setter_compounds_update_many )*
+            };
+
+            let request_setter_compounds_delete_many =
+                request_setter_compounds_columns.clone().map(|column| {
+                    let stage3::RequestColumnSetterCompounds {
+                        rs_name: _,
+                        table_rs_name,
+                        foreign_table_rs_name: _,
+                        many_foreign_table_rs_name,
+                    } = column;
+                    quote! {{
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #table_rs_name,
+                        >>::delete_many(
+                            db,
+                            id,
+                        ).await?;
+                    }}
+                });
+            let request_setter_compounds_delete_many = quote! {
+                #( #request_setter_compounds_delete_many )*
+            };
+
+            let get_all = get_all(
+                &table.name_intern,
+                &table.name_extern,
+                &response_getter_column_elements,
+                &response_getter_column_compounds,
+            );
+            let request_columns = table.columns.iter().flat_map(|column| column.request_one());
+            let create_one = create_one(&table.name_intern, request_columns.clone());
+
+            let collection_token_stream = quote! {
+                #[derive(::serde::Deserialize)]
+                pub struct #table_request_rs_name {
+                    #(#request_column_fields),*
+                }
+
+                impl ::laraxum::Collection for #table_rs_name {
+                    type GetAllRequestQuery = ();
+                    type CreateRequest = #table_request_rs_name;
+                    type CreateRequestError = #table_request_error_rs_name;
+
+                    /// `get_all`
+                    ///
+                    /// ```sql
+                    #[doc = #get_all]
+                    /// ```
+                    async fn get_all(db: &Self::Db)
+                        -> ::core::result::Result<
+                            ::std::vec::Vec<Self::Response>,
+                            ::laraxum::Error,
+                        >
+                    {
+                        let response = ::sqlx::query!(#get_all);
+                        let response = response.fetch(&db.pool);
+                        let response = ::futures::StreamExt::then(response, #response_getter);
+                        let response: ::std::vec::Vec<_> =
+                            ::futures::TryStreamExt::try_collect(response).await?;
+                        ::core::result::Result::Ok(response)
+                    }
+                    async fn create_one(
+                        db: &Self::Db,
+                        request: Self::CreateRequest,
+                    )
+                        -> ::core::result::Result<
+                            (),
+                            ::laraxum::ModelError<Self::CreateRequestError>>
+                    {
+                        <
+                            Self::CreateRequest
+                            as ::laraxum::Request::<::laraxum::request::method::Create>
+                        >::validate(&request)?;
+                        let response = ::sqlx::query!(#create_one, #request_setter_token_stream);
+                        let response = response.execute(&db.pool).await?;
+                        let id = response.last_insert_id();
+                        #request_setter_compounds_create_many
+                        ::core::result::Result::Ok(())
+                    }
+                }
+
             };
 
             let request_column_validate =
@@ -1001,138 +1132,95 @@ impl From<stage3::Table<'_>> for Table {
             //                 }
             //             };
 
-            let request_setter_compounds_columns =
-                table.columns.iter().filter_map(|column| match column {
-                    stage3::Column::Compounds(compounds) => Some(&compounds.request.setter),
-                    _ => None,
+            let indexes = table
+                .columns
+                .iter()
+                .filter_map(|column| match column {
+                    stage3::Column::One(one) => Some(one),
+                    stage3::Column::Compounds(_) => None,
+                })
+                .filter_map(|column| {
+                    let index = column.index?;
+                    let rs_ty = column.response.field.rs_ty;
+                    let name_intern = column.name_intern();
+                    let unique = column.create.ty.unique();
+
+                    let get_filter = get_filter(
+                        &table.name_intern,
+                        &table.name_extern,
+                        name_intern,
+                        &response_getter_column_elements,
+                        &response_getter_column_compounds,
+                    );
+
+                    let index_token_stream = if unique {
+                        quote! {
+                            impl ::laraxum::CollectionIndexOne<#index> for #table_rs_name {
+                                type OneRequest = #rs_ty;
+                                type OneResponse = Self;
+                                async fn get_index_one(
+                                    db: &Self::Db,
+                                    one: Self::OneRequest,
+                                )
+                                    -> ::core::result::Result<
+                                        Self::OneResponse,
+                                        ::laraxum::Error,
+                                    >
+                                {
+                                    let response = ::sqlx::query!(#get_filter, one);
+                                    let response = response.fetch(&db.pool);
+                                    let mut response =
+                                        ::futures::StreamExt::then(response, #response_getter);
+                                    let mut response = ::core::pin::pin!(response);
+                                    let response =
+                                        ::futures::TryStreamExt::try_next(&mut response).await?;
+                                    ::core::option::Option::ok_or(
+                                        response,
+                                        ::laraxum::Error::NotFound,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        quote! {
+                            impl ::laraxum::CollectionIndexMany<#index> for #table_rs_name {
+                                type OneRequest = #rs_ty;
+                                type ManyResponse = Self;
+                                async fn get_index_many(
+                                    db: &Self::Db,
+                                    one: Self::OneRequest,
+                                )
+                                    -> ::core::result::Result<
+                                        ::std::vec::Vec<Self::ManyResponse>,
+                                        ::laraxum::Error,
+                                    >
+                                {
+                                    let response = ::sqlx::query!(#get_filter, one);
+                                    let response = response.fetch(&db.pool);
+                                    let response =
+                                        ::futures::StreamExt::then(response, #response_getter);
+                                    let response: ::std::vec::Vec<_> =
+                                        ::futures::TryStreamExt::try_collect(response).await?;
+                                    ::core::result::Result::Ok(response)
+                                }
+                            }
+                        }
+                    };
+                    let index_token_stream = quote! {
+                        pub struct #index;
+                        #index_token_stream
+                    };
+                    Some(index_token_stream)
                 });
 
-            let request_setter_compounds_create_many =
-                request_setter_compounds_columns.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
-                        rs_name,
-                        table_rs_name,
-                        foreign_table_rs_name: _,
-                        many_foreign_table_rs_name,
-                    } = column;
-                    quote! {{
-                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #table_rs_name,
-                        >>::create_many(
-                            db,
-                            id,
-                            &request.#rs_name,
-                        ).await?;
-                    }}
-                });
-            let request_setter_compounds_create_many = quote! {
-                #( #request_setter_compounds_create_many )*
-            };
-
-            let request_setter_compounds_update_many =
-                request_setter_compounds_columns.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
-                        rs_name,
-                        table_rs_name,
-                        foreign_table_rs_name: _,
-                        many_foreign_table_rs_name,
-                    } = column;
-                    quote! {{
-                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #table_rs_name,
-                        >>::update_many(
-                            db,
-                            id,
-                            &request.#rs_name,
-                        ).await?;
-                    }}
-                });
-            let request_setter_compounds_update_many = quote! {
-                #( #request_setter_compounds_update_many )*
-            };
-
-            let request_setter_compounds_delete_many =
-                request_setter_compounds_columns.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
-                        rs_name: _,
-                        table_rs_name,
-                        foreign_table_rs_name: _,
-                        many_foreign_table_rs_name,
-                    } = column;
-                    quote! {{
-                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #table_rs_name,
-                        >>::delete_many(
-                            db,
-                            id,
-                        ).await?;
-                    }}
-                });
-            let request_setter_compounds_delete_many = quote! {
-                #( #request_setter_compounds_delete_many )*
-            };
-
-            let get_all = get_all(
-                &table.name_intern,
-                &table.name_extern,
-                &response_getter_column_elements,
-                &response_getter_column_compounds,
-            );
-            let request_columns = table.columns.iter().flat_map(|column| column.request_one());
-            let create_one = create_one(&table.name_intern, request_columns.clone());
-
-            let collection_token_stream = quote! {
-                #[derive(::serde::Deserialize)]
-                pub struct #table_request_rs_name {
-                    #(#request_column_fields),*
-                }
-
-                impl ::laraxum::Collection for #table_rs_name {
-                    type GetAllRequestQuery = ();
-                    type CreateRequest = #table_request_rs_name;
-                    type CreateRequestError = #table_request_error_rs_name;
-
-                    /// `get_all`
-                    ///
-                    /// ```sql
-                    #[doc = #get_all]
-                    /// ```
-                    async fn get_all(db: &Self::Db)
-                        -> ::core::result::Result<
-                            ::std::vec::Vec<Self::Response>,
-                            ::laraxum::Error,
-                        >
-                    {
-                        let response = ::sqlx::query!(#get_all);
-                        let response = response.fetch(&db.pool);
-                        let response = ::futures::StreamExt::then(response, #response_getter);
-                        let response: ::std::vec::Vec<_> =
-                            ::futures::TryStreamExt::try_collect(response).await?;
-                        ::core::result::Result::Ok(response)
-                    }
-                    async fn create_one(
-                        db: &Self::Db,
-                        request: Self::CreateRequest,
-                    )
-                        -> ::core::result::Result<
-                            (),
-                            ::laraxum::ModelError<Self::CreateRequestError>>
-                    {
-                        <
-                            Self::CreateRequest
-                            as ::laraxum::Request::<::laraxum::request::method::Create>
-                        >::validate(&request)?;
-                        let response = ::sqlx::query!(#create_one, #request_setter);
-                        let response = response.execute(&db.pool).await?;
-                        let id = response.last_insert_id();
-                        #request_setter_compounds_create_many
-                        ::core::result::Result::Ok(())
-                    }
-                }
+            let token_stream = quote! {
+                #collection_token_stream
+                #request_error_token_stream
+                #( #indexes )*
             };
 
             let Some(table_id) = table.columns.model() else {
-                return collection_token_stream;
+                return token_stream;
             };
 
             let (table_id_name, table_id_name_intern) = match table_id {
@@ -1153,8 +1241,7 @@ impl From<stage3::Table<'_>> for Table {
             let delete_one = delete_one(&table.name_intern, table_id_name);
 
             quote! {
-                #request_error_token_stream
-                #collection_token_stream
+                #token_stream
 
                 impl ::laraxum::Model for #table_rs_name {
                     type Id = u64;
@@ -1195,7 +1282,7 @@ impl From<stage3::Table<'_>> for Table {
                             Self::CreateRequest
                             as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
-                        let response = ::sqlx::query!(#create_one, #request_setter);
+                        let response = ::sqlx::query!(#create_one, #request_setter_token_stream);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
                         #request_setter_compounds_create_many
@@ -1217,7 +1304,7 @@ impl From<stage3::Table<'_>> for Table {
                             as ::laraxum::Request::<::laraxum::request::method::Update>
                         >::validate(&request)?;
 
-                        let response = ::sqlx::query!(#update_one, #request_setter id);
+                        let response = ::sqlx::query!(#update_one, #request_setter_token_stream id);
                         response.execute(&db.pool).await?;
                         #request_setter_compounds_update_many
                         ::core::result::Result::Ok(())
