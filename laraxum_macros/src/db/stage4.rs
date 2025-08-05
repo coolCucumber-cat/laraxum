@@ -139,8 +139,7 @@ impl stage3::TyElement {
     const fn unique_constraint(&self) -> bool {
         match self {
             Self::Id => false,
-            // TODO: unique
-            Self::Value(_value) => false,
+            Self::Value(value) => value.unique,
             Self::AutoTime(_) => false,
         }
     }
@@ -1256,10 +1255,13 @@ impl From<stage3::Table<'_>> for Table {
         });
 
         let controller_token_stream = table.columns.is_controller().then(|| {
+            let auth = table
+                .auth
+                .map_or_else(|| quote! { () }, |ty| ty.to_token_stream());
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
-                    type Headers = ();
+                    type Auth = #auth;
                 }
             }
         });

@@ -202,8 +202,8 @@ pub struct ColumnAttr {
     pub attr_response: ColumnAttrResponse,
     #[darling(rename = "request")]
     pub attr_request: ColumnAttrRequest,
-    pub real_ty: Option<Box<crate::utils::syn::TokenStreamAttr<Type>>>,
-
+    pub real_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+    pub unique: bool,
     pub attrs: Vec<Attribute>,
 }
 
@@ -255,7 +255,8 @@ pub struct TableAttr {
     pub controller: Option<darling::util::SpannedValue<()>>,
     pub many_model: Option<darling::util::SpannedValue<()>>,
     pub name: Option<String>,
-
+    pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+    // pub auth: Option<Box<crate::utils::syn::TokenStreamAttr<Type>>>,
     pub attrs: Vec<Attribute>,
 }
 

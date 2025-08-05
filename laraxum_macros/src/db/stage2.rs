@@ -14,6 +14,7 @@ const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
+const COLUMN_MUST_NOT_BE_UNIQUE: &str = "column must not be unique";
 const COLUMN_MUST_BE_VEC: &str = "column must be Vec";
 const COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE: &str = "column must specify intermediate table";
 
@@ -94,12 +95,14 @@ impl From<stage1::AtomicTy> for AtomicTy {
 pub struct TyElementValue {
     pub ty: AtomicTy,
     pub optional: bool,
+    pub unique: bool,
 }
-impl From<stage1::TyElementValue> for TyElementValue {
-    fn from(ty_element_value: stage1::TyElementValue) -> Self {
+impl TyElementValue {
+    fn new(ty_element_value: stage1::TyElementValue, unique: bool) -> Self {
         Self {
             ty: AtomicTy::from(ty_element_value.ty),
             optional: ty_element_value.optional,
+            unique,
         }
     }
 }
@@ -175,8 +178,7 @@ impl TyElement {
     pub const fn unique(&self) -> bool {
         match self {
             Self::Id => true,
-            // TODO: unique
-            Self::Value(_value) => false,
+            Self::Value(value) => value.unique,
             Self::AutoTime(_) => false,
         }
     }
@@ -201,12 +203,15 @@ impl TyElement {
 }
 
 pub enum TyCompoundMultiplicity {
-    One { optional: bool },
+    One { optional: bool, unique: bool },
     Many(Ident),
 }
 impl TyCompoundMultiplicity {
     pub const fn optional(&self) -> bool {
-        matches!(*self, Self::One { optional } if optional)
+        matches!(*self, Self::One { optional,.. } if optional)
+    }
+    pub const fn unique(&self) -> bool {
+        matches!(*self, Self::One { unique,.. } if unique)
     }
 }
 
@@ -296,6 +301,7 @@ pub struct Column {
     pub attr_response: ColumnAttrResponse,
     /// the request attribute of the column
     pub attr_request: ColumnAttrRequest,
+    /// validation rules
     pub validate: Vec<ValidateRule>,
 
     pub rs_attrs: Vec<Attribute>,
@@ -312,11 +318,10 @@ impl TryFrom<stage1::Column> for Column {
         let name = attr.name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         // the real type that we actually want to parse, while keeping the type in the field the same
-        let real_rs_ty = attr
-            .real_ty
-            .as_deref()
-            .map_or(&*rs_ty, |real_rs_ty| &real_rs_ty.0);
-
+        let real_rs_ty = attr.real_ty.map(|real_rs_ty| real_rs_ty.0);
+        let real_rs_ty = real_rs_ty.as_deref();
+        let real_rs_ty = real_rs_ty.unwrap_or(&*rs_ty);
+        // let real_rs_ty = attr.real_ty.map_or(&*rs_ty, |real_rs_ty| real_rs_ty.0);
         let attr_ty = ColumnAttrTy::from(attr.ty);
         let ty = match attr_ty {
             ColumnAttrTy::Compound(attr_ty_compound) => {
@@ -328,8 +333,14 @@ impl TryFrom<stage1::Column> for Column {
                     multiplicity: ty_compound_multiplicity,
                 } = stage1::TyCompound::try_from(real_rs_ty)?;
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
-                    (CATC::One, M::One) => TCM::One { optional: false },
-                    (CATC::One, M::OneOrZero) => TCM::One { optional: true },
+                    (CATC::One, M::One) => TCM::One {
+                        optional: false,
+                        unique: attr.unique,
+                    },
+                    (CATC::One, M::OneOrZero) => TCM::One {
+                        optional: true,
+                        unique: attr.unique,
+                    },
                     (CATC::One, M::Many) => {
                         return Err(syn::Error::new(
                             real_rs_ty.span(),
@@ -349,11 +360,18 @@ impl TryFrom<stage1::Column> for Column {
             ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
                 let ty_element_value = stage1::TyElementValue::try_from(real_rs_ty)?;
-                let ty_element_value = TyElementValue::from(ty_element_value);
+                let ty_element_value = TyElementValue::new(ty_element_value, attr.unique);
                 match attr_ty_element {
                     CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
-                        let TyElementValue { ty, optional } = ty_element_value;
+                        let TyElementValue {
+                            ty,
+                            optional,
+                            unique,
+                        } = ty_element_value;
+                        if unique {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_UNIQUE));
+                        }
                         let AtomicTy::u64 = ty else {
                             return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
                         };
@@ -363,7 +381,11 @@ impl TryFrom<stage1::Column> for Column {
                         Ty::Element(TyElement::Id)
                     }
                     CATE::String(atomic_ty_string) => {
-                        let TyElementValue { ty, optional } = ty_element_value;
+                        let TyElementValue {
+                            ty,
+                            optional,
+                            unique,
+                        } = ty_element_value;
                         let AtomicTy::String(_) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
                         };
@@ -371,10 +393,18 @@ impl TryFrom<stage1::Column> for Column {
                         Ty::Element(TyElement::Value(TyElementValue {
                             ty: AtomicTy::String(atomic_ty_string),
                             optional,
+                            unique,
                         }))
                     }
                     CATE::AutoTime(auto_time_event) => {
-                        let TyElementValue { ty, optional } = ty_element_value;
+                        let TyElementValue {
+                            ty,
+                            optional,
+                            unique,
+                        } = ty_element_value;
+                        if unique {
+                            return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_UNIQUE));
+                        }
                         let AtomicTy::Time(ty) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_TIME));
                         };
@@ -432,8 +462,8 @@ impl TryFrom<stage1::Column> for Column {
             rs_ty,
             attr_response,
             attr_request,
-            rs_attrs: attr.attrs,
             validate,
+            rs_attrs: attr.attrs,
         })
     }
 }
@@ -524,6 +554,8 @@ pub struct Table {
     pub rs_name: Ident,
     /// the columns in the database
     pub columns: Columns<Column>,
+    /// auth rules
+    pub auth: Option<Box<Type>>,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -542,6 +574,7 @@ impl TryFrom<stage1::Table> for Table {
                     many_model: many_model_attr,
                     name,
                     attrs: rs_attrs,
+                    auth,
                 },
             rs_vis,
         } = table;
@@ -619,10 +652,13 @@ impl TryFrom<stage1::Table> for Table {
             (None, None) => Columns::CollectionOnly { columns },
         };
 
+        let auth = auth.map(|auth| auth.0);
+
         Ok(Self {
             name,
             rs_name,
             columns,
+            auth,
             rs_vis,
             rs_attrs,
         })

@@ -1,7 +1,11 @@
 use super::stage2;
 
-use crate::utils::borrow::DerefEither;
-use crate::utils::collections::TryCollectAll;
+pub use stage2::{
+    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, TyElement,
+    TyElementAutoTime,
+};
+
+use crate::utils::{borrow::DerefEither, collections::TryCollectAll};
 
 use std::borrow::Cow;
 
@@ -22,23 +26,18 @@ fn name_intern_extern(parent_child: (&str, &str)) -> (String, String) {
     (name_intern(parent_child), name_extern(parent_child))
 }
 
-pub use stage2::{
-    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, TyElement,
-    TyElementAutoTime,
-};
-
 pub struct TyCompound<'a> {
     pub foreign_table_name: &'a str,
     pub foreign_table_id_name: &'a str,
     pub optional: bool,
+    pub unique: bool,
 }
 impl TyCompound<'_> {
     pub const fn optional(&self) -> bool {
         self.optional
     }
     pub const fn unique(&self) -> bool {
-        // TODO: unique
-        false
+        self.unique
     }
 }
 
@@ -283,6 +282,7 @@ pub struct Table<'a> {
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
     pub columns: Columns<Column<'a>>,
+    pub auth: Option<&'a Type>,
 }
 
 impl<'a> Table<'a> {
@@ -323,7 +323,11 @@ impl<'a> Table<'a> {
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: foreign_table_rs_name,
-                        multiplicity: stage2::TyCompoundMultiplicity::One { optional },
+                        multiplicity:
+                            stage2::TyCompoundMultiplicity::One {
+                                optional,
+                                unique: _,
+                            },
                     }) => {
                         let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
                         let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
@@ -388,8 +392,8 @@ impl<'a> Table<'a> {
                     rs_ty,
                     attr_response,
                     attr_request,
-                    rs_attrs,
                     validate,
+                    rs_attrs,
                 } = column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
@@ -441,7 +445,7 @@ impl<'a> Table<'a> {
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: foreign_table_rs_name,
-                        multiplicity: stage2::TyCompoundMultiplicity::One { optional },
+                        multiplicity: stage2::TyCompoundMultiplicity::One { optional, unique },
                     }) => {
                         let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
                         let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
@@ -479,6 +483,7 @@ impl<'a> Table<'a> {
                                     foreign_table_name: &foreign_table.name,
                                     foreign_table_id_name: &foreign_table_id.name,
                                     optional: *optional,
+                                    unique: *unique,
                                 }),
                             },
                             response: ResponseColumnOne {
@@ -565,6 +570,7 @@ impl<'a> Table<'a> {
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
         let table_request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
         let table_rs_attrs = &*table.rs_attrs;
+        let auth = table.auth.as_deref();
         Ok(Self {
             name_intern: table_name_intern,
             name_extern: table_name_extern,
@@ -574,6 +580,7 @@ impl<'a> Table<'a> {
             db_rs_name: &db.rs_name,
             rs_attrs: table_rs_attrs,
             columns,
+            auth,
         })
     }
 }

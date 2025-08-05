@@ -6,7 +6,7 @@ use crate::{
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRequest, OptionalFromRequest, Path, Query, State},
+    extract::{FromRequest, FromRequestParts, OptionalFromRequest, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -21,13 +21,15 @@ where
     <Self as Model>::Id: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequest: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequestError: Serialize,
+    AuthHeader<Self::Auth>: FromRequestParts<Arc<Self::State>>,
 {
     type State: AnyDb<Db = Self::Db>;
-    type Headers;
+    type Auth;
 
     #[allow(unused_variables)]
     async fn index(
         State(state): State<Arc<Self::State>>,
+        AuthHeader(_): AuthHeader<Self::Auth>,
         Query(query): Query<Self::GetAllRequestQuery>,
     ) -> Result<Json<Vec<Self::Response>>, Error> {
         let rs = Self::get_all(state.db()).await?;
@@ -35,6 +37,7 @@ where
     }
     async fn get(
         State(state): State<Arc<Self::State>>,
+        AuthHeader(_): AuthHeader<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<Json<Self::Response>, Error> {
         let rs = Self::get_one(state.db(), id).await?;
@@ -42,6 +45,7 @@ where
     }
     async fn create(
         State(state): State<Arc<Self::State>>,
+        AuthHeader(_): AuthHeader<Self::Auth>,
         Json(rq): Json<Self::CreateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::CreateRequestError>> {
         let rs = Self::create_get_one(state.db(), rq).await?;
@@ -49,6 +53,7 @@ where
     }
     async fn update(
         State(state): State<Arc<Self::State>>,
+        AuthHeader(_): AuthHeader<Self::Auth>,
         Path(id): Path<Self::Id>,
         Json(rq): Json<Self::UpdateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::UpdateRequestError>> {
@@ -57,6 +62,7 @@ where
     }
     async fn delete(
         State(state): State<Arc<Self::State>>,
+        AuthHeader(_): AuthHeader<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<(), Error> {
         Self::delete_one(state.db(), id).await?;
@@ -345,26 +351,39 @@ where
 // }
 
 pub trait Auth: Sized {
-    type State;
+    type State: Send + Sync;
     fn auth(auth: &str, state: &Self::State) -> Result<Self, AuthError>;
 }
 
 pub struct AuthHeader<T>(pub T);
-impl<T, State> FromRequest<State> for AuthHeader<T>
+impl<T, State> FromRequestParts<State> for AuthHeader<T>
 where
     T: Auth<State = State>,
     State: Send + Sync,
 {
     type Rejection = AuthError;
-    async fn from_request(
-        req: axum::extract::Request,
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
         state: &State,
     ) -> Result<Self, Self::Rejection> {
-        let auth = req
-            .headers()
+        let auth = parts
+            .headers
             .get(axum::http::header::AUTHORIZATION)
             .ok_or(AuthError::Unauthenticated)?;
         let auth = auth.to_str().map_err(|_| AuthError::Unauthenticated)?;
         T::auth(auth, state).map(Self)
+    }
+}
+
+impl<State> FromRequestParts<State> for AuthHeader<()>
+where
+    State: Send + Sync,
+{
+    type Rejection = core::convert::Infallible;
+    async fn from_request_parts(
+        _: &mut axum::http::request::Parts,
+        _: &State,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(AuthHeader(()))
     }
 }
