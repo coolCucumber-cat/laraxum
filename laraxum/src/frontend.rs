@@ -6,6 +6,7 @@ use crate::{
 use std::sync::Arc;
 
 use axum::{
+    RequestExt, RequestPartsExt,
     extract::{FromRequest, FromRequestParts, OptionalFromRequest, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -21,7 +22,7 @@ where
     <Self as Model>::Id: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequest: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequestError: Serialize,
-    AuthHeader<Self::Auth>: FromRequestParts<Arc<Self::State>>,
+    Auth<Self::Auth>: FromRequestParts<Arc<Self::State>>,
 {
     type State: AnyDb<Db = Self::Db>;
     type Auth;
@@ -29,7 +30,7 @@ where
     #[allow(unused_variables)]
     async fn index(
         State(state): State<Arc<Self::State>>,
-        AuthHeader(_): AuthHeader<Self::Auth>,
+        Auth(_): Auth<Self::Auth>,
         Query(query): Query<Self::GetAllRequestQuery>,
     ) -> Result<Json<Vec<Self::Response>>, Error> {
         let rs = Self::get_all(state.db()).await?;
@@ -37,7 +38,7 @@ where
     }
     async fn get(
         State(state): State<Arc<Self::State>>,
-        AuthHeader(_): AuthHeader<Self::Auth>,
+        Auth(_): Auth<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<Json<Self::Response>, Error> {
         let rs = Self::get_one(state.db(), id).await?;
@@ -45,7 +46,7 @@ where
     }
     async fn create(
         State(state): State<Arc<Self::State>>,
-        AuthHeader(_): AuthHeader<Self::Auth>,
+        Auth(_): Auth<Self::Auth>,
         Json(rq): Json<Self::CreateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::CreateRequestError>> {
         let rs = Self::create_get_one(state.db(), rq).await?;
@@ -53,7 +54,7 @@ where
     }
     async fn update(
         State(state): State<Arc<Self::State>>,
-        AuthHeader(_): AuthHeader<Self::Auth>,
+        Auth(_): Auth<Self::Auth>,
         Path(id): Path<Self::Id>,
         Json(rq): Json<Self::UpdateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::UpdateRequestError>> {
@@ -62,7 +63,7 @@ where
     }
     async fn delete(
         State(state): State<Arc<Self::State>>,
-        AuthHeader(_): AuthHeader<Self::Auth>,
+        Auth(_): Auth<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<(), Error> {
         Self::delete_one(state.db(), id).await?;
@@ -178,18 +179,62 @@ where
 {
     type Rejection = DeserializeRequestError<serde_json::Error>;
     async fn from_request(
-        req: axum::extract::Request,
+        mut req: axum::extract::Request,
         state: &State,
     ) -> Result<Self, Self::Rejection> {
-        match req.headers().get(axum::http::header::CONTENT_TYPE) {
-            Some(content_type_header) if json_content_type(content_type_header) => {
-                let bytes = bytes::Bytes::from_request(req, state)
-                    .await
-                    .map_err(DeserializeRequestError::Bytes)?;
-                Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
-            }
-            _ => Err(DeserializeRequestError::ContentType),
+        use axum_extra::{TypedHeader, headers::ContentType};
+        let TypedHeader(content_type) = req
+            .extract_parts::<TypedHeader<ContentType>>()
+            .await
+            .map_err(|_| DeserializeRequestError::ContentType)?;
+        let mime = mime::Mime::from(content_type);
+        if json_mime(mime) {
+            let bytes = bytes::Bytes::from_request(req, state)
+                .await
+                .map_err(DeserializeRequestError::Bytes)?;
+            Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
+        } else {
+            Err(DeserializeRequestError::ContentType)
         }
+
+        // let content_type = req.extract_parts::<TypedHeader<ContentType>>().await;
+        // let mime = content_type.map(|TypedHeader(content_type)| mime::Mime::from(content_type));
+        //
+        // match mime {
+        //     Ok(mime) if json_mime(mime) => {
+        //         let bytes = bytes::Bytes::from_request(req, state)
+        //             .await
+        //             .map_err(DeserializeRequestError::Bytes)?;
+        //         Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
+        //     }
+        //     _ => Err(DeserializeRequestError::ContentType),
+        // }
+        // if content_type.is_ok_and(|TypedHeader(content_type)| json_mime(content_type.into())) {
+        //     let bytes = bytes::Bytes::from_request(req, state)
+        //         .await
+        //         .map_err(DeserializeRequestError::Bytes)?;
+        //     Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
+        // } else {
+        //     Err(DeserializeRequestError::ContentType)
+        // }
+        // match req.extract_parts::<TypedHeader<ContentType>>().await {
+        //     Ok(TypedHeader(content_type)) => {
+        //         let bytes = bytes::Bytes::from_request(req, state)
+        //             .await
+        //             .map_err(DeserializeRequestError::Bytes)?;
+        //         Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
+        //     }
+        //     _ => Err(DeserializeRequestError::ContentType),
+        // }
+        // match req.headers().get(axum::http::header::CONTENT_TYPE) {
+        //     Some(content_type_header) if json_content_type(content_type_header) => {
+        //         let bytes = bytes::Bytes::from_request(req, state)
+        //             .await
+        //             .map_err(DeserializeRequestError::Bytes)?;
+        //         Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
+        //     }
+        //     _ => Err(DeserializeRequestError::ContentType),
+        // }
     }
 }
 impl<T, State> OptionalFromRequest<State> for Json<T>
@@ -199,21 +244,68 @@ where
 {
     type Rejection = DeserializeRequestError<serde_json::Error>;
     async fn from_request(
-        req: axum::extract::Request,
+        mut req: axum::extract::Request,
         state: &State,
     ) -> Result<Option<Self>, Self::Rejection> {
-        match req.headers().get(axum::http::header::CONTENT_TYPE) {
-            Some(content_type_header) if json_content_type(content_type_header) => {
-                let bytes = bytes::Bytes::from_request(req, state)
-                    .await
-                    .map_err(DeserializeRequestError::Bytes)?;
-                Self::from_bytes(&bytes)
-                    .map(Some)
-                    .map_err(DeserializeRequestError::Serde)
+        use axum_extra::{TypedHeader, headers::ContentType};
+        let content_type = req
+            .extract_parts::<Option<TypedHeader<ContentType>>>()
+            .await
+            .map_err(|_| DeserializeRequestError::ContentType)?;
+
+        match content_type {
+            Some(TypedHeader(content_type)) => {
+                if json_mime(mime::Mime::from(content_type)) {
+                    let bytes = bytes::Bytes::from_request(req, state)
+                        .await
+                        .map_err(DeserializeRequestError::Bytes)?;
+                    let t = Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)?;
+                    Ok(Some(t))
+                } else {
+                    Err(DeserializeRequestError::ContentType)
+                }
             }
             None => Ok(None),
-            _ => Err(DeserializeRequestError::ContentType),
         }
+        // match content_type {
+        //     Some(TypedHeader(content_type)) => {
+        //         if json_mime(mime::Mime::from(content_type)) {
+        //             let bytes = bytes::Bytes::from_request(req, state)
+        //                 .await
+        //                 .map_err(DeserializeRequestError::Bytes)?;
+        //             let t = Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)?;
+        //             Ok(Some(t))
+        //         } else {
+        //             Err(DeserializeRequestError::ContentType)
+        //         }
+        //     }
+        //     None => Ok(None),
+        // }
+
+        // match req.extract_parts::<TypedHeader<ContentType>>().await {
+        //     Ok(TypedHeader(content_type)) if json_mime(content_type.clone().into()) => {
+        //         let bytes = bytes::Bytes::from_request(req, state)
+        //             .await
+        //             .map_err(DeserializeRequestError::Bytes)?;
+        //         Self::from_bytes(&bytes)
+        //             .map(Some)
+        //             .map_err(DeserializeRequestError::Serde)
+        //     }
+        //     Err(err) if err.is_missing() => Ok(None),
+        //     _ => Err(DeserializeRequestError::ContentType),
+        // }
+        // match req.headers().get(axum::http::header::CONTENT_TYPE) {
+        //     Some(content_type_header) if json_content_type(content_type_header) => {
+        //         let bytes = bytes::Bytes::from_request(req, state)
+        //             .await
+        //             .map_err(DeserializeRequestError::Bytes)?;
+        //         Self::from_bytes(&bytes)
+        //             .map(Some)
+        //             .map_err(DeserializeRequestError::Serde)
+        //     }
+        //     None => Ok(None),
+        //     _ => Err(DeserializeRequestError::ContentType),
+        // }
     }
 }
 impl<T> IntoResponse for Json<T>
@@ -280,12 +372,12 @@ pub fn content_type(content_type_header: &axum::http::HeaderValue) -> Option<mim
     let content_type = content_type_header.to_str().ok()?;
     content_type.parse::<mime::Mime>().ok()
 }
+fn json_mime(mime: mime::Mime) -> bool {
+    mime.type_() == "application"
+        && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"))
+}
 pub fn json_content_type(content_type_header: &axum::http::HeaderValue) -> bool {
-    fn is_some_and(mime: mime::Mime) -> bool {
-        mime.type_() == "application"
-            && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"))
-    }
-    content_type(content_type_header).is_some_and(is_some_and)
+    content_type(content_type_header).is_some_and(json_mime)
 }
 
 #[non_exhaustive]
@@ -350,15 +442,35 @@ where
 //     }
 // }
 
-pub trait Auth: Sized {
+pub trait Authenticate: Serialize + for<'a> Deserialize<'a> + Sized {
     type State: Send + Sync;
-    fn auth(auth: &str, state: &Self::State) -> Result<Self, AuthError>;
+    fn authenticate(&self, state: &Self::State) -> Result<(), AuthError>;
+    fn auth_keys() -> &'static AuthKeys;
 }
+// pub trait Authenticate {
+//     type Authenticated;
+//     type State: Send + Sync;
+//     fn authenticate(&self, state: &Self::State) -> Result<Self::Authenticated, AuthError>;
+// }
+pub trait Authorize {}
 
-pub struct AuthHeader<T>(pub T);
-impl<T, State> FromRequestParts<State> for AuthHeader<T>
+pub struct Auth<T>(pub T);
+impl<T> Auth<T>
 where
-    T: Auth<State = State>,
+    T: Authenticate,
+{
+    pub fn to_string(&self) -> Result<String, AuthError> {
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &self.0,
+            &T::auth_keys().encoding,
+        )
+        .map_err(|_| AuthError::Unauthenticated)
+    }
+}
+impl<T, State> FromRequestParts<State> for Auth<T>
+where
+    T: Authenticate<State = State>,
     State: Send + Sync,
 {
     type Rejection = AuthError;
@@ -366,16 +478,39 @@ where
         parts: &mut axum::http::request::Parts,
         state: &State,
     ) -> Result<Self, Self::Rejection> {
-        let auth = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .ok_or(AuthError::Unauthenticated)?;
-        let auth = auth.to_str().map_err(|_| AuthError::Unauthenticated)?;
-        T::auth(auth, state).map(Self)
+        use axum_extra::{
+            TypedHeader,
+            headers::{Authorization, authorization::Bearer},
+        };
+        let TypedHeader(Authorization(bearer)) = parts
+            .extract::<TypedHeader<Authorization<Bearer>>>()
+            .await
+            .map_err(|_| AuthError::Unauthenticated)?;
+        // let auth = parts
+        //     .headers
+        //     .get(axum::http::header::AUTHORIZATION)
+        //     .ok_or(AuthError::Unauthenticated)?;
+        // let auth = auth.to_str().map_err(|_| AuthError::Unauthenticated)?;
+        let token = bearer.token();
+        println!("{token}");
+        let token = jsonwebtoken::decode::<T>(
+            token,
+            &T::auth_keys().decoding,
+            &jsonwebtoken::Validation::default(),
+        )
+        .map_err(|e| {
+            eprintln!("{e}");
+            AuthError::Unauthenticated
+        })?;
+        let token = token.claims;
+        println!("claims");
+        T::authenticate(&token, state)?;
+        println!("auth");
+        Ok(Self(token))
+        // T::authenticate(token, state).map(Self)
     }
 }
-
-impl<State> FromRequestParts<State> for AuthHeader<()>
+impl<State> FromRequestParts<State> for Auth<()>
 where
     State: Send + Sync,
 {
@@ -384,6 +519,23 @@ where
         _: &mut axum::http::request::Parts,
         _: &State,
     ) -> Result<Self, Self::Rejection> {
-        Ok(AuthHeader(()))
+        Ok(Auth(()))
+    }
+}
+
+pub struct AuthKeys {
+    pub encoding: jsonwebtoken::EncodingKey,
+    pub decoding: jsonwebtoken::DecodingKey,
+}
+impl AuthKeys {
+    pub fn from_secret(secret: &[u8]) -> Self {
+        Self {
+            encoding: jsonwebtoken::EncodingKey::from_secret(secret),
+            decoding: jsonwebtoken::DecodingKey::from_secret(secret),
+        }
+    }
+    pub fn new() -> Self {
+        let secret = std::env::var("AUTH_SECRET").expect("AUTH_SECRET env var to be set");
+        Self::from_secret(secret.as_bytes())
     }
 }

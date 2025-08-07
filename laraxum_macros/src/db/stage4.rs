@@ -676,7 +676,6 @@ impl super::stage2::ValidateRule {
             Self::Gt(ref gt) => {
                 let gt = gt.to_token_stream();
                 let err_message = format!("must be greater than {gt}");
-
                 quote! {
                     if #value > &#gt {
                         ::core::result::Result::Ok(())
