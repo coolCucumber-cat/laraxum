@@ -8,7 +8,7 @@ pub use backend::{
     AnyDb, Collection, CollectionIndexMany, CollectionIndexOne, Db, Id, ManyModel, Model, Table,
 };
 pub use error::{AuthError, Error, ModelError};
-pub use frontend::{Auth, Authenticate, Controller, Json};
+pub use frontend::{AuthToken, Authenticate, Authorize, Controller, Json};
 pub use request::Request;
 
 #[cfg(feature = "macros")]

@@ -22,7 +22,7 @@ where
     <Self as Model>::Id: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequest: for<'a> Deserialize<'a>,
     <Self as Model>::UpdateRequestError: Serialize,
-    Auth<Self::Auth>: FromRequestParts<Arc<Self::State>>,
+    AuthToken<Self::Auth>: FromRequestParts<Arc<Self::State>>,
 {
     type State: AnyDb<Db = Self::Db>;
     type Auth;
@@ -30,7 +30,7 @@ where
     #[allow(unused_variables)]
     async fn index(
         State(state): State<Arc<Self::State>>,
-        Auth(_): Auth<Self::Auth>,
+        AuthToken(_): AuthToken<Self::Auth>,
         Query(query): Query<Self::GetAllRequestQuery>,
     ) -> Result<Json<Vec<Self::Response>>, Error> {
         let rs = Self::get_all(state.db()).await?;
@@ -38,7 +38,7 @@ where
     }
     async fn get(
         State(state): State<Arc<Self::State>>,
-        Auth(_): Auth<Self::Auth>,
+        AuthToken(_): AuthToken<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<Json<Self::Response>, Error> {
         let rs = Self::get_one(state.db(), id).await?;
@@ -46,7 +46,7 @@ where
     }
     async fn create(
         State(state): State<Arc<Self::State>>,
-        Auth(_): Auth<Self::Auth>,
+        AuthToken(_): AuthToken<Self::Auth>,
         Json(rq): Json<Self::CreateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::CreateRequestError>> {
         let rs = Self::create_get_one(state.db(), rq).await?;
@@ -54,7 +54,7 @@ where
     }
     async fn update(
         State(state): State<Arc<Self::State>>,
-        Auth(_): Auth<Self::Auth>,
+        AuthToken(_): AuthToken<Self::Auth>,
         Path(id): Path<Self::Id>,
         Json(rq): Json<Self::UpdateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::UpdateRequestError>> {
@@ -63,7 +63,7 @@ where
     }
     async fn delete(
         State(state): State<Arc<Self::State>>,
-        Auth(_): Auth<Self::Auth>,
+        AuthToken(_): AuthToken<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<(), Error> {
         Self::delete_one(state.db(), id).await?;
@@ -444,8 +444,27 @@ where
 
 pub trait Authenticate: Serialize + for<'a> Deserialize<'a> + Sized {
     type State: Send + Sync;
-    fn authenticate(&self, state: &Self::State) -> Result<(), AuthError>;
-    fn auth_keys() -> &'static AuthKeys;
+    #[expect(unused_variables)]
+    fn authenticate(&self, state: &Self::State) -> Result<(), AuthError> {
+        Ok(())
+    }
+    fn exp_duration() -> core::time::Duration {
+        core::time::Duration::from_secs(60 * 4)
+    }
+    fn authentication_keys() -> &'static AuthKeys {
+        static KEYS: std::sync::LazyLock<AuthKeys> = std::sync::LazyLock::new(AuthKeys::new);
+        &KEYS
+    }
+    fn authentication_validation() -> &'static jsonwebtoken::Validation {
+        static VALIDATION: std::sync::LazyLock<jsonwebtoken::Validation> =
+            std::sync::LazyLock::new(jsonwebtoken::Validation::default);
+        &VALIDATION
+    }
+    fn authentication_header() -> &'static jsonwebtoken::Header {
+        static HEADER: std::sync::LazyLock<jsonwebtoken::Header> =
+            std::sync::LazyLock::new(jsonwebtoken::Header::default);
+        &HEADER
+    }
 }
 // pub trait Authenticate {
 //     type Authenticated;
@@ -454,21 +473,79 @@ pub trait Authenticate: Serialize + for<'a> Deserialize<'a> + Sized {
 // }
 pub trait Authorize {}
 
-pub struct Auth<T>(pub T);
-impl<T> Auth<T>
+#[derive(Serialize, Deserialize)]
+pub struct AuthTokenExp<T>
 where
     T: Authenticate,
 {
-    pub fn to_string(&self) -> Result<String, AuthError> {
-        jsonwebtoken::encode(
-            &jsonwebtoken::Header::default(),
-            &self.0,
-            &T::auth_keys().encoding,
+    pub exp: u128,
+    #[serde(bound = "T: Authenticate")]
+    pub token: T,
+}
+impl<T> AuthTokenExp<T>
+where
+    T: Authenticate,
+{
+    pub fn new(token: T, duration: core::time::Duration) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let exp = now
+            .checked_add(duration)
+            .unwrap_or(core::time::Duration::MAX)
+            .as_millis();
+        Self { exp, token }
+    }
+    pub fn new_with_millis(token: T, millis: u128) -> Self {
+        Self { exp: millis, token }
+    }
+    pub fn encode(&self) -> Result<String, jsonwebtoken::errors::Error> {
+        jsonwebtoken::encode::<Self>(
+            T::authentication_header(),
+            self,
+            &T::authentication_keys().encoding,
         )
-        .map_err(|_| AuthError::Unauthenticated)
+    }
+    pub fn decode(token: &str) -> Result<Self, jsonwebtoken::errors::Error> {
+        jsonwebtoken::decode::<Self>(
+            token,
+            &T::authentication_keys().decoding,
+            T::authentication_validation(),
+        )
+        .map(|token| token.claims)
     }
 }
-impl<T, State> FromRequestParts<State> for Auth<T>
+impl<T> From<AuthToken<T>> for AuthTokenExp<T>
+where
+    T: Authenticate,
+{
+    fn from(AuthToken(token): AuthToken<T>) -> Self {
+        Self::new(token, T::exp_duration())
+    }
+}
+
+pub struct AuthToken<T>(pub T);
+impl<T> From<AuthTokenExp<T>> for AuthToken<T>
+where
+    T: Authenticate,
+{
+    fn from(AuthTokenExp { token, .. }: AuthTokenExp<T>) -> Self {
+        Self(token)
+    }
+}
+impl<T> AuthToken<T>
+where
+    T: Authenticate,
+{
+    pub fn encode(self) -> Result<String, jsonwebtoken::errors::Error> {
+        AuthTokenExp::encode(&AuthTokenExp::from(self))
+    }
+    pub fn decode(token: &str) -> Result<Self, jsonwebtoken::errors::Error> {
+        AuthTokenExp::decode(token).map(Self::from)
+    }
+}
+
+impl<T, State> FromRequestParts<State> for AuthToken<T>
 where
     T: Authenticate<State = State>,
     State: Send + Sync,
@@ -486,31 +563,13 @@ where
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
             .map_err(|_| AuthError::Unauthenticated)?;
-        // let auth = parts
-        //     .headers
-        //     .get(axum::http::header::AUTHORIZATION)
-        //     .ok_or(AuthError::Unauthenticated)?;
-        // let auth = auth.to_str().map_err(|_| AuthError::Unauthenticated)?;
         let token = bearer.token();
-        println!("{token}");
-        let token = jsonwebtoken::decode::<T>(
-            token,
-            &T::auth_keys().decoding,
-            &jsonwebtoken::Validation::default(),
-        )
-        .map_err(|e| {
-            eprintln!("{e}");
-            AuthError::Unauthenticated
-        })?;
-        let token = token.claims;
-        println!("claims");
-        T::authenticate(&token, state)?;
-        println!("auth");
-        Ok(Self(token))
-        // T::authenticate(token, state).map(Self)
+        let token = Self::decode(token).map_err(|_| AuthError::Unauthenticated)?;
+        T::authenticate(&token.0, state)?;
+        Ok(token)
     }
 }
-impl<State> FromRequestParts<State> for Auth<()>
+impl<State> FromRequestParts<State> for AuthToken<()>
 where
     State: Send + Sync,
 {
@@ -519,7 +578,7 @@ where
         _: &mut axum::http::request::Parts,
         _: &State,
     ) -> Result<Self, Self::Rejection> {
-        Ok(Auth(()))
+        Ok(AuthToken(()))
     }
 }
 
