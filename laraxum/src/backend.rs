@@ -2,26 +2,17 @@ use crate::{Error, ModelError};
 
 pub type Id = u64;
 
+pub fn database_url() -> Option<String> {
+    crate::env_var_opt!("DATABASE_URL")
+}
+
 pub trait Db<Model> {}
 
 pub trait AnyDb: Sized {
     type Db;
-    type Driver: sqlx::Database;
-    type ConnectionOptions: sqlx::ConnectOptions;
-    fn default_options() -> Self::ConnectionOptions;
-    async fn connect_with_options(options: Self::ConnectionOptions) -> Result<Self, sqlx::Error>;
-    async fn connect() -> Result<Self, sqlx::Error> {
-        let url = std::env::var("DATABASE_URL");
-        let options = match url {
-            Ok(url) => url
-                .parse()
-                .map_err(|e| sqlx::Error::Configuration(Box::new(e))),
-            Err(std::env::VarError::NotPresent) => Ok(Self::default_options()),
-            Err(e) => Err(sqlx::Error::Configuration(Box::new(e))),
-        }?;
-        Self::connect_with_options(options).await
-    }
     fn db(&self) -> &Self::Db;
+    type Error;
+    async fn connect() -> Result<Self, Self::Error>;
 }
 
 pub trait Table: Sized {

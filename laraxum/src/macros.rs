@@ -68,3 +68,50 @@ macro_rules! impl_serde_encode_decode {
         )*
     };
 }
+
+#[macro_export]
+macro_rules! env_var {
+    ($env_var:expr) => {
+        match ::std::env::var($env_var) {
+            ::core::result::Result::Ok(ok) => ok,
+            ::core::result::Result::Err(::std::env::VarError::NotPresent) => {
+                ::core::panic!(::core::concat!(
+                    "environment variable \"",
+                    $env_var,
+                    "\" not found"
+                ));
+            }
+            ::core::result::Result::Err(::std::env::VarError::NotUnicode(ref s)) => {
+                ::core::panic!(
+                    ::core::concat!(
+                        "environment variable \"",
+                        $env_var,
+                        "\" was not valid unicode: {:?}"
+                    ),
+                    s
+                );
+            }
+        }
+    };
+}
+#[macro_export]
+macro_rules! env_var_opt {
+    ($env_var:expr) => {
+        match ::std::env::var($env_var) {
+            ::core::result::Result::Ok(ok) => ::core::option::Option::Some(ok),
+            ::core::result::Result::Err(::std::env::VarError::NotPresent) => {
+                ::core::option::Option::None
+            }
+            ::core::result::Result::Err(::std::env::VarError::NotUnicode(ref s)) => {
+                ::core::panic!(
+                    ::core::concat!(
+                        "environment variable \"",
+                        $env_var,
+                        "\" was not valid unicode: {:?}"
+                    ),
+                    s
+                );
+            }
+        }
+    };
+}
