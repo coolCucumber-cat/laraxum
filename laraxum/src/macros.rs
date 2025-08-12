@@ -35,8 +35,8 @@ macro_rules! impl_serde {
         $(
             impl ::serde::Serialize for $ty {
                 fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
-                where
-                    S: ::serde::Serializer,
+                    where
+                        S: ::serde::Serializer,
                 {
                     <$inner as ::serde::Serialize>::serialize(
                         &<$inner as ::core::convert::From<$ty>>::from(*self),
@@ -46,8 +46,8 @@ macro_rules! impl_serde {
             }
             impl<'de> ::serde::Deserialize<'de> for $ty {
                 fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
-                where
-                    D: ::serde::Deserializer<'de>,
+                    where
+                        D: ::serde::Deserializer<'de>,
                 {
                     ::core::result::Result::map(
                         <$inner as ::serde::Deserialize>::deserialize(deserializer),

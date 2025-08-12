@@ -1,10 +1,3 @@
-/// laraxum macros
-///
-/// todo:
-/// - enum types (maybe attr to make enum type)
-/// - schema generator
-/// - unique
-/// - sql types for all DBs
 mod db;
 mod router;
 mod utils;

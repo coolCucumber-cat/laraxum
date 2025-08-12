@@ -1,8 +1,9 @@
 use crate::{
-    backend::{AnyDb, Collection, Model, Table},
+    backend::{Collection, Model, Table},
     error::{AuthError, Error, ModelError},
 };
 
+use core::ops::Deref;
 use std::sync::Arc;
 
 use axum::{
@@ -24,7 +25,7 @@ where
     <Self as Model>::UpdateRequestError: Serialize,
     AuthToken<Self::Auth>: FromRequestParts<Arc<Self::State>>,
 {
-    type State: AnyDb<Db = Self::Db>;
+    type State: Deref<Target = Self::Db>;
     type Auth;
 
     #[allow(unused_variables)]
@@ -33,7 +34,7 @@ where
         AuthToken(_): AuthToken<Self::Auth>,
         Query(query): Query<Self::GetAllRequestQuery>,
     ) -> Result<Json<Vec<Self::Response>>, Error> {
-        let rs = Self::get_all(state.db()).await?;
+        let rs = Self::get_all(&*state).await?;
         Ok(Json(rs))
     }
     async fn get(
@@ -41,7 +42,7 @@ where
         AuthToken(_): AuthToken<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<Json<Self::Response>, Error> {
-        let rs = Self::get_one(state.db(), id).await?;
+        let rs = Self::get_one(&*state, id).await?;
         Ok(Json(rs))
     }
     async fn create(
@@ -49,7 +50,7 @@ where
         AuthToken(_): AuthToken<Self::Auth>,
         Json(rq): Json<Self::CreateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::CreateRequestError>> {
-        let rs = Self::create_get_one(state.db(), rq).await?;
+        let rs = Self::create_get_one(&*state, rq).await?;
         Ok(Json(rs))
     }
     async fn update(
@@ -58,7 +59,7 @@ where
         Path(id): Path<Self::Id>,
         Json(rq): Json<Self::UpdateRequest>,
     ) -> Result<Json<Self::Response>, ModelError<Self::UpdateRequestError>> {
-        let rs = Self::update_get_one(state.db(), rq, id).await?;
+        let rs = Self::update_get_one(&*state, rq, id).await?;
         Ok(Json(rs))
     }
     async fn delete(
@@ -66,7 +67,7 @@ where
         AuthToken(_): AuthToken<Self::Auth>,
         Path(id): Path<Self::Id>,
     ) -> Result<(), Error> {
-        Self::delete_one(state.db(), id).await?;
+        Self::delete_one(&*state, id).await?;
         Ok(())
     }
 }
@@ -582,6 +583,10 @@ where
     }
 }
 
+pub fn auth_secret() -> String {
+    crate::env_var!("AUTH_SECRET")
+}
+
 pub struct AuthKeys {
     pub encoding: jsonwebtoken::EncodingKey,
     pub decoding: jsonwebtoken::DecodingKey,
@@ -594,7 +599,7 @@ impl AuthKeys {
         }
     }
     pub fn new() -> Self {
-        let secret = std::env::var("AUTH_SECRET").expect("AUTH_SECRET env var to be set");
-        Self::from_secret(secret.as_bytes())
+        let auth_secret = auth_secret();
+        Self::from_secret(auth_secret.as_bytes())
     }
 }

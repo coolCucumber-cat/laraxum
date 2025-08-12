@@ -2,7 +2,7 @@ use crate::utils::syn::parse_curly_brackets;
 
 use quote::quote;
 use syn::{
-    Expr, Ident, LitStr, Path, Token, TypePath,
+    Expr, Ident, LitStr, Token, TypePath,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
 };
@@ -18,11 +18,12 @@ impl Parse for MethodRoute {
         let f = if input.parse::<Token![:]>().is_ok() {
             input.parse::<Expr>()?
         } else {
-            Expr::Path(syn::ExprPath {
-                path: Path::from(method.clone()),
-                attrs: vec![],
-                qself: None,
-            })
+            syn::parse_quote!(#method)
+            // Expr::Path(syn::ExprPath {
+            //     path: Path::from(method.clone()),
+            //     attrs: vec![],
+            //     qself: None,
+            // })
         };
         Ok(Self { method, f })
     }
@@ -61,6 +62,7 @@ impl Parse for NestedRouteAttr {
             Ok(Self::Nested(path, nested_route_attrs))
         } else if input.parse::<Token![use]>().is_ok() {
             let method_router = input.parse::<MethodRouter>()?;
+            // input.parse::<Token![;]>()?;
             Ok(Self::Route { method_router })
         } else {
             let fn_call = input.parse::<Expr>()?;

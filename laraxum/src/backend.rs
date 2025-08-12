@@ -2,15 +2,13 @@ use crate::{Error, ModelError};
 
 pub type Id = u64;
 
+pub trait Db<Model> {}
+
 pub fn database_url() -> Option<String> {
     crate::env_var_opt!("DATABASE_URL")
 }
 
-pub trait Db<Model> {}
-
-pub trait AnyDb: Sized {
-    type Db;
-    fn db(&self) -> &Self::Db;
+pub trait Connect: Sized {
     type Error;
     async fn connect() -> Result<Self, Self::Error>;
 }

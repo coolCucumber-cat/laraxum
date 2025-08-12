@@ -5,7 +5,7 @@ pub mod macros;
 pub mod request;
 
 pub use backend::{
-    AnyDb, Collection, CollectionIndexMany, CollectionIndexOne, Db, Id, ManyModel, Model, Table,
+    Collection, CollectionIndexMany, CollectionIndexOne, Connect, Db, Id, ManyModel, Model, Table,
 };
 pub use error::{AuthError, Error, ModelError};
 pub use frontend::{AuthToken, Authenticate, Authorize, Controller, Json};

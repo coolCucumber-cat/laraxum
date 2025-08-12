@@ -1549,18 +1549,29 @@ impl From<stage3::Db<'_>> for Db {
                 pool: ::sqlx::Pool<#db_pool_type>,
             }
 
-            impl ::laraxum::AnyDb for #db_ident {
-                type Db = Self;
+            impl ::laraxum::Connect for #db_ident {
                 type Error = ::sqlx::Error;
                 async fn connect() -> ::core::result::Result<Self, Self::Error> {
-                    let options = ::laraxum::backend::database_url().map(|url| {
-
-                    });
-                    ::core::result::Result::Ok(Self {
-                        pool: ::sqlx::Pool::<#db_pool_type>::connect_with(options).await?,
-                    })
+                    let options = ::laraxum::backend::database_url()
+                        .map(|url| {
+                            <
+                                <
+                                    <
+                                        #db_pool_type as ::sqlx::Database
+                                    >::Connection as ::sqlx::Connection
+                                >::Options as ::core::str::FromStr
+                            >::from_str(&url)
+                        })
+                        .transpose()?
+                        .unwrap_or_default();
+                    let pool = ::sqlx::Pool::<#db_pool_type>::connect_with(options).await?;
+                    ::core::result::Result::Ok(Self { pool })
                 }
-                fn db(&self) -> &Self::Db {
+            }
+
+            impl ::core::ops::Deref for #db_ident {
+                type Target = Self;
+                fn deref(&self) -> &Self::Target {
                     self
                 }
             }
