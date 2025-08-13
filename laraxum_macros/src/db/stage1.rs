@@ -328,12 +328,13 @@ pub struct Db {
 }
 impl Parse for Db {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        input.parse::<Item>().and_then(Db::try_from)
-    }
-}
-impl TryFrom<Item> for Db {
-    type Error = syn::Error;
-    fn try_from(item: Item) -> Result<Self, Self::Error> {
+        let item = input.parse::<Item>()?;
+        //         Self::try_from(item)
+        //     }
+        // }
+        // impl TryFrom<Item> for Db {
+        //     type Error = syn::Error;
+        //     fn try_from(item: Item) -> Result<Self, Self::Error> {
         let item_span = item.span();
         let Item::Mod(ItemMod {
             attrs: rs_attrs,

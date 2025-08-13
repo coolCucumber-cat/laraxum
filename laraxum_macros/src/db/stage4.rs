@@ -1552,7 +1552,7 @@ impl From<stage3::Db<'_>> for Db {
             impl ::laraxum::Connect for #db_ident {
                 type Error = ::sqlx::Error;
                 async fn connect() -> ::core::result::Result<Self, Self::Error> {
-                    let options = ::laraxum::backend::database_url()
+                    let connect_options = ::laraxum::backend::database_url()
                         .map(|url| {
                             <
                                 <
@@ -1564,7 +1564,8 @@ impl From<stage3::Db<'_>> for Db {
                         })
                         .transpose()?
                         .unwrap_or_default();
-                    let pool = ::sqlx::Pool::<#db_pool_type>::connect_with(options).await?;
+                    let pool_options = ::sqlx::pool::PoolOptions::<#db_pool_type>::new();
+                    let pool = pool_options.connect_with(connect_options).await?;
                     ::core::result::Result::Ok(Self { pool })
                 }
             }
