@@ -4,7 +4,7 @@ use crate::{
 };
 
 use core::ops::Deref;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use axum::{
     RequestExt, RequestPartsExt,
@@ -13,6 +13,12 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
+
+pub fn url() -> Cow<'static, str> {
+    crate::env_var_opt!("URL")
+        .map(Cow::Owned)
+        .unwrap_or(Cow::Borrowed("localhost:80"))
+}
 
 pub trait Controller: Model
 where

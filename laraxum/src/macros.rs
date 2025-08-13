@@ -115,3 +115,17 @@ macro_rules! env_var_opt {
         }
     };
 }
+
+#[macro_export]
+macro_rules! serve {
+    ($app:expr) => {
+        async {
+            let url = ::laraxum::frontend::url();
+            let url = &*url;
+            let app_listener = ::tokio::net::TcpListener::bind(url).await?;
+            ::std::println!("Listening at: {url:?}");
+            ::axum::serve(app_listener, $app).await?;
+            ::core::result::Result::Ok(())
+        }
+    };
+}

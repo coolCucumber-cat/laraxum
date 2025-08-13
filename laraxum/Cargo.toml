@@ -23,6 +23,7 @@ bytes = "1.10.1"
 jsonwebtoken = "9.3.1"
 chrono = { version = "0.4.41", optional = true }
 time = { version = "0.3.41", optional = true }
+thiserror = "2.0.14"
 
 [features]
 default = ["mysql", "macros"]
