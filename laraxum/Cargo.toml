@@ -6,33 +6,33 @@ license = "MIT"
 repository = "https://github.com/coolCucumber-cat/laraxum.git"
 readme = "../README.md"
 description = """
-A framework built on top of Axum and SQLX to simplify creating database servers.
+Create API database servers easily using Axum and SQLX.
 """
 categories = ["database"]
 
 [dependencies]
 laraxum_macros = { version = "0.1.3", optional = true }
+sqlx = "0.8.6"
 axum = "0.8.4"
 axum-extra = { version = "0.10.1", features = ["typed-header"] }
-sqlx = { version = "0.8.6", features = ["runtime-tokio"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.142"
-# tokio = { version = "1.47.1", features = ["rt-multi-thread"] }
 mime = "0.3.17"
 bytes = "1.10.1"
-jsonwebtoken = "9.3.1"
+thiserror = "2.0.14"
+jsonwebtoken = { version = "9.3.1", optional = true }
 chrono = { version = "0.4.41", optional = true }
 time = { version = "0.3.41", optional = true }
-thiserror = "2.0.14"
 
 [features]
-default = ["mysql", "macros"]
+default = ["mysql", "macros", "auth_token"]
 macros = ["dep:laraxum_macros"]
 mysql = ["sqlx/mysql"]
 postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
-chrono = ["dep:chrono"]
-time = ["dep:time"]
+chrono = ["dep:chrono", "sqlx/chrono"]
+time = ["dep:time", "sqlx/time"]
+auth_token = ["dep:jsonwebtoken"]
 
 [lints.rust]
 async_fn_in_trait = "allow"

@@ -449,12 +449,15 @@ where
 //     }
 // }
 
-pub trait Authenticate: Serialize + for<'a> Deserialize<'a> + Sized {
+pub trait Authenticate {
     type State: Send + Sync;
     #[expect(unused_variables)]
     fn authenticate(&self, state: &Self::State) -> Result<(), AuthError> {
         Ok(())
     }
+}
+
+pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> + Sized {
     fn exp_duration() -> core::time::Duration {
         core::time::Duration::from_secs(60 * 4)
     }
@@ -483,15 +486,15 @@ pub trait Authorize {}
 #[derive(Serialize, Deserialize)]
 pub struct AuthTokenExp<T>
 where
-    T: Authenticate,
+    T: AuthenticateToken,
 {
     pub exp: u128,
-    #[serde(bound = "T: Authenticate")]
+    #[serde(bound = "T: AuthenticateToken")]
     pub token: T,
 }
 impl<T> AuthTokenExp<T>
 where
-    T: Authenticate,
+    T: AuthenticateToken,
 {
     pub fn new(token: T, duration: core::time::Duration) -> Self {
         let now = std::time::SystemTime::now()
@@ -513,7 +516,7 @@ where
             &T::authentication_keys().encoding,
         )
     }
-    pub fn decode(token: &str) -> Result<Self, jsonwebtoken::errors::Error> {
+    fn decode(token: &str) -> Result<Self, jsonwebtoken::errors::Error> {
         jsonwebtoken::decode::<Self>(
             token,
             &T::authentication_keys().decoding,
@@ -524,7 +527,7 @@ where
 }
 impl<T> From<AuthToken<T>> for AuthTokenExp<T>
 where
-    T: Authenticate,
+    T: AuthenticateToken,
 {
     fn from(AuthToken(token): AuthToken<T>) -> Self {
         Self::new(token, T::exp_duration())
@@ -534,7 +537,7 @@ where
 pub struct AuthToken<T>(pub T);
 impl<T> From<AuthTokenExp<T>> for AuthToken<T>
 where
-    T: Authenticate,
+    T: AuthenticateToken,
 {
     fn from(AuthTokenExp { token, .. }: AuthTokenExp<T>) -> Self {
         Self(token)
@@ -542,19 +545,21 @@ where
 }
 impl<T> AuthToken<T>
 where
-    T: Authenticate,
+    T: AuthenticateToken,
 {
-    pub fn encode(self) -> Result<String, jsonwebtoken::errors::Error> {
-        AuthTokenExp::encode(&AuthTokenExp::from(self))
+    pub fn encode(self) -> Result<String, AuthError> {
+        AuthTokenExp::encode(&AuthTokenExp::from(self)).map_err(|_| AuthError::Unauthenticated)
     }
-    pub fn decode(token: &str) -> Result<Self, jsonwebtoken::errors::Error> {
-        AuthTokenExp::decode(token).map(Self::from)
+    fn decode(token: &str) -> Result<Self, AuthError> {
+        AuthTokenExp::decode(token)
+            .map(Self::from)
+            .map_err(|_| AuthError::Unauthenticated)
     }
 }
 
 impl<T, State> FromRequestParts<State> for AuthToken<T>
 where
-    T: Authenticate<State = State>,
+    T: Authenticate<State = State> + AuthenticateToken,
     State: Send + Sync,
 {
     type Rejection = AuthError;
