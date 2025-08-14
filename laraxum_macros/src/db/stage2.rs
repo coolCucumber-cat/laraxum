@@ -5,11 +5,13 @@ use crate::utils::{collections::TryCollectAll, multiplicity};
 use syn::{Attribute, Expr, Ident, Pat, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+const TABLE_MUST_NOT_HAVE_ID: &str = "table must not have an ID";
 const TABLE_MUST_NOT_HAVE_MULTIPLE_IDS: &str = "table must not have multiple IDs";
 const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implement controller";
 const TABLE_MUST_HAVE_TWO_COLUMNS: &str = "table must have two columns";
 const TABLE_DOES_NOT_EXIST: &str = "table does not exist";
-const MODEL_AND_MANY_MODEL_CONFLICT: &str = "model and many_model conflict";
+const TABLE_MUST_NOT_IMPLEMENT_CONTROLLER: &str = "table must not implement controller";
+// const MODEL_AND_MANY_MODEL_CONFLICT: &str = "model and many_model conflict";
 const ID_MUST_BE_U64: &str = "id must be u64";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
@@ -318,8 +320,8 @@ impl TryFrom<stage1::Column> for Column {
                 stage1::ColumnAttr {
                     name,
                     ty: attr_ty,
-                    response: attr_response,
-                    request: attr_request,
+                    response,
+                    request,
                     real_ty,
                     unique,
                     index,
@@ -433,7 +435,7 @@ impl TryFrom<stage1::Column> for Column {
             }
         };
 
-        let validate = attr_request.validate.0.into_iter().map(|validate_rule| {
+        let validate = request.validate.0.into_iter().map(|validate_rule| {
             use stage1::ValidateRule as S1VR;
             match validate_rule {
                 S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.0),
@@ -454,13 +456,11 @@ impl TryFrom<stage1::Column> for Column {
         let validate = validate.chain(max_len_validate_rule);
         let validate = validate.collect();
 
-        let attr_response = ColumnAttrResponse {
-            name: attr_response.name,
-            skip: attr_response.skip,
+        let response = ColumnAttrResponse {
+            name: response.name,
+            skip: response.skip,
         };
-        let attr_request = ColumnAttrRequest {
-            name: attr_request.name,
-        };
+        let request = ColumnAttrRequest { name: request.name };
         let index = index.map(|index| index.0);
 
         Ok(Self {
@@ -468,8 +468,8 @@ impl TryFrom<stage1::Column> for Column {
             rs_name,
             ty,
             rs_ty,
-            response: attr_response,
-            request: attr_request,
+            response,
+            request,
             validate,
             index,
             rs_attrs,
@@ -477,22 +477,33 @@ impl TryFrom<stage1::Column> for Column {
     }
 }
 
-pub enum Columns<C> {
+pub struct Controller {
+    pub auth: Option<Box<Type>>,
+}
+impl From<stage1::TableAttrController> for Controller {
+    fn from(controller: stage1::TableAttrController) -> Self {
+        Self {
+            auth: controller.auth.map(|auth| auth.0),
+        }
+    }
+}
+
+pub enum Columns<T, C> {
     CollectionOnly {
-        columns: Vec<C>,
+        columns: Vec<T>,
     },
     Model {
-        id: C,
-        columns: Vec<C>,
-        controller: bool,
+        id: T,
+        columns: Vec<T>,
+        controller: Option<C>,
     },
     ManyModel {
-        a: C,
-        b: C,
+        a: T,
+        b: T,
     },
 }
-impl<C> Columns<C> {
-    pub fn iter(&self) -> impl Iterator<Item = &C> + Clone {
+impl<T, C> Columns<T, C> {
+    pub fn iter(&self) -> impl Iterator<Item = &T> + Clone {
         let (a, b, c) = match self {
             Self::CollectionOnly { columns } => (None, None, &**columns),
             Self::Model { id, columns, .. } => (Some(id), None, &**columns),
@@ -500,17 +511,20 @@ impl<C> Columns<C> {
         };
         a.into_iter().chain(b).chain(c)
     }
-    pub fn map_try_collect_all_default<'a, F, C2, E>(&'a self, mut f: F) -> Result<Columns<C2>, E>
+    pub fn map_try_collect_all_default<'a, F, T2, E>(
+        &'a self,
+        mut f: F,
+    ) -> Result<Columns<T2, &'a C>, E>
     where
-        C: 'a,
-        C2: 'a,
-        F: FnMut(&'a C) -> Result<C2, E>,
+        T: 'a,
+        T2: 'a,
+        F: FnMut(&'a T) -> Result<T2, E>,
         E: crate::utils::collections::Push<E>,
     {
         match self {
             Self::CollectionOnly { columns } => {
                 let columns = columns.iter().map(f);
-                let columns: Result<Vec<C2>, E> = columns.try_collect_all_default();
+                let columns: Result<Vec<T2>, E> = columns.try_collect_all_default();
                 let columns = columns?;
                 Ok(Columns::CollectionOnly { columns })
             }
@@ -521,12 +535,12 @@ impl<C> Columns<C> {
             } => {
                 let id = f(id)?;
                 let columns = columns.iter().map(f);
-                let columns: Result<Vec<C2>, E> = columns.try_collect_all_default();
+                let columns: Result<Vec<T2>, E> = columns.try_collect_all_default();
                 let columns = columns?;
                 Ok(Columns::Model {
                     id,
                     columns,
-                    controller: *controller,
+                    controller: controller.as_ref(),
                 })
             }
             Self::ManyModel { a, b } => {
@@ -536,23 +550,62 @@ impl<C> Columns<C> {
             }
         }
     }
-    pub fn model(&self) -> Option<&C> {
+    // pub fn map_try_collect_all_default<'a, F, C2, E>(&'a self, mut f: F) -> Result<Columns<C2>, E>
+    // where
+    //     C: 'a,
+    //     C2: 'a,
+    //     F: FnMut(&'a C) -> Result<C2, E>,
+    //     E: crate::utils::collections::Push<E>,
+    // {
+    //     match self {
+    //         Self::CollectionOnly { columns } => {
+    //             let columns = columns.iter().map(f);
+    //             let columns: Result<Vec<C2>, E> = columns.try_collect_all_default();
+    //             let columns = columns?;
+    //             Ok(Columns::CollectionOnly { columns })
+    //         }
+    //         Self::Model {
+    //             id,
+    //             columns,
+    //             controller,
+    //         } => {
+    //             let id = f(id)?;
+    //             let columns = columns.iter().map(f);
+    //             let columns: Result<Vec<C2>, E> = columns.try_collect_all_default();
+    //             let columns = columns?;
+    //             Ok(Columns::Model {
+    //                 id,
+    //                 columns,
+    //                 controller: *controller,
+    //             })
+    //         }
+    //         Self::ManyModel { a, b } => {
+    //             let a = f(a)?;
+    //             let b = f(b)?;
+    //             Ok(Columns::ManyModel { a, b })
+    //         }
+    //     }
+    // }
+    pub fn model(&self) -> Option<&T> {
         match self {
             Self::Model { id, .. } => Some(id),
             _ => None,
         }
     }
-    pub fn many_model(&self) -> Option<(&C, &C)> {
+    pub fn many_model(&self) -> Option<(&T, &T)> {
         match self {
             Self::ManyModel { a, b } => Some((a, b)),
             _ => None,
         }
     }
     pub fn is_collection(&self) -> bool {
-        matches!(*self, Self::CollectionOnly { .. } | Self::Model { .. })
+        matches!(self, Self::CollectionOnly { .. } | Self::Model { .. })
     }
-    pub fn is_controller(&self) -> bool {
-        matches!(*self, Self::Model { controller, .. } if controller)
+    pub fn controller(&self) -> Option<&C> {
+        match self {
+            Self::Model { controller, .. } => controller.as_ref(),
+            _ => None,
+        }
     }
 }
 
@@ -562,9 +615,7 @@ pub struct Table {
     /// the name for the table struct, for example `Customer`
     pub rs_name: Ident,
     /// the columns in the database
-    pub columns: Columns<Column>,
-    /// auth rules
-    pub auth: Option<Box<Type>>,
+    pub columns: Columns<Column, Controller>,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -578,12 +629,10 @@ impl TryFrom<stage1::Table> for Table {
             columns,
             attr:
                 stage1::TableAttr {
-                    model: model_attr,
-                    controller: controller_attr,
-                    many_model: many_model_attr,
+                    model,
+                    controller,
                     name,
                     attrs: rs_attrs,
-                    auth,
                 },
             rs_vis,
         } = table;
@@ -596,6 +645,11 @@ impl TryFrom<stage1::Table> for Table {
             .map(|column| {
                 let column = Column::try_from(column)?;
                 if let Ty::Element(TyElement::Id) = column.ty {
+                    // match model {
+                    //     Some(model)if model.many=>return Err(syn::Error::new(rs_name.span(), TABLE_MUST_NOT_HAVE_ID)),
+                    //     None=>return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL)),
+                    //     _=>{}
+                    // }
                     if id.is_some() {
                         return Err(syn::Error::new(
                             column.rs_name.span(),
@@ -612,34 +666,36 @@ impl TryFrom<stage1::Table> for Table {
         let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
 
-        // TODO: allow model to have options or default options if only controller was specified (controller auto implements model too)
-        // let model = model.or_else(|| controller.map(|_x| Default::default()));
-        let model = model_attr.or(controller_attr);
-        let model = match (model, id) {
-            (Some(model), Some(id)) => Some((id, model)),
-            (None, None) => None,
-            (Some(model), None) => return Err(syn::Error::new(model.span(), TABLE_MUST_HAVE_ID)),
-            (None, Some(ref id)) => {
+        let model = model.map(|model| model.many);
+        let columns = match model {
+            Some(false) => {
+                let Some(id) = id else {
+                    return Err(syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_ID));
+                };
+                let controller = controller.map(Controller::from);
+                Columns::Model {
+                    id,
+                    columns,
+                    controller,
+                }
+            }
+            _ if controller.is_some() => {
                 return Err(syn::Error::new(
-                    id.rs_name.span(),
-                    TABLE_MUST_IMPLEMENT_MODEL,
+                    rs_name.span(),
+                    TABLE_MUST_NOT_IMPLEMENT_CONTROLLER,
                 ));
             }
-        };
+            None => {
+                if id.is_some() {
+                    return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL));
+                }
+                Columns::CollectionOnly { columns }
+            }
+            _ if id.is_some() => {
+                return Err(syn::Error::new(rs_name.span(), TABLE_MUST_NOT_HAVE_ID));
+            }
 
-        let columns = match (model, many_model_attr) {
-            (Some((_, model_attr)), Some(_)) => {
-                return Err(syn::Error::new(
-                    model_attr.span(),
-                    MODEL_AND_MANY_MODEL_CONFLICT,
-                ));
-            }
-            (Some((id, _)), None) => Columns::Model {
-                id,
-                columns,
-                controller: controller_attr.is_some(),
-            },
-            (None, Some(_)) => {
+            Some(true) => {
                 let mut columns = columns.into_iter();
                 let span = rs_name.span();
                 let f_err = || syn::Error::new(span, TABLE_MUST_HAVE_TWO_COLUMNS);
@@ -658,16 +714,12 @@ impl TryFrom<stage1::Table> for Table {
                 )?;
                 many_model
             }
-            (None, None) => Columns::CollectionOnly { columns },
         };
-
-        let auth = auth.map(|auth| auth.0);
 
         Ok(Self {
             name,
             rs_name,
             columns,
-            auth,
             rs_vis,
             rs_attrs,
         })

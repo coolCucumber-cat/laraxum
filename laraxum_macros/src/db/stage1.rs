@@ -244,18 +244,30 @@ impl TryFrom<Field> for Column {
     }
 }
 
+#[derive(darling::FromMeta)]
+pub struct TableAttrModel {
+    #[darling(default)]
+    pub many: bool,
+}
+
+#[derive(darling::FromMeta)]
+pub struct TableAttrController {
+    pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+}
+
 // #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]
 #[derive(darling::FromAttributes)]
 #[darling(attributes(db), forward_attrs(allow, doc))]
 pub struct TableAttr {
+    pub model: Option<TableAttrModel>,
+    pub controller: Option<TableAttrController>,
+    pub name: Option<String>,
+
+    pub attrs: Vec<Attribute>,
     // TODO: this was removed for simplicity, add it back
     // pub collection: Option<darling::util::SpannedValue<()>>,
-    pub model: Option<darling::util::SpannedValue<()>>,
-    pub controller: Option<darling::util::SpannedValue<()>>,
-    pub many_model: Option<darling::util::SpannedValue<()>>,
-    pub name: Option<String>,
-    pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
-    pub attrs: Vec<Attribute>,
+    // pub many_model: Option<darling::util::SpannedValue<()>>,
+    // pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
 }
 
 pub struct Table {

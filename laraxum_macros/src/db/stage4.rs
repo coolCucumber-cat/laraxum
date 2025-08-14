@@ -1340,9 +1340,10 @@ impl From<stage3::Table<'_>> for Table {
             }
         });
 
-        let controller_token_stream = table.columns.is_controller().then(|| {
-            let auth = table
+        let controller_token_stream = table.columns.controller().map(|controller| {
+            let auth = controller
                 .auth
+                .as_deref()
                 .map_or_else(|| quote! { () }, |ty| ty.to_token_stream());
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {

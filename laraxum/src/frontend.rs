@@ -457,6 +457,20 @@ pub trait Authenticate {
     }
 }
 
+pub trait Authorize: Sized {
+    type Authenticate: Authenticate;
+    fn authorize(authenticate: Self::Authenticate) -> Result<Self, AuthError>;
+}
+impl<T> Authorize for T
+where
+    T: Authenticate,
+{
+    type Authenticate = Self;
+    fn authorize(authenticate: Self::Authenticate) -> Result<Self, AuthError> {
+        Ok(authenticate)
+    }
+}
+
 pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> + Sized {
     fn exp_duration() -> core::time::Duration {
         core::time::Duration::from_secs(60 * 4)
@@ -476,12 +490,6 @@ pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> 
         &HEADER
     }
 }
-// pub trait Authenticate {
-//     type Authenticated;
-//     type State: Send + Sync;
-//     fn authenticate(&self, state: &Self::State) -> Result<Self::Authenticated, AuthError>;
-// }
-pub trait Authorize {}
 
 #[derive(Serialize, Deserialize)]
 pub struct AuthTokenExp<T>
@@ -557,9 +565,10 @@ where
     }
 }
 
-impl<T, State> FromRequestParts<State> for AuthToken<T>
+impl<T, U, State> FromRequestParts<State> for AuthToken<T>
 where
-    T: Authenticate<State = State> + AuthenticateToken,
+    T: Authorize<Authenticate = U>,
+    U: Authenticate<State = State> + AuthenticateToken,
     State: Send + Sync,
 {
     type Rejection = AuthError;
@@ -576,8 +585,9 @@ where
             .await
             .map_err(|_| AuthError::Unauthenticated)?;
         let token = bearer.token();
-        let token = Self::decode(token).map_err(|_| AuthError::Unauthenticated)?;
-        T::authenticate(&token.0, state)?;
+        let token = AuthToken::<U>::decode(token).map_err(|_| AuthError::Unauthenticated)?;
+        U::authenticate(&token.0, state)?;
+        let token = AuthToken(T::authorize(token.0)?);
         Ok(token)
     }
 }

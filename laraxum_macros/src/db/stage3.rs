@@ -282,8 +282,7 @@ pub struct Table<'a> {
     pub request_error_rs_name: Cow<'a, Ident>,
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
-    pub columns: Columns<Column<'a>>,
-    pub auth: Option<&'a Type>,
+    pub columns: Columns<Column<'a>, &'a stage2::Controller>,
 }
 
 impl<'a> Table<'a> {
@@ -574,7 +573,6 @@ impl<'a> Table<'a> {
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
         let table_request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
         let table_rs_attrs = &*table.rs_attrs;
-        let auth = table.auth.as_deref();
         Ok(Self {
             name_intern: table_name_intern,
             name_extern: table_name_extern,
@@ -584,7 +582,6 @@ impl<'a> Table<'a> {
             db_rs_name: &db.rs_name,
             rs_attrs: table_rs_attrs,
             columns,
-            auth,
         })
     }
 }
