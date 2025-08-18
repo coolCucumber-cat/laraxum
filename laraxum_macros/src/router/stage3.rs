@@ -34,7 +34,7 @@ impl From<&stage2::Router<'_>> for Router {
                                 .route(
                                     #path,
                                     ::axum::routing::MethodRouter::new()
-                                        .get(<#ty as ::laraxum::Controller>::index)
+                                        .get(<#ty as ::laraxum::Controller>::get_many)
                                         .post(<#ty as ::laraxum::Controller>::create),
                                 )
                                 .route(

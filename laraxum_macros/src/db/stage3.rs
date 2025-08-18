@@ -60,9 +60,12 @@ impl Ty<'_> {
     }
     pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
+            Self::Compound(_) => None,
             Self::Element(element) => element.default_value(),
-            _ => None,
         }
+    }
+    pub const fn is_id(&self) -> bool {
+        matches!(self, Self::Element(element) if element.is_id())
     }
 }
 
@@ -100,13 +103,13 @@ impl ResponseColumnGetterOne<'_> {
             Self::Compound(compound) => &compound.name_intern,
         }
     }
-    pub fn rs_name(&self) -> &Ident {
+    pub const fn rs_name(&self) -> &Ident {
         match self {
             Self::Element(element) => element.rs_name,
             Self::Compound(compound) => compound.rs_name,
         }
     }
-    pub fn optional(&self) -> bool {
+    pub const fn optional(&self) -> bool {
         match self {
             Self::Element(element) => element.optional,
             Self::Compound(compound) => compound.optional,
@@ -132,7 +135,7 @@ pub enum ResponseColumnGetterRef<'a> {
     Compounds(&'a ResponseColumnGetterCompounds<'a>),
 }
 impl ResponseColumnGetterRef<'_> {
-    pub fn rs_name(&self) -> &Ident {
+    pub const fn rs_name(&self) -> &Ident {
         match self {
             Self::One(one) => one.rs_name(),
             Self::Compounds(compounds) => compounds.rs_name,
@@ -172,6 +175,7 @@ pub struct RequestColumnSetterOne<'a> {
     pub validate: &'a [stage2::ValidateRule],
 }
 
+#[expect(clippy::struct_field_names)]
 pub struct RequestColumnSetterCompounds<'a> {
     pub rs_name: &'a Ident,
     pub table_rs_name: &'a Ident,
@@ -211,7 +215,7 @@ pub struct ColumnOne<'a> {
     pub index: Option<&'a Ident>,
 }
 impl ColumnOne<'_> {
-    pub fn name(&self) -> &str {
+    pub const fn name(&self) -> &str {
         self.create.name
     }
     pub fn name_intern(&self) -> &str {
@@ -230,19 +234,19 @@ pub enum Column<'a> {
 }
 
 impl Column<'_> {
-    pub fn create(&self) -> Option<&CreateColumn<'_>> {
+    pub const fn create(&self) -> Option<&CreateColumn<'_>> {
         match self {
             Self::One(one) => Some(&one.create),
             Self::Compounds(_) => None,
         }
     }
-    pub fn response_field(&self) -> &ResponseColumnField<'_> {
+    pub const fn response_field(&self) -> &ResponseColumnField<'_> {
         match self {
             Self::One(one) => &one.response.field,
             Self::Compounds(compounds) => &compounds.response.field,
         }
     }
-    pub fn response_getter(&self) -> ResponseColumnGetterRef<'_> {
+    pub const fn response_getter(&self) -> ResponseColumnGetterRef<'_> {
         match self {
             Self::One(one) => ResponseColumnGetterRef::One(&one.response.getter),
             Self::Compounds(compounds) => {
@@ -250,23 +254,23 @@ impl Column<'_> {
             }
         }
     }
-    pub fn request_field(&self) -> Option<&RequestColumnField<'_>> {
+    pub const fn request_field(&self) -> Option<&RequestColumnField<'_>> {
         match self {
             Self::One(ColumnOne {
                 request: RequestColumnOne::Some { field, .. },
                 ..
             }) => Some(field),
+            Self::One(_) => None,
             Self::Compounds(compounds) => Some(&compounds.request.field),
-            _ => None,
         }
     }
-    pub fn request_one(&self) -> Option<&RequestColumnOne<'_>> {
+    pub const fn request_one(&self) -> Option<&RequestColumnOne<'_>> {
         match self {
             Self::One(one) => Some(&one.request),
             Self::Compounds(_) => None,
         }
     }
-    pub fn request_compounds(&self) -> Option<&RequestColumnCompounds<'_>> {
+    pub const fn request_compounds(&self) -> Option<&RequestColumnCompounds<'_>> {
         match self {
             Self::One(_) => None,
             Self::Compounds(compounds) => Some(&compounds.request),
@@ -286,6 +290,7 @@ pub struct Table<'a> {
 }
 
 impl<'a> Table<'a> {
+    #[expect(clippy::too_many_lines)]
     fn try_new(table: &'a stage2::Table, db: &'a stage2::Db) -> syn::Result<Self> {
         fn rs_ty_compound_request(optional: bool) -> Type {
             if optional {
@@ -311,8 +316,8 @@ impl<'a> Table<'a> {
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((table_name_extern, name));
 
-                let response_getter_column = match ty {
-                    stage2::Ty::Element(ty_element) => {
+                let response_getter_column = match *ty {
+                    stage2::Ty::Element(ref ty_element) => {
                         let element = ResponseColumnGetterElement {
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
@@ -322,7 +327,7 @@ impl<'a> Table<'a> {
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: foreign_table_rs_name,
+                        ty: ref foreign_table_rs_name,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::One {
                                 optional,
@@ -354,15 +359,15 @@ impl<'a> Table<'a> {
                             foreign_table_name_extern,
                             rs_name,
                             foreign_table_rs_name: &foreign_table.rs_name,
-                            optional: *optional,
+                            optional,
                             columns,
                         };
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Compound(compound))
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: foreign_table_rs_name,
+                        ty: ref foreign_table_rs_name,
                         multiplicity:
-                            stage2::TyCompoundMultiplicity::Many(many_foreign_table_rs_name),
+                            stage2::TyCompoundMultiplicity::Many(ref many_foreign_table_rs_name),
                     }) => {
                         let table_rs_name = &table.rs_name;
                         let table_id = table.columns.model().ok_or_else(|| {
@@ -399,8 +404,8 @@ impl<'a> Table<'a> {
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
 
-                let column0 = match ty {
-                    stage2::Ty::Element(ty_element) => Column::One(ColumnOne {
+                let column0 = match *ty {
+                    stage2::Ty::Element(ref ty_element) => Column::One(ColumnOne {
                         create: CreateColumn {
                             name,
                             ty: Ty::Element(ty_element.clone()),
@@ -446,7 +451,7 @@ impl<'a> Table<'a> {
                         index: index.as_ref(),
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: foreign_table_rs_name,
+                        ty: ref foreign_table_rs_name,
                         multiplicity: stage2::TyCompoundMultiplicity::One { optional, unique },
                     }) => {
                         let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
@@ -474,7 +479,7 @@ impl<'a> Table<'a> {
                             foreign_table_name_extern,
                             rs_name,
                             foreign_table_rs_name: &foreign_table.rs_name,
-                            optional: *optional,
+                            optional,
                             columns,
                         };
 
@@ -484,8 +489,8 @@ impl<'a> Table<'a> {
                                 ty: Ty::Compound(TyCompound {
                                     foreign_table_name: &foreign_table.name,
                                     foreign_table_id_name: &foreign_table_id.name,
-                                    optional: *optional,
-                                    unique: *unique,
+                                    optional,
+                                    unique,
                                 }),
                             },
                             response: ResponseColumnOne {
@@ -501,7 +506,7 @@ impl<'a> Table<'a> {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: DerefEither::Right(Box::new(rs_ty_compound_request(
-                                        *optional,
+                                        optional,
                                     ))),
                                     attr: attr_request,
                                     rs_attrs,
@@ -509,7 +514,7 @@ impl<'a> Table<'a> {
                                 setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
-                                    optional: *optional,
+                                    optional,
                                     validate,
                                 },
                             },
@@ -517,9 +522,9 @@ impl<'a> Table<'a> {
                         })
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: foreign_table_rs_name,
+                        ty: ref foreign_table_rs_name,
                         multiplicity:
-                            stage2::TyCompoundMultiplicity::Many(many_foreign_table_rs_name),
+                            stage2::TyCompoundMultiplicity::Many(ref many_foreign_table_rs_name),
                     }) => {
                         let table_rs_name = &table.rs_name;
                         let table_id = table.columns.model().ok_or_else(|| {

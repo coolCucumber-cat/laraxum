@@ -12,7 +12,7 @@ impl<T> Push<T> for Vec<T> {
     }
 }
 
-impl Push<syn::Error> for syn::Error {
+impl Push<Self> for syn::Error {
     fn push(&mut self, error: Self) {
         self.combine(error);
     }

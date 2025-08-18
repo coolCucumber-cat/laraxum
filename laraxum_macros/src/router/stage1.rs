@@ -59,6 +59,7 @@ pub struct Router {
 }
 impl Parse for Router {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        #[expect(clippy::if_then_some_else_none)]
         let method_router = if input.peek(Token![use]) {
             Some(input.parse::<MethodRouter>()?)
         } else {

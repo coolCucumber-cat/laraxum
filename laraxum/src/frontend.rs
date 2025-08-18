@@ -14,16 +14,27 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Get the URL environment variable. Defaults to `localhost:80`.
+///
+/// # Panics
+/// - Invalid environment variable
 pub fn url() -> Cow<'static, str> {
     crate::env_var_opt!("URL")
         .map(Cow::Owned)
         .unwrap_or(Cow::Borrowed("localhost:80"))
 }
 
+/// Accept and process requests.
+///
+/// Every function represents a function in a REST API and has a state and auth token.
+/// The state contains the database.
+/// The auth token authenticates and authorizes the user with a token.
+/// Use a empty tuple `()` to not authenticate the user and accept all users.
+/// The [`crate::Authenticate`](Authenticate) and [`crate::Authorize`](Authorize) traits
+/// can be implemented to add custom authentication and authorization behaviour.
 pub trait Controller: Model
 where
     <Self as Table>::Response: Serialize,
-    <Self as Collection>::GetAllRequestQuery: for<'a> Deserialize<'a>,
     <Self as Collection>::CreateRequest: for<'a> Deserialize<'a>,
     <Self as Collection>::CreateRequestError: Serialize,
     <Self as Model>::Id: for<'a> Deserialize<'a>,
@@ -33,9 +44,10 @@ where
 {
     type State: Deref<Target = Self::Db>;
     type Auth;
+    type GetAllRequestQuery: for<'a> Deserialize<'a>;
 
-    #[allow(unused_variables)]
-    async fn index(
+    #[expect(unused_variables)]
+    async fn get_many(
         State(state): State<Arc<Self::State>>,
         AuthToken(_): AuthToken<Self::Auth>,
         Query(query): Query<Self::GetAllRequestQuery>,
@@ -78,95 +90,23 @@ where
     }
 }
 
-// pub trait Controller2: crate::backend::Model2
-// where
-//     <Self as Table>::Response: Serialize,
-//     <Self as crate::backend::Collection2>::GetAllRequestQuery: for<'a> Deserialize<'a>,
-//     <Self as crate::backend::Collection2>::CreateRequest: for<'a> Deserialize<'a>,
-//     <Self as crate::backend::Collection2>::CreateRequestError: Serialize,
-//     <Self as crate::backend::Model2>::Id: Serialize + for<'a> Deserialize<'a>,
-//     <Self as crate::backend::Model2>::UpdateRequest: for<'a> Deserialize<'a>,
-//     <Self as crate::backend::Model2>::UpdateRequestError: Serialize,
-// {
-//     type State: AnyDb<Db = Self::Db> + Sync + Send;
-//     type Headers;
-//
-//     #[allow(unused_variables)]
-//     fn index(
-//         State(state): State<Arc<Self::State>>,
-//         Query(query): Query<Self::GetAllRequestQuery>,
-//     ) -> impl Future<Output = Result<Json<Vec<Self::Response>>, Error>> + Send {
-//         async move {
-//             let rs = Self::get_all(state.db()).await?;
-//             Ok(Json(rs))
-//         }
-//     }
-//     fn get(
-//         State(state): State<Arc<Self::State>>,
-//         Path(id): Path<Self::Id>,
-//     ) -> impl Future<Output = Result<Json<Self::Response>, Error>> + Send {
-//         async move {
-//             let rs = Self::get_one(state.db(), id).await?;
-//             Ok(Json(rs))
-//         }
-//     }
-//     fn create(
-//         State(state): State<Arc<Self::State>>,
-//         Json(rq): Json<Self::CreateRequest>,
-//     ) -> impl Future<Output = Result<Json<Self::Response>, ModelError<Self::CreateRequestError>>> + Send
-//     {
-//         async move {
-//             let rs = Self::create_get_one(state.db(), rq).await?;
-//             Ok(Json(rs))
-//         }
-//     }
-//     fn update(
-//         State(state): State<Arc<Self::State>>,
-//         Path(id): Path<Self::Id>,
-//         Json(rq): Json<Self::UpdateRequest>,
-//     ) -> impl Future<Output = Result<Json<Self::Response>, ModelError<Self::UpdateRequestError>>> + Send
-//     {
-//         async move {
-//             let rs = Self::update_get_one(state.db(), rq, id).await?;
-//             Ok(Json(rs))
-//         }
-//     }
-//     fn delete(
-//         State(state): State<Arc<Self::State>>,
-//         Path(id): Path<Self::Id>,
-//     ) -> impl Future<Output = Result<(), Error>> + Send {
-//         async move {
-//             Self::delete_one(state.db(), id).await?;
-//             Ok(())
-//         }
-//     }
-// }
-
-// pub trait DeserializeRequest: Sized {
-//     type Item: for<'de> Deserialize<'de>;
-//     type UnprocessableEntityError;
-//
-//     fn deserialize_request<'de, D>(
-//         deserializer: D,
-//     ) -> Result<Self, DeserializeRequestError<Self::UnprocessableEntityError, D::Error>>
-//     where
-//         D: serde::Deserializer<'de>,
-//     {
-//         let item = Self::deserialize_item(deserializer).map_err(DeserializeRequestError::Serde)?;
-//         Self::deserialize_request_from_item(item)
-//             .map_err(DeserializeRequestError::UnprocessableEntity)
-//     }
-//     fn deserialize_item<'de, D>(deserializer: D) -> Result<Self::Item, D::Error>
-//     where
-//         D: serde::Deserializer<'de>,
-//     {
-//         Self::Item::deserialize(deserializer)
-//     }
-//     fn deserialize_request_from_item(
-//         item: Self::Item,
-//     ) -> Result<Self, Self::UnprocessableEntityError>;
-// }
-
+/// JSON Extractor / Response.
+///
+/// When used as an extractor, it can deserialize request bodies into some type that
+/// implements [`serde::de::DeserializeOwned`]. The request will be rejected (and a [`DeserializeRequestError`] will
+/// be returned) if:
+///
+/// # Errors
+/// - The request doesn't have a `Content-Type: application/json` (or similar) header.
+/// - The body doesn't contain syntactically valid JSON.
+/// - The body contains syntactically valid JSON, but it couldn't be deserialized into the target type.
+/// - Buffering the request body fails.
+///
+/// ⚠️ Since parsing JSON requires consuming the request body, the `Json` extractor must be
+/// *last* if there are multiple extractors in a handler.
+/// See [`the order of extractors`](axum::extract#the-order-of-extractors)
+///
+/// See [`DeserializeRequestError`] for more details.
 #[must_use]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Json<T>(pub T);
@@ -174,6 +114,10 @@ impl<T> Json<T>
 where
     T: serde::de::DeserializeOwned,
 {
+    /// Deserialize JSON from bytes.
+    ///
+    /// # Errors
+    /// - Deserialization fails.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
         T::deserialize(&mut deserializer).map(Json)
@@ -195,7 +139,7 @@ where
             .await
             .map_err(|_| DeserializeRequestError::ContentType)?;
         let mime = mime::Mime::from(content_type);
-        if json_mime(mime) {
+        if json_mime(&mime) {
             let bytes = bytes::Bytes::from_request(req, state)
                 .await
                 .map_err(DeserializeRequestError::Bytes)?;
@@ -262,7 +206,7 @@ where
 
         match content_type {
             Some(TypedHeader(content_type)) => {
-                if json_mime(mime::Mime::from(content_type)) {
+                if json_mime(&mime::Mime::from(content_type)) {
                     let bytes = bytes::Bytes::from_request(req, state)
                         .await
                         .map_err(DeserializeRequestError::Bytes)?;
@@ -274,45 +218,6 @@ where
             }
             None => Ok(None),
         }
-        // match content_type {
-        //     Some(TypedHeader(content_type)) => {
-        //         if json_mime(mime::Mime::from(content_type)) {
-        //             let bytes = bytes::Bytes::from_request(req, state)
-        //                 .await
-        //                 .map_err(DeserializeRequestError::Bytes)?;
-        //             let t = Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)?;
-        //             Ok(Some(t))
-        //         } else {
-        //             Err(DeserializeRequestError::ContentType)
-        //         }
-        //     }
-        //     None => Ok(None),
-        // }
-
-        // match req.extract_parts::<TypedHeader<ContentType>>().await {
-        //     Ok(TypedHeader(content_type)) if json_mime(content_type.clone().into()) => {
-        //         let bytes = bytes::Bytes::from_request(req, state)
-        //             .await
-        //             .map_err(DeserializeRequestError::Bytes)?;
-        //         Self::from_bytes(&bytes)
-        //             .map(Some)
-        //             .map_err(DeserializeRequestError::Serde)
-        //     }
-        //     Err(err) if err.is_missing() => Ok(None),
-        //     _ => Err(DeserializeRequestError::ContentType),
-        // }
-        // match req.headers().get(axum::http::header::CONTENT_TYPE) {
-        //     Some(content_type_header) if json_content_type(content_type_header) => {
-        //         let bytes = bytes::Bytes::from_request(req, state)
-        //             .await
-        //             .map_err(DeserializeRequestError::Bytes)?;
-        //         Self::from_bytes(&bytes)
-        //             .map(Some)
-        //             .map_err(DeserializeRequestError::Serde)
-        //     }
-        //     None => Ok(None),
-        //     _ => Err(DeserializeRequestError::ContentType),
-        // }
     }
 }
 impl<T> IntoResponse for Json<T>
@@ -379,12 +284,14 @@ pub fn content_type(content_type_header: &axum::http::HeaderValue) -> Option<mim
     let content_type = content_type_header.to_str().ok()?;
     content_type.parse::<mime::Mime>().ok()
 }
-fn json_mime(mime: mime::Mime) -> bool {
+fn json_mime(mime: &mime::Mime) -> bool {
     mime.type_() == "application"
         && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"))
 }
 pub fn json_content_type(content_type_header: &axum::http::HeaderValue) -> bool {
-    content_type(content_type_header).is_some_and(json_mime)
+    content_type(content_type_header)
+        .as_ref()
+        .is_some_and(json_mime)
 }
 
 #[non_exhaustive]
@@ -450,16 +357,26 @@ where
 // }
 
 pub trait Authenticate {
-    type State: Send + Sync;
+    type State;
+    /// Authenticate the user.
+    ///
+    /// To authorize the user, use the [`Authorize`] trait instead so this trait only has to be implemented once.
+    ///
+    /// # Errors
+    /// - Authentication fails.
     #[expect(unused_variables)]
-    fn authenticate(&self, state: &Self::State) -> Result<(), AuthError> {
+    fn authenticate(&self, state: &Arc<Self::State>) -> Result<(), AuthError> {
         Ok(())
     }
 }
 
 pub trait Authorize: Sized {
     type Authenticate: Authenticate;
-    fn authorize(authenticate: Self::Authenticate) -> Result<Self, AuthError>;
+    /// Authorize the user.
+    ///
+    /// # Errors
+    /// - Authorization fails.
+    fn authorize(authorize: Self::Authenticate) -> Result<Self, AuthError>;
 }
 impl<T> Authorize for T
 where
@@ -472,18 +389,22 @@ where
 }
 
 pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> + Sized {
+    #[must_use]
     fn exp_duration() -> core::time::Duration {
         core::time::Duration::from_secs(60 * 4)
     }
+    #[must_use]
     fn authentication_keys() -> &'static AuthKeys {
         static KEYS: std::sync::LazyLock<AuthKeys> = std::sync::LazyLock::new(AuthKeys::new);
         &KEYS
     }
+    #[must_use]
     fn authentication_validation() -> &'static jsonwebtoken::Validation {
         static VALIDATION: std::sync::LazyLock<jsonwebtoken::Validation> =
             std::sync::LazyLock::new(jsonwebtoken::Validation::default);
         &VALIDATION
     }
+    #[must_use]
     fn authentication_header() -> &'static jsonwebtoken::Header {
         static HEADER: std::sync::LazyLock<jsonwebtoken::Header> =
             std::sync::LazyLock::new(jsonwebtoken::Header::default);
@@ -514,9 +435,13 @@ where
             .as_millis();
         Self { exp, token }
     }
-    pub fn new_with_millis(token: T, millis: u128) -> Self {
+    pub const fn new_with_millis(token: T, millis: u128) -> Self {
         Self { exp: millis, token }
     }
+    /// Encode the token with the expiration date given by the [Authenticate] trait
+    ///
+    /// # Errors
+    /// - encoding fails, see [`jsonwebtoken::errors::Error`].
     pub fn encode(&self) -> Result<String, jsonwebtoken::errors::Error> {
         jsonwebtoken::encode::<Self>(
             T::authentication_header(),
@@ -555,6 +480,10 @@ impl<T> AuthToken<T>
 where
     T: AuthenticateToken,
 {
+    /// Encode the token with the expiration date given by the [Authenticate] trait
+    ///
+    /// # Errors
+    /// - encoding fails, see [`jsonwebtoken::errors::Error`].
     pub fn encode(self) -> Result<String, AuthError> {
         AuthTokenExp::encode(&AuthTokenExp::from(self)).map_err(|_| AuthError::Unauthenticated)
     }
@@ -565,7 +494,7 @@ where
     }
 }
 
-impl<T, U, State> FromRequestParts<State> for AuthToken<T>
+impl<T, U, State> FromRequestParts<Arc<State>> for AuthToken<T>
 where
     T: Authorize<Authenticate = U>,
     U: Authenticate<State = State> + AuthenticateToken,
@@ -574,7 +503,7 @@ where
     type Rejection = AuthError;
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        state: &State,
+        state: &Arc<State>,
     ) -> Result<Self, Self::Rejection> {
         use axum_extra::{
             TypedHeader,
@@ -587,7 +516,7 @@ where
         let token = bearer.token();
         let token = AuthToken::<U>::decode(token).map_err(|_| AuthError::Unauthenticated)?;
         U::authenticate(&token.0, state)?;
-        let token = AuthToken(T::authorize(token.0)?);
+        let token = Self(T::authorize(token.0)?);
         Ok(token)
     }
 }
@@ -600,10 +529,11 @@ where
         _: &mut axum::http::request::Parts,
         _: &State,
     ) -> Result<Self, Self::Rejection> {
-        Ok(AuthToken(()))
+        Ok(Self(()))
     }
 }
 
+#[must_use]
 pub fn auth_secret() -> String {
     crate::env_var!("AUTH_SECRET")
 }
@@ -613,12 +543,14 @@ pub struct AuthKeys {
     pub decoding: jsonwebtoken::DecodingKey,
 }
 impl AuthKeys {
+    #[must_use]
     pub fn from_secret(secret: &[u8]) -> Self {
         Self {
             encoding: jsonwebtoken::EncodingKey::from_secret(secret),
             decoding: jsonwebtoken::DecodingKey::from_secret(secret),
         }
     }
+    #[must_use]
     pub fn new() -> Self {
         let auth_secret = auth_secret();
         Self::from_secret(auth_secret.as_bytes())

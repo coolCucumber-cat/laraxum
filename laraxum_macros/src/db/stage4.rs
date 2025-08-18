@@ -22,8 +22,9 @@ impl stage3::AtomicTyTime {
     pub const fn ty(&self) -> &'static str {
         #[cfg(feature = "mysql")]
         match self {
-            Self::ChronoDateTimeUtc => "TIMESTAMP",
-            Self::ChronoDateTimeLocal | Self::TimeOffsetDateTime => "TIMESTAMP",
+            Self::ChronoDateTimeUtc | Self::ChronoDateTimeLocal | Self::TimeOffsetDateTime => {
+                "TIMESTAMP"
+            }
             Self::ChronoNaiveDateTime | Self::TimePrimitiveDateTime => "DATETIME",
             Self::ChronoNaiveDate | Self::TimeDate => "DATE",
             Self::ChronoNaiveTime | Self::TimeTime | Self::ChronoTimeDelta | Self::TimeDuration => {
@@ -35,8 +36,10 @@ impl stage3::AtomicTyTime {
         #[cfg(feature = "mysql")]
         match self {
             Self::ChronoDateTimeUtc => "UTC_TIMESTAMP()",
-            Self::ChronoDateTimeLocal | Self::TimeOffsetDateTime => "CURRENT_TIMESTAMP()",
-            Self::ChronoNaiveDateTime | Self::TimePrimitiveDateTime => "CURRENT_TIMESTAMP()",
+            Self::ChronoDateTimeLocal
+            | Self::TimeOffsetDateTime
+            | Self::ChronoNaiveDateTime
+            | Self::TimePrimitiveDateTime => "CURRENT_TIMESTAMP()",
             Self::ChronoNaiveDate | Self::TimeDate => "CURRENT_DATE()",
             Self::ChronoNaiveTime | Self::TimeTime | Self::ChronoTimeDelta | Self::TimeDuration => {
                 "CURRENT_TIME()"
@@ -132,21 +135,11 @@ impl stage3::TyElement {
             Self::AutoTime(auto_time) => Cow::Borrowed(auto_time.ty.ty()),
         }
     }
-
-    /// If the type requires the constraint `UNIQUE`, not if it is unique
-    ///
-    /// A primary key is unique but it doesn't require the constraint, since it is already implied
-    const fn unique_constraint(&self) -> bool {
-        match self {
-            Self::Id => false,
-            Self::Value(value) => value.unique,
-            Self::AutoTime(_) => false,
-        }
-    }
 }
 
 impl stage3::TyCompound<'_> {
-    fn ty(&self) -> &'static str {
+    #[expect(clippy::unused_self)]
+    const fn ty(&self) -> &'static str {
         {
             #[cfg(feature = "mysql")]
             {
@@ -171,13 +164,6 @@ impl stage3::Ty<'_> {
             Self::Element(element) => element.ty(),
         }
     }
-
-    const fn unique_constraint(&self) -> bool {
-        match self {
-            Self::Compound(compound) => compound.unique(),
-            Self::Element(element) => element.unique_constraint(),
-        }
-    }
 }
 impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
@@ -188,7 +174,7 @@ impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
         if self.optional() {
             fmt2::fmt! { (? w) => " NOT NULL" }?;
         }
-        if self.unique_constraint() {
+        if self.unique() && !self.is_id() {
             fmt2::fmt! { (? w) => " UNIQUE" }?;
         }
         if let Some(default_value) = self.default_value() {
@@ -204,6 +190,7 @@ impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
                 #[cfg(feature = "postgres")]
                 fmt2::fmt! { (? w) => " PRIMARY KEY" }?;
             }
+            Self::Element(_) => {}
             Self::Compound(stage3::TyCompound {
                 foreign_table_name,
                 foreign_table_id_name,
@@ -211,7 +198,6 @@ impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
             }) => {
                 fmt2::fmt! { (? w) => " FOREIGN KEY REFERENCES " {foreign_table_name} "(" {foreign_table_id_name} ")" }?;
             }
-            _ => {}
         }
         Ok(())
     }
@@ -227,7 +213,7 @@ impl fmt2::write_to::WriteTo for stage3::CreateColumn<'_> {
 }
 
 impl stage3::RequestColumnOne<'_> {
-    pub fn request_setter_column(&self) -> Option<(&str, &str)> {
+    pub const fn request_setter_column(&self) -> Option<(&str, &str)> {
         match self {
             Self::Some {
                 setter: stage3::RequestColumnSetterOne { name, .. },
@@ -279,7 +265,7 @@ fn create_table<'columns>(
     table_name_intern: &str,
     columns: impl IntoIterator<Item = &'columns stage3::Column<'columns>>,
 ) -> String {
-    let create_columns = columns.into_iter().flat_map(|column| column.create());
+    let create_columns = columns.into_iter().filter_map(|column| column.create());
 
     fmt2::fmt! { { str } =>
         "CREATE TABLE IF NOT EXISTS " {table_name_intern} " ("
@@ -292,11 +278,11 @@ fn delete_table(table_name_intern: &str) -> String {
         "DROP TABLE " {table_name_intern} ";"
     }
 }
-fn get_all<'elements, 'compounds>(
+fn get_all(
     table_name_intern: &str,
     table_name_extern: &str,
-    response_getter_column_elements: &[ResponseColumnGetterElement<'elements>],
-    response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound<'compounds>],
+    response_getter_column_elements: &[ResponseColumnGetterElement],
+    response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound],
 ) -> String {
     fmt2::fmt! { { str } =>
         "SELECT "
@@ -312,12 +298,12 @@ fn get_all<'elements, 'compounds>(
         )
     }
 }
-fn get_filter<'elements, 'compounds>(
+fn get_filter(
     table_name_intern: &str,
     table_name_extern: &str,
     id_name_intern: &str,
-    response_getter_column_elements: &[ResponseColumnGetterElement<'elements>],
-    response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound<'compounds>],
+    response_getter_column_elements: &[ResponseColumnGetterElement],
+    response_getter_column_compounds: &[&stage3::ResponseColumnGetterCompound],
 ) -> String {
     let mut get_all = get_all(
         table_name_intern,
@@ -335,7 +321,7 @@ where
 {
     let request_columns = columns
         .into_iter()
-        .flat_map(|column| column.request_setter_column());
+        .filter_map(|column| column.request_setter_column());
     fmt2::fmt! { { str } =>
         "INSERT INTO " {table_name_intern} " ("
             @..join(request_columns.clone() => "," => |column| {column.0})
@@ -350,7 +336,7 @@ where
 {
     let request_columns = columns
         .into_iter()
-        .flat_map(|column| column.request_setter_column());
+        .filter_map(|column| column.request_setter_column());
     fmt2::fmt! { { str } =>
         "UPDATE " {table_name_intern} " SET "
         @..join(request_columns => "," => |column| {column.0} "=" {column.1})
@@ -610,9 +596,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value.len() <= #max_len {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::MinLen(ref min_len) => {
@@ -621,9 +605,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value.len() >= #min_len {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::Func(ref f) => {
@@ -657,9 +639,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value == &#eq {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::NEq(ref n_eq) => {
@@ -668,9 +648,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value != &#n_eq {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::Gt(ref gt) => {
@@ -679,9 +657,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value > &#gt {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::Lt(ref lt) => {
@@ -690,9 +666,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value < &#lt {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::Gte(ref gte) => {
@@ -701,9 +675,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value >= &#gte {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
             Self::Lte(ref lte) => {
@@ -712,9 +684,7 @@ impl super::stage2::ValidateRule {
                 quote! {
                     if #value <= &#lte {
                         ::core::result::Result::Ok(())
-                    } else {
-                        ::core::result::Result::Err(#err_message)
-                    }
+                    } else { ::core::result::Result::Err(#err_message) }
                 }
             }
         }
@@ -739,6 +709,7 @@ struct Table {
     migration_down: String,
 }
 impl From<stage3::Table<'_>> for Table {
+    #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
         let response_column_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
@@ -860,7 +831,7 @@ impl From<stage3::Table<'_>> for Table {
             let request_setter_compounds_columns =
                 table.columns.iter().filter_map(|column| match column {
                     stage3::Column::Compounds(compounds) => Some(&compounds.request.setter),
-                    _ => None,
+                    stage3::Column::One(_) => None,
                 });
 
             let request_setter_compounds_create_many =
@@ -934,7 +905,10 @@ impl From<stage3::Table<'_>> for Table {
                 &response_getter_column_elements,
                 &response_getter_column_compounds,
             );
-            let request_columns = table.columns.iter().flat_map(|column| column.request_one());
+            let request_columns = table
+                .columns
+                .iter()
+                .filter_map(|column| column.request_one());
             let create_one = create_one(&table.name_intern, request_columns.clone());
 
             let collection_token_stream = quote! {
@@ -944,7 +918,6 @@ impl From<stage3::Table<'_>> for Table {
                 }
 
                 impl ::laraxum::Collection for #table_rs_name {
-                    type GetAllRequestQuery = ();
                     type CreateRequest = #table_request_rs_name;
                     type CreateRequestError = #table_request_error_rs_name;
 
@@ -1344,11 +1317,12 @@ impl From<stage3::Table<'_>> for Table {
             let auth = controller
                 .auth
                 .as_deref()
-                .map_or_else(|| quote! { () }, |ty| ty.to_token_stream());
+                .map_or_else(|| quote! { () }, quote::ToTokens::to_token_stream);
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
                     type Auth = #auth;
+                    type GetAllRequestQuery = ();
                 }
             }
         });
@@ -1493,6 +1467,7 @@ impl From<stage3::Table<'_>> for Table {
 }
 
 pub use proc_macro2::TokenStream as Db;
+#[expect(clippy::fallible_impl_from, clippy::unwrap_used)]
 impl From<stage3::Db<'_>> for Db {
     fn from(db: stage3::Db) -> Self {
         let tables: Vec<Table> = db.tables.into_iter().map(Table::from).collect();

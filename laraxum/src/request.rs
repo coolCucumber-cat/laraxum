@@ -7,11 +7,12 @@ pub mod method {
 
 pub trait Request<RequestType> {
     type Error;
+    /// Validate a request.
+    ///
+    /// # Errors
+    /// - validation fails.
     fn validate(&self) -> Result<(), Self::Error>;
 }
-
-// #[doc(alias = "RequestError")]
-// pub enum Error {}
 
 pub fn error_builder<T, E>(result: &mut Result<T, E>, f: impl FnOnce(&mut E))
 where

@@ -43,7 +43,7 @@ pub enum AtomicTyTime {
     TimeDuration,
 }
 
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types)]
 #[derive(Clone)]
 pub enum AtomicTy {
     bool,
@@ -184,6 +184,9 @@ impl TyElement {
             Self::AutoTime(_) => false,
         }
     }
+    pub const fn is_id(&self) -> bool {
+        matches!(self, Self::Id)
+    }
     pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
             Self::AutoTime(time_ty) => Some(DefaultValue::AutoTime(&time_ty.ty)),
@@ -226,11 +229,7 @@ impl TyCompound {
         self.multiplicity.optional()
     }
     pub const fn unique(&self) -> bool {
-        // TODO: unique
-        false
-    }
-    pub const fn max_len(&self) -> Option<u16> {
-        None
+        self.multiplicity.unique()
     }
 }
 
@@ -253,13 +252,13 @@ impl Ty {
     }
     pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
+            Self::Compound(_) => None,
             Self::Element(element) => element.default_value(),
-            _ => None,
         }
     }
     pub const fn max_len(&self) -> Option<u16> {
         match self {
-            Self::Compound(compound) => compound.max_len(),
+            Self::Compound(_) => None,
             Self::Element(element) => element.max_len(),
         }
     }
@@ -424,7 +423,7 @@ impl TryFrom<stage1::Column> for Column {
                         };
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
-                        };
+                        }
 
                         Ty::Element(TyElement::AutoTime(TyElementAutoTime {
                             ty,
@@ -586,22 +585,22 @@ impl<T, C> Columns<T, C> {
     //         }
     //     }
     // }
-    pub fn model(&self) -> Option<&T> {
+    pub const fn model(&self) -> Option<&T> {
         match self {
             Self::Model { id, .. } => Some(id),
             _ => None,
         }
     }
-    pub fn many_model(&self) -> Option<(&T, &T)> {
+    pub const fn many_model(&self) -> Option<(&T, &T)> {
         match self {
             Self::ManyModel { a, b } => Some((a, b)),
             _ => None,
         }
     }
-    pub fn is_collection(&self) -> bool {
+    pub const fn is_collection(&self) -> bool {
         matches!(self, Self::CollectionOnly { .. } | Self::Model { .. })
     }
-    pub fn controller(&self) -> Option<&C> {
+    pub const fn controller(&self) -> Option<&C> {
         match self {
             Self::Model { controller, .. } => controller.as_ref(),
             _ => None,
@@ -644,7 +643,7 @@ impl TryFrom<stage1::Table> for Table {
             .into_iter()
             .map(|column| {
                 let column = Column::try_from(column)?;
-                if let Ty::Element(TyElement::Id) = column.ty {
+                if matches!(column.ty, Ty::Element(TyElement::Id)) {
                     // match model {
                     //     Some(model)if model.many=>return Err(syn::Error::new(rs_name.span(), TABLE_MUST_NOT_HAVE_ID)),
                     //     None=>return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL)),
@@ -752,8 +751,8 @@ impl Db {
         let tables = tables?;
 
         Ok(Self {
-            rs_name,
             name,
+            rs_name,
             tables,
             rs_vis,
         })

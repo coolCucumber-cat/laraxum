@@ -94,12 +94,12 @@ where
 }
 impl From<()> for ModelError<()> {
     fn from(value: ()) -> Self {
-        ModelError::UnprocessableEntity(value)
+        Self::UnprocessableEntity(value)
     }
 }
 impl From<core::convert::Infallible> for ModelError<core::convert::Infallible> {
     fn from(value: core::convert::Infallible) -> Self {
-        ModelError::UnprocessableEntity(value)
+        Self::UnprocessableEntity(value)
     }
 }
 impl<UnprocessableEntity> IntoResponse for ModelError<UnprocessableEntity>

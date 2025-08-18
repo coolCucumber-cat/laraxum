@@ -19,7 +19,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.142"
 mime = "0.3.17"
 bytes = "1.10.1"
-thiserror = "2.0.14"
+thiserror = "2.0.15"
 jsonwebtoken = { version = "9.3.1", optional = true }
 chrono = { version = "0.4.41", optional = true }
 time = { version = "0.3.41", optional = true }
@@ -36,3 +36,17 @@ auth_token = ["dep:jsonwebtoken"]
 
 [lints.rust]
 async_fn_in_trait = "allow"
+
+[lints.clippy]
+arithmetic_side_effects = "warn"
+panic = "warn"
+expect_used = "warn"
+unwrap_used = "warn"
+indexing_slicing = "warn"
+cognitive_complexity = "warn"
+
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+similar_names = "allow"
+option_if_let_else = "allow"

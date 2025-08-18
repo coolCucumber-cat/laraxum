@@ -3,17 +3,19 @@ macro_rules! impl_encode_decode {
     { $($ty:ty => $inner:ty),* $(,)? } => {
         $(
             impl $crate::backend::Decode for $ty {
-                type Decode = $inner;
+                type Decode = <$inner as $crate::backend::Decode>::Decode;
                 #[inline]
                 fn decode(decode: Self::Decode) -> Self {
-                    <Self as ::core::convert::From<Self::Decode>>::from(decode)
+                    let decode = <$inner as $crate::backend::Decode>::decode(decode);
+                    ::core::convert::From::from(decode)
                 }
             }
             impl $crate::backend::Encode for $ty {
-                type Encode = $inner;
+                type Encode = <$inner as $crate::backend::Encode>::Encode;
                 #[inline]
                 fn encode(self) -> Self::Encode {
-                    <Self::Encode as ::core::convert::From<Self>>::from(self)
+                    let encode = ::core::convert::From::from(self);
+                    <$inner as $crate::backend::Encode>::encode(encode)
                 }
             }
         )*
@@ -23,9 +25,25 @@ macro_rules! impl_encode_decode {
 #[macro_export]
 macro_rules! impl_encode_decode_self {
     { $($ty:ty),* $(,)? } => {
-        $crate::impl_encode_decode! {
-            $($ty => $ty),*
-        }
+        // $crate::impl_encode_decode! {
+        //     $($ty => $ty),*
+        // }
+        $(
+            impl $crate::backend::Decode for $ty {
+                type Decode = $ty;
+                #[inline]
+                fn decode(decode: Self::Decode) -> Self {
+                    ::core::convert::From::from(decode)
+                }
+            }
+            impl $crate::backend::Encode for $ty {
+                type Encode = $ty;
+                #[inline]
+                fn encode(self) -> Self::Encode {
+                    ::core::convert::From::from(self)
+                }
+            }
+        )*
     };
 }
 
@@ -60,7 +78,7 @@ macro_rules! impl_serde {
 }
 
 #[macro_export]
-macro_rules! impl_serde_encode_decode {
+macro_rules! transparent {
     { $($ty:ty => $inner:ty),* $(,)? } => {
         $(
             $crate::impl_encode_decode! { $ty => $inner }
@@ -120,12 +138,36 @@ macro_rules! env_var_opt {
 macro_rules! serve {
     ($app:expr) => {
         async {
-            let url = ::laraxum::frontend::url();
+            let url = $crate::frontend::url();
             let url = &*url;
             let app_listener = ::tokio::net::TcpListener::bind(url).await?;
             ::std::println!("Listening at: {url:?}");
             ::axum::serve(app_listener, $app).await?;
             ::core::result::Result::Ok(())
         }
+    };
+}
+
+#[macro_export]
+macro_rules! authorize {
+    {
+        $(
+            $ty:ty => $var_ty:ident => $var:expr
+        ),* $(,)?
+    } => {
+        $(
+            impl $crate::Authorize for $var_ty {
+                type Authenticate = $ty;
+                fn authorize(
+                    authenticate: Self::Authenticate,
+                ) -> ::core::result::Result<Self, $crate::error::AuthError> {
+                    if authenticate >= $var {
+                        ::core::result::Result::Ok($var_ty)
+                    } else {
+                        ::core::result::Result::Err($crate::error::AuthError::Unauthorized)
+                    }
+                }
+            }
+        )*
     };
 }

@@ -18,7 +18,7 @@ const UNKNOWN_TYPE: &str = "unknown type";
 
 pub type StringLen = u16;
 
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types)]
 #[derive(PartialEq, Eq)]
 pub enum AtomicTy {
     String,
@@ -169,7 +169,7 @@ pub struct ColumnAttrResponse {
     pub skip: bool,
 }
 
-/// use `TokenStreamAttr` because it can be parsed by `darling`
+// use `TokenStreamAttr` because it can be parsed by `darling`
 #[derive(darling::FromMeta)]
 #[darling(rename_all = "snake_case")]
 pub enum ValidateRule {
@@ -185,7 +185,7 @@ pub enum ValidateRule {
     Lte(crate::utils::syn::TokenStreamAttr<Expr>),
 }
 
-/// use `EnumMetaListAttr` because it can be parsed by `darling`
+// use `EnumMetaListAttr` because it can be parsed by `darling`
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrRequest {
@@ -341,12 +341,12 @@ pub struct Db {
 impl Parse for Db {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let item = input.parse::<Item>()?;
-        //         Self::try_from(item)
-        //     }
-        // }
-        // impl TryFrom<Item> for Db {
-        //     type Error = syn::Error;
-        //     fn try_from(item: Item) -> Result<Self, Self::Error> {
+        Self::try_from(item)
+    }
+}
+impl TryFrom<Item> for Db {
+    type Error = syn::Error;
+    fn try_from(item: Item) -> Result<Self, Self::Error> {
         let item_span = item.span();
         let Item::Mod(ItemMod {
             attrs: rs_attrs,
@@ -354,7 +354,7 @@ impl Parse for Db {
             unsafety: rs_unsafety,
             mod_token: _,
             ident: rs_name,
-            content: rs_tables,
+            content: tables,
             semi: _,
         }) = item
         else {
@@ -364,14 +364,17 @@ impl Parse for Db {
         if !rs_attrs.is_empty() {
             return Err(syn::Error::new(item_span, DB_MOD_MUST_NOT_HAVE_ATTRS));
         }
-        if let Some(unsafety) = rs_unsafety {
-            return Err(syn::Error::new(unsafety.span(), DB_MOD_MUST_NOT_BE_UNSAFE));
-        };
+        if let Some(rs_unsafety) = rs_unsafety {
+            return Err(syn::Error::new(
+                rs_unsafety.span(),
+                DB_MOD_MUST_NOT_BE_UNSAFE,
+            ));
+        }
 
-        let Some((_, items)) = rs_tables else {
+        let Some((_, tables)) = tables else {
             return Err(syn::Error::new(item_span, DB_MOD_MUST_HAVE_CONTENT));
         };
-        let tables = items.into_iter().map(Table::try_from);
+        let tables = tables.into_iter().map(Table::try_from);
         let tables: Result<Vec<Table>, syn::Error> = tables.collect();
         let tables = tables?;
 
@@ -382,25 +385,3 @@ impl Parse for Db {
         })
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn table_attr() {
-//         let attr: Attribute = syn::parse_quote!(#[db(name = "groups")]);
-//         let table_attr = <TableAttr as darling::FromAttributes>::from_attributes(&[attr]).unwrap();
-//         assert_eq!(
-//             table_attr,
-//             TableAttr {
-//                 attrs: vec![],
-//                 collection: None,
-//                 controller: None,
-//                 model: None,
-//                 many_model: None,
-//                 name: Some("groups".into())
-//             }
-//         );
-//     }
-// }

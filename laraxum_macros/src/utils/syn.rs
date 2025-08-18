@@ -28,7 +28,7 @@ where
         (match *item {
             Meta::Path(_) => Self::from_word(),
             Meta::List(ref value) => {
-                let parse2 = syn::parse2::<T>(value.tokens.to_owned())?;
+                let parse2 = syn::parse2::<T>(value.tokens.clone())?;
                 Ok(Self(parse2))
             }
             Meta::NameValue(ref value) => Self::from_expr(&value.value),
@@ -51,7 +51,7 @@ where
             Meta::List(ref value) => {
                 let punctuated = syn::parse::Parser::parse2(
                     syn::punctuated::Punctuated::<T, Token![,]>::parse_terminated,
-                    value.tokens.to_owned(),
+                    value.tokens.clone(),
                 )?;
                 let collect = punctuated.into_iter().collect::<Vec<T>>();
                 Ok(Self(collect))
@@ -90,7 +90,7 @@ where
     T: darling::FromMeta,
 {
     fn default() -> Self {
-        Self(Default::default())
+        Self(vec![])
     }
 }
 
@@ -119,7 +119,7 @@ pub fn parse_exactly_one_punctuated<T, P>(punctuated: &Punctuated<T, P>) -> Opti
     }
 }
 
-pub fn parse_path_segments_from_type_path(
+pub const fn parse_path_segments_from_type_path(
     path: &TypePath,
 ) -> Option<&Punctuated<PathSegment, Token![::]>> {
     if let TypePath {
@@ -135,7 +135,9 @@ pub fn parse_path_segments_from_type_path(
         None
     }
 }
-pub fn parse_path_segments_from_type(ty: &Type) -> Option<&Punctuated<PathSegment, Token![::]>> {
+pub const fn parse_path_segments_from_type(
+    ty: &Type,
+) -> Option<&Punctuated<PathSegment, Token![::]>> {
     if let Type::Path(path) = ty {
         parse_path_segments_from_type_path(path)
     } else {
@@ -158,11 +160,10 @@ pub fn parse_ident_from_path_segments(
 }
 pub fn parse_ident_from_type(ty: &Type) -> Result<&Ident, syn::Error> {
     let path_segments = parse_path_segments_from_type(ty);
-    if let Some(path_segments) = path_segments {
-        parse_ident_from_path_segments(path_segments)
-    } else {
-        Err(syn::Error::new(ty.span(), EXPECTED_IDENT))
-    }
+    path_segments.map_or_else(
+        || Err(syn::Error::new(ty.span(), EXPECTED_IDENT)),
+        parse_ident_from_path_segments,
+    )
 }
 
 pub fn parse_type_single_arg_from_path_segments(

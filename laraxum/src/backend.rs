@@ -1,46 +1,52 @@
 use crate::{Error, ModelError};
 
+/// The type used for for an id.
+///
+/// Currently this must be a `u64`.
+/// This will be changed in the future to be more flexible, so don't rely on it too much.
 pub type Id = u64;
 
+/// A database and a table that belongs to it.
 pub trait Db<Model> {}
 
+/// Get the `DATABASE_URL` environment variable.
+///
+/// # Panics
+/// - Invalid environment variable
+#[must_use]
 pub fn database_url() -> Option<String> {
     crate::env_var_opt!("DATABASE_URL")
 }
 
+/// Connect to a database.
 pub trait Connect: Sized {
     type Error;
     async fn connect() -> Result<Self, Self::Error>;
 }
 
+/// A table in a database.
 pub trait Table: Sized {
     type Db: Db<Self> + Send + Sync;
     type Response: Send + Sync;
 }
 
+/// A table without uniquely identifiable entities.
+///
+/// These operations don't require the entities to be uniquely identifiable for them to work.
 pub trait Collection: Table {
-    type GetAllRequestQuery;
     type CreateRequest;
     type CreateRequestError;
 
     async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, Error>;
     async fn create_one(
         db: &Self::Db,
-        r: Self::CreateRequest,
+        rq: Self::CreateRequest,
     ) -> Result<(), ModelError<Self::CreateRequestError>>;
 }
-// pub trait Collection2: Table {
-//     type GetAllRequestQuery;
-//     type CreateRequest: Send;
-//     type CreateRequestError;
-//
-//     fn get_all(db: &Self::Db) -> impl Future<Output = Result<Vec<Self::Response>, Error>> + Send;
-//     fn create_one(
-//         db: &Self::Db,
-//         r: Self::CreateRequest,
-//     ) -> impl Future<Output = Result<(), ModelError<Self::CreateRequestError>>> + Send;
-// }
 
+/// A table with uniquely identifiable entities.
+///
+/// These operations require the entities to be uniquely identifiable for them to work.
 pub trait Model: Collection {
     type Id: Copy;
     type UpdateRequest;
@@ -68,39 +74,9 @@ pub trait Model: Collection {
     async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
 }
 
-// pub trait Model2: Collection2 {
-//     type Id: Copy + Send + Sync;
-//     type UpdateRequest: Send;
-//     type UpdateRequestError;
-//
-//     fn get_one(
-//         db: &Self::Db,
-//         id: Self::Id,
-//     ) -> impl Future<Output = Result<Self::Response, Error>> + Send;
-//     fn create_get_one(
-//         db: &Self::Db,
-//         rq: Self::CreateRequest,
-//     ) -> impl Future<Output = Result<Self::Response, ModelError<Self::CreateRequestError>>> + Send;
-//     fn update_one(
-//         db: &Self::Db,
-//         rq: Self::UpdateRequest,
-//         id: Self::Id,
-//     ) -> impl Future<Output = Result<(), ModelError<Self::UpdateRequestError>>> + Send;
-//     fn update_get_one(
-//         db: &Self::Db,
-//         rq: Self::UpdateRequest,
-//         id: Self::Id,
-//     ) -> impl Future<Output = Result<Self::Response, ModelError<Self::UpdateRequestError>>> + Send
-//     {
-//         async move {
-//             Self::update_one(db, rq, id).await?;
-//             let rs = Self::get_one(db, id).await?;
-//             Ok(rs)
-//         }
-//     }
-//     fn delete_one(db: &Self::Db, id: Self::Id) -> impl Future<Output = Result<(), Error>> + Send;
-// }
-
+/// A table with two columns where multiple entities are identified by the other column.
+///
+/// This can be used to create many-to-many relationships.
 pub trait ManyModel<OneResponse>: Table {
     type OneRequest;
     type ManyRequest;
@@ -123,6 +99,7 @@ pub trait ManyModel<OneResponse>: Table {
     async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
 }
 
+/// A collection where many entities can be filtered by an index.
 pub trait CollectionIndexMany<Index>: Collection {
     type OneRequest;
     type ManyResponse;
@@ -131,6 +108,7 @@ pub trait CollectionIndexMany<Index>: Collection {
         one: Self::OneRequest,
     ) -> Result<Vec<Self::ManyResponse>, Error>;
 }
+/// A collection where a single entitie can be filtered by an index.
 pub trait CollectionIndexOne<Index>: Collection {
     type OneRequest;
     type OneResponse;
@@ -148,22 +126,14 @@ pub trait CollectionIndexOne<Index>: Collection {
             Err(err) => Err(err),
         }
     }
-    // async fn get_index_one_or_else(
-    //     db: &Self::Db,
-    //     one: Self::OneRequest,
-    //     f: impl FnOnce() -> Error,
-    // ) -> Result<Self::OneResponse, Error> {
-    //     Self::get_index_one(db, one).await.map_err(|err| match err {
-    //         Error::NotFound => f(),
-    //         _ => err,
-    //     })
-    // }
 }
 
+/// Decode from the value stored in the database.
 pub trait Decode {
     type Decode;
     fn decode(decode: Self::Decode) -> Self;
 }
+/// Encode into the value stored in the database.
 pub trait Encode {
     type Encode;
     fn encode(self) -> Self::Encode;
@@ -200,6 +170,7 @@ crate::impl_encode_decode_self! {
     chrono::TimeDelta,
 }
 
+// mysql stores `bool`s as `i8`, so we need to convert it.
 impl Decode for bool {
     #[cfg(not(feature = "mysql"))]
     type Decode = Self;
@@ -232,7 +203,7 @@ impl Encode for bool {
         }
         #[cfg(feature = "mysql")]
         {
-            self as i8
+            i8::from(self)
         }
     }
 }
