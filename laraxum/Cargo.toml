@@ -11,7 +11,7 @@ Create API database servers easily using Axum and SQLX.
 categories = ["database"]
 
 [dependencies]
-laraxum_macros = { version = "0.1.3", optional = true }
+laraxum_macros = { version = "0.1.4", optional = true }
 sqlx = "0.8.6"
 axum = "0.8.4"
 axum-extra = { version = "0.10.1", features = ["typed-header"] }
