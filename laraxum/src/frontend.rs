@@ -7,7 +7,7 @@ use core::ops::Deref;
 use std::{borrow::Cow, sync::Arc};
 
 use axum::{
-    RequestExt, RequestPartsExt,
+    RequestExt,
     extract::{FromRequest, FromRequestParts, OptionalFromRequest, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -27,11 +27,6 @@ pub fn url() -> Cow<'static, str> {
 /// Accept and process requests.
 ///
 /// Every function represents a function in a REST API and has a state and auth token.
-/// The state contains the database.
-/// The auth token authenticates and authorizes the user with a token.
-/// Use a empty tuple `()` to not authenticate the user and accept all users.
-/// The [`crate::Authenticate`](Authenticate) and [`crate::Authorize`](Authorize) traits
-/// can be implemented to add custom authentication and authorization behaviour.
 pub trait Controller: Model
 where
     <Self as Table>::Response: Serialize,
@@ -42,19 +37,33 @@ where
     <Self as Model>::UpdateRequestError: Serialize,
     AuthToken<Self::Auth>: FromRequestParts<Arc<Self::State>>,
 {
+    /// Context for our controller which contains the database connection.
     type State: Deref<Target = Self::Db>;
+    /// Authenticate and authorize the user.
+    ///
+    /// Use [`AuthToken<()>`] to not do any authentication.  
+    /// The [`Authenticate`] and [`Authorize`] traits
+    /// can be implemented for custom authentication and authorization.
     type Auth;
-    type GetAllRequestQuery: for<'a> Deserialize<'a>;
+    /// Request query to get many records.
+    ///
+    /// Does nothing unless you implement [`Controller::get_many`] and do something with it.
+    type GetManyRequestQuery: for<'a> Deserialize<'a>;
 
+    /// Get many records.
+    ///
+    /// Default action is to get all records.
+    /// It can be customised and you can use [`Controller::GetManyRequestQuery`] as input.
     #[expect(unused_variables)]
     async fn get_many(
         State(state): State<Arc<Self::State>>,
         AuthToken(_): AuthToken<Self::Auth>,
-        Query(query): Query<Self::GetAllRequestQuery>,
+        Query(query): Query<Self::GetManyRequestQuery>,
     ) -> Result<Json<Vec<Self::Response>>, Error> {
         let rs = Self::get_all(&*state).await?;
         Ok(Json(rs))
     }
+    /// Get a record.
     async fn get(
         State(state): State<Arc<Self::State>>,
         AuthToken(_): AuthToken<Self::Auth>,
@@ -63,6 +72,7 @@ where
         let rs = Self::get_one(&*state, id).await?;
         Ok(Json(rs))
     }
+    /// Create a record.
     async fn create(
         State(state): State<Arc<Self::State>>,
         AuthToken(_): AuthToken<Self::Auth>,
@@ -71,6 +81,7 @@ where
         let rs = Self::create_get_one(&*state, rq).await?;
         Ok(Json(rs))
     }
+    /// Update a record.
     async fn update(
         State(state): State<Arc<Self::State>>,
         AuthToken(_): AuthToken<Self::Auth>,
@@ -80,6 +91,7 @@ where
         let rs = Self::update_get_one(&*state, rq, id).await?;
         Ok(Json(rs))
     }
+    /// Delete a record.
     async fn delete(
         State(state): State<Arc<Self::State>>,
         AuthToken(_): AuthToken<Self::Auth>,
@@ -280,20 +292,22 @@ where
 //     }
 // }
 
-pub fn content_type(content_type_header: &axum::http::HeaderValue) -> Option<mime::Mime> {
-    let content_type = content_type_header.to_str().ok()?;
-    content_type.parse::<mime::Mime>().ok()
-}
+/// Is the mime json.
 fn json_mime(mime: &mime::Mime) -> bool {
     mime.type_() == "application"
         && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"))
 }
-pub fn json_content_type(content_type_header: &axum::http::HeaderValue) -> bool {
-    content_type(content_type_header)
-        .as_ref()
-        .is_some_and(json_mime)
-}
+// pub fn content_type(content_type_header: &axum::http::HeaderValue) -> Option<mime::Mime> {
+//     let content_type = content_type_header.to_str().ok()?;
+//     content_type.parse::<mime::Mime>().ok()
+// }
+// pub fn json_content_type(content_type_header: &axum::http::HeaderValue) -> bool {
+//     content_type(content_type_header)
+//         .as_ref()
+//         .is_some_and(json_mime)
+// }
 
+/// Error when deserializing request.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum DeserializeRequestError<Serde> {
@@ -356,11 +370,15 @@ where
 //     }
 // }
 
+/// Authenticate the user.
+///
+/// To authorize the user, use the [`Authorize`] trait instead so this trait only has to be implemented once.
 pub trait Authenticate {
     type State;
     /// Authenticate the user.
     ///
-    /// To authorize the user, use the [`Authorize`] trait instead so this trait only has to be implemented once.
+    /// This is optional extra logic to authenticate the user.
+    /// The user has already been verified, but you can add extra logic.
     ///
     /// # Errors
     /// - Authentication fails.
@@ -370,7 +388,9 @@ pub trait Authenticate {
     }
 }
 
+/// Authorize the user.
 pub trait Authorize: Sized {
+    /// The type to use for authentication before authorization.
     type Authenticate: Authenticate;
     /// Authorize the user.
     ///
@@ -388,23 +408,35 @@ where
     }
 }
 
+/// Authentication logic for authenticating a user with an auth token.
+///
+/// All values are sensible defaults.
 pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> + Sized {
+    /// The duration after which the token expires.
+    ///
+    /// Default is 4 hours.
     #[must_use]
     fn exp_duration() -> core::time::Duration {
         core::time::Duration::from_secs(60 * 4)
     }
+    /// The encryption and decryption keys to use.
     #[must_use]
+    #[cfg(feature = "auth_token")]
     fn authentication_keys() -> &'static AuthKeys {
         static KEYS: std::sync::LazyLock<AuthKeys> = std::sync::LazyLock::new(AuthKeys::new);
         &KEYS
     }
+    /// The validation options to use.
     #[must_use]
+    #[cfg(feature = "auth_token")]
     fn authentication_validation() -> &'static jsonwebtoken::Validation {
         static VALIDATION: std::sync::LazyLock<jsonwebtoken::Validation> =
             std::sync::LazyLock::new(jsonwebtoken::Validation::default);
         &VALIDATION
     }
+    /// The token header to use.
     #[must_use]
+    #[cfg(feature = "auth_token")]
     fn authentication_header() -> &'static jsonwebtoken::Header {
         static HEADER: std::sync::LazyLock<jsonwebtoken::Header> =
             std::sync::LazyLock::new(jsonwebtoken::Header::default);
@@ -412,6 +444,11 @@ pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> 
     }
 }
 
+/// The underlying auth token data as stored in JSON. Use is discouraged.
+///
+/// For internal logic only. See [`AuthToken<T>`].
+///
+/// [`jsonwebtoken`] uses the `exp` field to verify the token is not expired.
 #[derive(Serialize, Deserialize)]
 pub struct AuthTokenExp<T>
 where
@@ -438,10 +475,11 @@ where
     pub const fn new_with_millis(token: T, millis: u128) -> Self {
         Self { exp: millis, token }
     }
-    /// Encode the token with the expiration date given by the [Authenticate] trait
+    /// Encode the token with the expiration date given by the [AuthenticateToken] trait
     ///
     /// # Errors
     /// - encoding fails, see [`jsonwebtoken::errors::Error`].
+    #[cfg(feature = "auth_token")]
     pub fn encode(&self) -> Result<String, jsonwebtoken::errors::Error> {
         jsonwebtoken::encode::<Self>(
             T::authentication_header(),
@@ -449,6 +487,11 @@ where
             &T::authentication_keys().encoding,
         )
     }
+    /// Decode the token.
+    ///
+    /// # Errors
+    /// - decoding fails, see [`jsonwebtoken::errors::Error`].
+    #[cfg(feature = "auth_token")]
     fn decode(token: &str) -> Result<Self, jsonwebtoken::errors::Error> {
         jsonwebtoken::decode::<Self>(
             token,
@@ -467,6 +510,11 @@ where
     }
 }
 
+/// Authenticate and authorize the user with an auth token.
+///
+/// Use [`AuthToken<()>`] to not do any authentication.  
+/// The [`Authenticate`] and [`Authorize`] traits
+/// can be implemented for custom authentication and authorization.
 pub struct AuthToken<T>(pub T);
 impl<T> From<AuthTokenExp<T>> for AuthToken<T>
 where
@@ -483,10 +531,16 @@ where
     /// Encode the token with the expiration date given by the [Authenticate] trait
     ///
     /// # Errors
-    /// - encoding fails, see [`jsonwebtoken::errors::Error`].
+    /// - encoding fails, see [`jsonwebtoken::errors::Error`] and [`AuthTokenExp<T>::encode`].
+    #[cfg(feature = "auth_token")]
     pub fn encode(self) -> Result<String, AuthError> {
         AuthTokenExp::encode(&AuthTokenExp::from(self)).map_err(|_| AuthError::Unauthenticated)
     }
+    /// Decode the token.
+    ///
+    /// # Errors
+    /// - decoding fails, see [`jsonwebtoken::errors::Error`] and [`AuthTokenExp<T>::decode`].
+    #[cfg(feature = "auth_token")]
     fn decode(token: &str) -> Result<Self, AuthError> {
         AuthTokenExp::decode(token)
             .map(Self::from)
@@ -494,6 +548,7 @@ where
     }
 }
 
+#[cfg(feature = "auth_token")]
 impl<T, U, State> FromRequestParts<Arc<State>> for AuthToken<T>
 where
     T: Authorize<Authenticate = U>,
@@ -505,6 +560,7 @@ where
         parts: &mut axum::http::request::Parts,
         state: &Arc<State>,
     ) -> Result<Self, Self::Rejection> {
+        use axum::RequestPartsExt;
         use axum_extra::{
             TypedHeader,
             headers::{Authorization, authorization::Bearer},
@@ -533,15 +589,23 @@ where
     }
 }
 
+/// Get the `AUTH_SECRET` environment variable.
+///
+/// # Panics
+/// - Missing environment variable
+/// - Invalid environment variable
 #[must_use]
 pub fn auth_secret() -> String {
     crate::env_var!("AUTH_SECRET")
 }
 
+/// Encryption and decryption keys for encoding and decoding.
+#[cfg(feature = "auth_token")]
 pub struct AuthKeys {
     pub encoding: jsonwebtoken::EncodingKey,
     pub decoding: jsonwebtoken::DecodingKey,
 }
+#[cfg(feature = "auth_token")]
 impl AuthKeys {
     #[must_use]
     pub fn from_secret(secret: &[u8]) -> Self {

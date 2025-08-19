@@ -9,7 +9,7 @@ use syn::{
     spanned::Spanned,
 };
 
-/// Allow `syn::Pat` to be parsed by `syn::parse::Parse`
+/// Allow [`syn::Pat`] to be parsed by [`syn::parse::Parse`].
 pub struct ParsePat(pub Pat);
 impl Parse for ParsePat {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -17,6 +17,10 @@ impl Parse for ParsePat {
     }
 }
 
+/// Allow anything that implements [`syn::parse::Parse`] to be used as an attribute by [`darling`].
+///
+/// Useful when you want an attribute to not need quotes,
+/// like `function(a::b::c)` instead of `function = "a::b::c"`.
 pub struct TokenStreamAttr<T>(pub T)
 where
     T: syn::parse::Parse;
@@ -37,6 +41,9 @@ where
     }
 }
 
+/// Allow anything that implements [`syn::parse::Parse`] to be used as a list of attributes by [`darling`].
+///
+/// Like [`TokenStreamAttr<T>`] but for lists instead of one item.
 #[expect(dead_code)]
 pub struct TokenStreamListAttr<T>(pub Vec<T>)
 where
@@ -62,11 +69,11 @@ where
     }
 }
 
-/// Allow enum variants to be parsed in a list by `darling`
+/// Allow enum variants to be parsed in a list by [`darling`].
 ///
 /// Darling only allows enum variants to be parsed in a list as the only element.
-/// To bypass this, we put it in its own list with `core::slice::windows`.
-/// The expected way to handle this would be to call `darling::FromMeta::from_nested_meta`,
+/// To bypass this, we put it in its own list with [`<[T]>::windows`].
+/// The expected way to handle this would be to call [`darling::FromMeta::from_nested_meta`],
 /// but this doesn't work since it assumes you are calling it from one level higher.
 pub struct EnumMetaListAttr<T>(pub Vec<T>)
 where

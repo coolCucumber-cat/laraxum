@@ -77,6 +77,7 @@ macro_rules! impl_serde {
     };
 }
 
+/// Implement traits for wrapper type.
 #[macro_export]
 macro_rules! transparent {
     { $($ty:ty => $inner:ty),* $(,)? } => {
@@ -87,6 +88,7 @@ macro_rules! transparent {
     };
 }
 
+/// Get environment variable, else panic.
 #[macro_export]
 macro_rules! env_var {
     ($env_var:expr) => {
@@ -112,6 +114,7 @@ macro_rules! env_var {
         }
     };
 }
+/// Get optional environment variable, else panic.
 #[macro_export]
 macro_rules! env_var_opt {
     ($env_var:expr) => {
@@ -134,6 +137,7 @@ macro_rules! env_var_opt {
     };
 }
 
+/// Serve the router.
 #[macro_export]
 macro_rules! serve {
     ($app:expr) => {
@@ -148,6 +152,7 @@ macro_rules! serve {
     };
 }
 
+/// Implement authorization for a type that can be compared to the authentication type.
 #[macro_export]
 macro_rules! authorize {
     {

@@ -30,38 +30,49 @@ pub trait Table: Sized {
     type Response: Send + Sync;
 }
 
-/// A table without uniquely identifiable entities.
+/// A table without uniquely identifiable records.
 ///
-/// These operations don't require the entities to be uniquely identifiable for them to work.
+/// These operations don't require the records to be uniquely identifiable for them to work.
 pub trait Collection: Table {
+    /// Request to create record.
     type CreateRequest;
+    /// Error when creating record.
     type CreateRequestError;
 
+    /// Get all records.
     async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, Error>;
+    /// Create a record.
     async fn create_one(
         db: &Self::Db,
         rq: Self::CreateRequest,
     ) -> Result<(), ModelError<Self::CreateRequestError>>;
 }
 
-/// A table with uniquely identifiable entities.
+/// A table with uniquely identifiable records.
 ///
-/// These operations require the entities to be uniquely identifiable for them to work.
+/// These operations require the records to be uniquely identifiable for them to work.
 pub trait Model: Collection {
+    /// The type to identify an entity.
     type Id: Copy;
+    /// Request to update a record
     type UpdateRequest;
+    /// Error when updating record.
     type UpdateRequestError;
 
+    /// Get a record with an id
     async fn get_one(db: &Self::Db, id: Self::Id) -> Result<Self::Response, Error>;
+    /// Create a record and return it.
     async fn create_get_one(
         db: &Self::Db,
         rq: Self::CreateRequest,
     ) -> Result<Self::Response, ModelError<Self::CreateRequestError>>;
+    /// Update a record.
     async fn update_one(
         db: &Self::Db,
         rq: Self::UpdateRequest,
         id: Self::Id,
     ) -> Result<(), ModelError<Self::UpdateRequestError>>;
+    /// Update a record and return it.
     async fn update_get_one(
         db: &Self::Db,
         rq: Self::UpdateRequest,
@@ -71,6 +82,7 @@ pub trait Model: Collection {
         let rs = Self::get_one(db, id).await?;
         Ok(rs)
     }
+    /// Delete a record.
     async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
 }
 
@@ -99,26 +111,26 @@ pub trait ManyModel<OneResponse>: Table {
     async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
 }
 
-/// A collection where many entities can be filtered by an index.
+/// A collection where many records can be filtered by an index.
 pub trait CollectionIndexMany<Index>: Collection {
-    type OneRequest;
+    type OneRequest<'a>;
     type ManyResponse;
-    async fn get_index_many(
+    async fn get_index_many<'a>(
         db: &Self::Db,
-        one: Self::OneRequest,
+        one: Self::OneRequest<'a>,
     ) -> Result<Vec<Self::ManyResponse>, Error>;
 }
-/// A collection where a single entitie can be filtered by an index.
+/// A collection where a single record can be filtered by an index.
 pub trait CollectionIndexOne<Index>: Collection {
-    type OneRequest;
+    type OneRequest<'a>;
     type OneResponse;
-    async fn get_index_one(
+    async fn get_index_one<'a>(
         db: &Self::Db,
-        one: Self::OneRequest,
+        one: Self::OneRequest<'a>,
     ) -> Result<Self::OneResponse, Error>;
-    async fn get_index_one_optional(
+    async fn get_index_one_optional<'a>(
         db: &Self::Db,
-        one: Self::OneRequest,
+        one: Self::OneRequest<'a>,
     ) -> Result<Option<Self::OneResponse>, Error> {
         match Self::get_index_one(db, one).await {
             Ok(rs) => Ok(Some(rs)),

@@ -139,6 +139,7 @@ impl TryFrom<&Type> for TyCompound {
     }
 }
 
+// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrTyCompound {
@@ -169,7 +170,7 @@ pub struct ColumnAttrResponse {
     pub skip: bool,
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`
+// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta)]
 #[darling(rename_all = "snake_case")]
 pub enum ValidateRule {
@@ -185,7 +186,7 @@ pub enum ValidateRule {
     Lte(crate::utils::syn::TokenStreamAttr<Expr>),
 }
 
-// use `EnumMetaListAttr` because it can be parsed by `darling`
+// use `EnumMetaListAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrRequest {
@@ -193,6 +194,16 @@ pub struct ColumnAttrRequest {
     pub validate: crate::utils::syn::EnumMetaListAttr<ValidateRule>,
 }
 
+// use `TokenStreamAttr` because it can be parsed by `darling`.
+#[derive(darling::FromMeta)]
+pub struct TableAttrIndex {
+    pub name: crate::utils::syn::TokenStreamAttr<Ident>,
+    pub request_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+    #[darling(default)]
+    pub request_ty_ref: bool,
+}
+
+// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromAttributes, Default)]
 #[darling(attributes(db), forward_attrs(doc, allow), default)]
 pub struct ColumnAttr {
@@ -202,7 +213,7 @@ pub struct ColumnAttr {
     pub request: ColumnAttrRequest,
     pub real_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
     pub unique: bool,
-    pub index: Option<crate::utils::syn::TokenStreamAttr<Ident>>,
+    pub index: Option<TableAttrIndex>,
     pub attrs: Vec<Attribute>,
 }
 
@@ -250,6 +261,7 @@ pub struct TableAttrModel {
     pub many: bool,
 }
 
+// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta)]
 pub struct TableAttrController {
     pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,

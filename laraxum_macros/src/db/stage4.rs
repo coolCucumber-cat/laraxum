@@ -1113,7 +1113,18 @@ impl From<stage3::Table<'_>> for Table {
                 })
                 .filter_map(|column| {
                     let index = column.index?;
-                    let rs_ty = column.response.field.rs_ty;
+                    let index_name = &index.name;
+                    let rs_ty = index
+                        .request_ty
+                        .as_deref()
+                        .unwrap_or(column.response.field.rs_ty);
+                    let rs_ty = if index.request_ty_ref {
+                        quote! {
+                            &'a #rs_ty
+                        }
+                    } else {
+                        rs_ty.to_token_stream()
+                    };
                     let name_intern = column.name_intern();
                     let unique = column.create.ty.unique();
 
@@ -1127,12 +1138,12 @@ impl From<stage3::Table<'_>> for Table {
 
                     let index_token_stream = if unique {
                         quote! {
-                            impl ::laraxum::CollectionIndexOne<#index> for #table_rs_name {
-                                type OneRequest = #rs_ty;
+                            impl ::laraxum::CollectionIndexOne<#index_name> for #table_rs_name {
+                                type OneRequest<'a> = #rs_ty;
                                 type OneResponse = Self;
-                                async fn get_index_one(
+                                async fn get_index_one<'a>(
                                     db: &Self::Db,
-                                    one: Self::OneRequest,
+                                    one: Self::OneRequest<'a>,
                                 )
                                     -> ::core::result::Result<
                                         Self::OneResponse,
@@ -1155,12 +1166,12 @@ impl From<stage3::Table<'_>> for Table {
                         }
                     } else {
                         quote! {
-                            impl ::laraxum::CollectionIndexMany<#index> for #table_rs_name {
-                                type OneRequest = #rs_ty;
+                            impl ::laraxum::CollectionIndexMany<#index_name> for #table_rs_name {
+                                type OneRequest<'a> = #rs_ty;
                                 type ManyResponse = Self;
-                                async fn get_index_many(
+                                async fn get_index_many<'a>(
                                     db: &Self::Db,
-                                    one: Self::OneRequest,
+                                    one: Self::OneRequest<'a>,
                                 )
                                     -> ::core::result::Result<
                                         ::std::vec::Vec<Self::ManyResponse>,
@@ -1179,7 +1190,7 @@ impl From<stage3::Table<'_>> for Table {
                         }
                     };
                     let index_token_stream = quote! {
-                        pub struct #index;
+                        pub struct #index_name;
                         #index_token_stream
                     };
                     Some(index_token_stream)
@@ -1322,7 +1333,7 @@ impl From<stage3::Table<'_>> for Table {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
                     type Auth = #auth;
-                    type GetAllRequestQuery = ();
+                    type GetManyRequestQuery = ();
                 }
             }
         });

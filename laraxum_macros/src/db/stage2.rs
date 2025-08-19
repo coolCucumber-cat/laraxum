@@ -289,6 +289,12 @@ pub struct ColumnAttrRequest {
     // pub validate: Vec<ValidateRule>,
 }
 
+pub struct Index {
+    pub name: Ident,
+    pub request_ty: Option<Box<Type>>,
+    pub request_ty_ref: bool,
+}
+
 pub struct Column {
     /// the name of the column in the database
     pub name: String,
@@ -305,7 +311,7 @@ pub struct Column {
     /// validation rules
     pub validate: Vec<ValidateRule>,
     /// index
-    pub index: Option<Ident>,
+    pub index: Option<Index>,
 
     pub rs_attrs: Vec<Attribute>,
 }
@@ -460,7 +466,11 @@ impl TryFrom<stage1::Column> for Column {
             skip: response.skip,
         };
         let request = ColumnAttrRequest { name: request.name };
-        let index = index.map(|index| index.0);
+        let index = index.map(|index| Index {
+            name: index.name.0,
+            request_ty: index.request_ty.map(|ty| ty.0),
+            request_ty_ref: index.request_ty_ref,
+        });
 
         Ok(Self {
             name,

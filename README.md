@@ -153,7 +153,10 @@ Each field in the struct is a column. Use the `db` attribute on the field:
     10. `lte`: `Expr`
 - `real_ty`: `Option<Type>`, when using wrapper types, this is the inner type
 - `unique`: `Option<bool>`, this column is unique
-- `index`: `Option<Ident>`, create an index that can filter using this column, like `<User as CollectionIndexOne<UserEmail>>`
+- `index`: `Option<struct>`, create an index that can filter using this column, like `<User as CollectionIndexOne<UserEmail>>`
+  - `name`: `Ident`, the name of the index
+  - `request_ty`: `Option<Type>`, the type used to index
+  - `request_ty_ref`: `bool`, the type used to index is a reference
 
 If you don't use the controller option, the controller won't be implemented.
 You can implement it yourself or not at all.
@@ -209,7 +212,7 @@ pub mod AppDb {
         contact: Contact,
         #[db(ty(varchar = 255))]
         name: String,
-        #[db(ty(varchar = 255), unique, index(UserEmail))] // <User as CollectionIndexOne<UserEmail>>
+        #[db(ty(varchar = 255), unique, index(name(UserEmail), request_ty(str), request_ty_ref = true))] // <User as CollectionIndexOne<UserEmail>>
         email: String,
         #[db(ty(varchar = 255), response(skip), request(validate(min_len(12))))]
         password: String,

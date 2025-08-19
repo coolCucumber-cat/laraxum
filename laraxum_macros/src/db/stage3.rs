@@ -1,7 +1,7 @@
 use super::stage2;
 
 pub use stage2::{
-    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, TyElement,
+    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, Index, TyElement,
     TyElementAutoTime,
 };
 
@@ -212,7 +212,7 @@ pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
     pub request: RequestColumnOne<'a>,
-    pub index: Option<&'a Ident>,
+    pub index: Option<&'a Index>,
 }
 impl ColumnOne<'_> {
     pub const fn name(&self) -> &str {

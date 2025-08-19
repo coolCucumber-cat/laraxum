@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::Serialize;
 
+/// An error in the controller.
 #[derive(Debug)]
 pub enum Error {
     // /// [400 Bad Request](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1)
@@ -14,8 +15,8 @@ pub enum Error {
     NotFound,
     /// [409 Conflict](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.10)
     Conflict,
-    /// [429 Too Many Requests](https://datatracker.ietf.org/doc/html/rfc6585#section-4)
-    TooManyRequests,
+    // /// [429 Too Many Requests](https://datatracker.ietf.org/doc/html/rfc6585#section-4)
+    // TooManyRequests,
     /// [500 Internal Server Error](https://datatracker.ietf.org/doc/html/rfc9110#section-15.6.1)
     Internal,
 }
@@ -27,7 +28,7 @@ impl Error {
             // Self::Unauthorized => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Conflict => StatusCode::CONFLICT,
-            Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
+            // Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -53,6 +54,7 @@ impl IntoResponse for Error {
     }
 }
 
+/// An error during authentication.
 #[derive(Debug)]
 pub enum AuthError {
     /// [401 Unauthorized](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.2)
@@ -78,6 +80,7 @@ impl IntoResponse for AuthError {
     }
 }
 
+/// An error in the controller with an unprocessable entity.
 #[derive(Debug)]
 pub enum ModelError<UnprocessableEntity> {
     /// [422 Unprocessable Entity](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.21)
@@ -116,6 +119,7 @@ where
     }
 }
 
+/// Error in an app that uses this crate.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AppError {
