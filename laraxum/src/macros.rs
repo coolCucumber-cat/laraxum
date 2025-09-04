@@ -1,33 +1,38 @@
 #[macro_export]
 macro_rules! impl_encode_decode {
-    { $($ty:ty => $inner:ty),* $(,)? } => {
-        $(
-            impl $crate::backend::Decode for $ty {
-                type Decode = <$inner as $crate::backend::Decode>::Decode;
-                #[inline]
-                fn decode(decode: Self::Decode) -> Self {
-                    let decode = <$inner as $crate::backend::Decode>::decode(decode);
-                    ::core::convert::From::from(decode)
-                }
+    { $ty:ty => $inner:ty => $decode:expr => $encode:expr $(, $($tt:tt)+)? $(,)? } => {
+        impl $crate::backend::Decode for $ty {
+            type Decode = <$inner as $crate::backend::Decode>::Decode;
+            #[inline]
+            fn decode(decode: Self::Decode) -> Self {
+                let decode = <$inner as $crate::backend::Decode>::decode(decode);
+                ($decode)(decode)
             }
-            impl $crate::backend::Encode for $ty {
-                type Encode = <$inner as $crate::backend::Encode>::Encode;
-                #[inline]
-                fn encode(self) -> Self::Encode {
-                    let encode = ::core::convert::From::from(self);
-                    <$inner as $crate::backend::Encode>::encode(encode)
-                }
+        }
+        impl $crate::backend::Encode for $ty {
+            type Encode = <$inner as $crate::backend::Encode>::Encode;
+            #[inline]
+            fn encode(self) -> Self::Encode {
+                let encode = ($encode)(self);
+                <$inner as $crate::backend::Encode>::encode(encode)
             }
-        )*
+        }
+        $crate::impl_encode_decode! { $($($tt)+)? }
+    };
+    { $ty:ty => $inner:ty $(, $($tt:tt)+)? $(,)? } => {
+        $crate::impl_encode_decode! {
+            $ty
+            => $inner
+            => ::core::convert::From::from
+            => ::core::convert::From::from
+            $(, $($tt)+)?
+        }
     };
 }
 
 #[macro_export]
 macro_rules! impl_encode_decode_self {
     { $($ty:ty),* $(,)? } => {
-        // $crate::impl_encode_decode! {
-        //     $($ty => $ty),*
-        // }
         $(
             impl $crate::backend::Decode for $ty {
                 type Decode = $ty;
@@ -49,41 +54,47 @@ macro_rules! impl_encode_decode_self {
 
 #[macro_export]
 macro_rules! impl_serde {
-    { $($ty:ty => $inner:ty),* $(,)? } => {
-        $(
-            impl ::serde::Serialize for $ty {
-                fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
-                    where
-                        S: ::serde::Serializer,
-                {
-                    <$inner as ::serde::Serialize>::serialize(
-                        &<$inner as ::core::convert::From<$ty>>::from(*self),
-                        serializer,
-                    )
-                }
+    { $ty:ty => $inner:ty => $deserialize:expr => $serialize:expr $(, $($tt:tt)+)? $(,)? } => {
+        impl<'de> ::serde::Deserialize<'de> for $ty {
+            fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+                where
+                    D: ::serde::Deserializer<'de>,
+            {
+                ::core::result::Result::map(
+                    <$inner as ::serde::Deserialize>::deserialize(deserializer),
+                    $deserialize,
+                )
             }
-            impl<'de> ::serde::Deserialize<'de> for $ty {
-                fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
-                    where
-                        D: ::serde::Deserializer<'de>,
-                {
-                    ::core::result::Result::map(
-                        <$inner as ::serde::Deserialize>::deserialize(deserializer),
-                        <$ty as ::core::convert::From<$inner>>::from,
-                    )
-                }
+        }
+        impl ::serde::Serialize for $ty {
+            fn serialize<S>(&self, serializer: S) -> ::core::result::Result<S::Ok, S::Error>
+                where
+                    S: ::serde::Serializer,
+            {
+                <$inner as ::serde::Serialize>::serialize(
+                    &($serialize)(*self),
+                    serializer,
+                )
             }
-        )*
+        }
+    };
+    { $ty:ty => $inner:ty $(, $($tt:tt)+)? $(,)? } => {
+        $crate::impl_serde! {
+            $ty
+            => $inner
+            => <$ty as ::core::convert::From<$inner>>::from
+            => <$inner as ::core::convert::From<$ty>>::from
+        }
     };
 }
 
 /// Implement traits for wrapper type.
 #[macro_export]
 macro_rules! transparent {
-    { $($ty:ty => $inner:ty),* $(,)? } => {
+    { $($ty:ty => $inner:ty $(=> $decode:expr => $encode:expr)?),* $(,)? } => {
         $(
-            $crate::impl_encode_decode! { $ty => $inner }
-            $crate::impl_serde! { $ty => $inner }
+            $crate::impl_encode_decode! { $ty => $inner $(=> $decode => $encode)? }
+            $crate::impl_serde! { $ty => $inner $(=> $decode => $encode)? }
         )*
     };
 }

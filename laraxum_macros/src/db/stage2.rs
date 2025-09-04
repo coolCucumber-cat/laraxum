@@ -213,10 +213,10 @@ pub enum TyCompoundMultiplicity {
 }
 impl TyCompoundMultiplicity {
     pub const fn optional(&self) -> bool {
-        matches!(*self, Self::One { optional,.. } if optional)
+        matches!(*self, Self::One { optional, .. } if optional)
     }
     pub const fn unique(&self) -> bool {
-        matches!(*self, Self::One { unique,.. } if unique)
+        matches!(*self, Self::One { unique, .. } if unique)
     }
 }
 
