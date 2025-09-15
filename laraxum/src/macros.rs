@@ -17,7 +17,7 @@ macro_rules! impl_encode_decode {
                 <$inner as $crate::backend::Encode>::encode(encode)
             }
         }
-        $crate::impl_encode_decode! { $($($tt)+)? }
+        $( $crate::impl_encode_decode! { $($tt)+ } )?
     };
     { $ty:ty => $inner:ty $(, $($tt:tt)+)? $(,)? } => {
         $crate::impl_encode_decode! {
@@ -77,6 +77,7 @@ macro_rules! impl_serde {
                 )
             }
         }
+        $( $crate::impl_serde! { $($tt)+ } )?
     };
     { $ty:ty => $inner:ty $(, $($tt:tt)+)? $(,)? } => {
         $crate::impl_serde! {
