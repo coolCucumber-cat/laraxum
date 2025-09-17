@@ -100,6 +100,80 @@ macro_rules! transparent {
     };
 }
 
+#[macro_export]
+macro_rules! transparent_enum {
+    {
+        $(#[doc = $ty_doc:expr])*
+        $vis:vis enum $ty:ident $tt:tt
+    } => {
+        $crate::transparent_enum! {
+            $(#[doc = $ty_doc])*
+            #[repr(u8)]
+            $vis enum $ty $tt
+
+        }
+    };
+    {
+        $(#[doc = $ty_doc:expr])*
+        #[repr($inner:ty)]
+        $vis:vis enum $ty:ident {
+            $(#[doc = $var0_doc:expr])*
+            #[default]
+            $var0:ident = $value0:expr
+            $(,
+                $(#[doc = $var_doc:expr])*
+                $var:ident = $value:expr
+            )* $(,)?
+        }
+    } => {
+        $(#[doc = $ty_doc])*
+        #[repr($inner)]
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+        $vis enum $ty {
+            $(#[doc = $var0_doc])*
+            #[default]
+            $var0 = $value0,
+            $(
+                $(#[doc = $var_doc])*
+                $var = $value,
+            )*
+        }
+        impl $ty {
+            $vis fn try_from_default(value: $inner) -> Self {
+                <Self as ::core::convert::TryFrom<$inner>>::try_from(value).unwrap_or_default()
+            }
+        }
+        impl ::core::convert::TryFrom<$inner> for $ty {
+            type Error = ();
+            fn try_from(value: $inner) -> Result<Self, Self::Error> {
+                match value {
+                    $value0 => ::core::result::Result::Ok(Self::$var0),
+                    $(
+                        $value => ::core::result::Result::Ok(Self::$var),
+                    )*
+                    _ => ::core::result::Result::Err(()),
+                }
+            }
+        }
+        impl ::core::convert::From<$ty> for $inner {
+            fn from(value: $ty) -> Self {
+                match value {
+                    <$ty>::$var0 => $value0,
+                    $(
+                        <$ty>::$var => $value,
+                    )*
+                }
+            }
+        }
+        $crate::transparent! {
+            $ty
+            => $inner
+            => <$ty>::try_from_default
+            => <$inner as ::core::convert::From<$ty>>::from
+        }
+    };
+}
+
 /// Get environment variable, else panic.
 #[macro_export]
 macro_rules! env_var {
