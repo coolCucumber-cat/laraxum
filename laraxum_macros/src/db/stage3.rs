@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use syn::{Attribute, Ident, Type, Visibility};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+const COLUMN_MUST_NOT_BE_COMPOUNDS: &str = "column must not be many-to-many relationship";
 
 fn name_extern((parent, child): (&str, &str)) -> String {
     fmt2::fmt! { { str } => {parent} "__" {child} }
@@ -232,7 +233,6 @@ pub enum Column<'a> {
     One(ColumnOne<'a>),
     Compounds(ColumnCompounds<'a>),
 }
-
 impl Column<'_> {
     pub const fn create(&self) -> Option<&CreateColumn<'_>> {
         match self {
@@ -277,6 +277,134 @@ impl Column<'_> {
         }
     }
 }
+impl<'a> TryFrom<Column<'a>> for ColumnOne<'a> {
+    type Error = syn::Error;
+    fn try_from(column: Column<'a>) -> Result<Self, Self::Error> {
+        match column {
+            Column::One(one) => Ok(one),
+            Column::Compounds(compounds) => Err(syn::Error::new(
+                compounds.response.field.rs_name.span(),
+                COLUMN_MUST_NOT_BE_COMPOUNDS,
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum ColumnRef<'a> {
+    One(&'a ColumnOne<'a>),
+    Compounds(&'a ColumnCompounds<'a>),
+}
+impl<'a> ColumnRef<'a> {
+    pub const fn create(self) -> Option<&'a CreateColumn<'a>> {
+        match self {
+            Self::One(one) => Some(&one.create),
+            Self::Compounds(_) => None,
+        }
+    }
+    pub const fn response_field(self) -> &'a ResponseColumnField<'a> {
+        match self {
+            Self::One(one) => &one.response.field,
+            Self::Compounds(compounds) => &compounds.response.field,
+        }
+    }
+    pub const fn response_getter(self) -> ResponseColumnGetterRef<'a> {
+        match self {
+            Self::One(one) => ResponseColumnGetterRef::One(&one.response.getter),
+            Self::Compounds(compounds) => {
+                ResponseColumnGetterRef::Compounds(&compounds.response.getter)
+            }
+        }
+    }
+    pub const fn request_field(self) -> Option<&'a RequestColumnField<'a>> {
+        match self {
+            Self::One(ColumnOne {
+                request: RequestColumnOne::Some { field, .. },
+                ..
+            }) => Some(field),
+            Self::One(_) => None,
+            Self::Compounds(compounds) => Some(&compounds.request.field),
+        }
+    }
+    pub const fn request_one(self) -> Option<&'a RequestColumnOne<'a>> {
+        match self {
+            Self::One(one) => Some(&one.request),
+            Self::Compounds(_) => None,
+        }
+    }
+    pub const fn request_compounds(self) -> Option<&'a RequestColumnCompounds<'a>> {
+        match self {
+            Self::One(_) => None,
+            Self::Compounds(compounds) => Some(&compounds.request),
+        }
+    }
+}
+
+impl<T, C> Columns<T, T, C> {
+    pub fn map_try_collect_all_default<'a, F>(
+        &'a self,
+        mut f: F,
+    ) -> Result<Columns<Column<'a>, ColumnOne<'a>, &'a C>, syn::Error>
+    where
+        F: FnMut(&'a T) -> Result<Column<'a>, syn::Error>,
+    {
+        match self {
+            Self::CollectionOnly { columns } => {
+                let columns = columns.iter().map(|c| f(c));
+                let columns: Result<Vec<Column<'a>>, syn::Error> =
+                    columns.try_collect_all_default();
+                let columns = columns?;
+                Ok(Columns::CollectionOnly { columns })
+            }
+            Self::Model {
+                id,
+                columns,
+                controller,
+            } => {
+                let id = f(id)?;
+                let id = ColumnOne::try_from(id)?;
+                let columns = columns.iter().map(f);
+                let columns: Result<Vec<Column<'a>>, syn::Error> =
+                    columns.try_collect_all_default();
+                let columns = columns?;
+                Ok(Columns::Model {
+                    id,
+                    columns,
+                    controller: controller.as_ref(),
+                })
+            }
+            Self::ManyModel { a, b } => {
+                let a = f(a)?;
+                let a = ColumnOne::try_from(a)?;
+                let b = f(b)?;
+                let b = ColumnOne::try_from(b)?;
+                Ok(Columns::ManyModel { a, b })
+            }
+        }
+    }
+}
+impl<'a, C> Columns<Column<'a>, ColumnOne<'a>, C> {
+    pub fn iter(&'a self) -> impl Iterator<Item = ColumnRef<'a>> + Clone {
+        fn map<'a>(column: &'a Column<'a>) -> ColumnRef<'a> {
+            match *column {
+                Column::One(ref one) => ColumnRef::One(one),
+                Column::Compounds(ref compounds) => ColumnRef::Compounds(compounds),
+            }
+        }
+        let (a, b, c) = match self {
+            Self::CollectionOnly { columns } => (None, None, columns.iter().map(map)),
+            Self::Model { id, columns, .. } => {
+                (Some(ColumnRef::One(id)), None, columns.iter().map(map))
+            }
+            Self::ManyModel { a, b } => (
+                Some(ColumnRef::One(a)),
+                Some(ColumnRef::One(b)),
+                [].iter().map(map),
+            ),
+        };
+        a.into_iter().chain(b).chain(c)
+    }
+}
 
 pub struct Table<'a> {
     pub name_intern: String,
@@ -286,7 +414,7 @@ pub struct Table<'a> {
     pub request_error_rs_name: Cow<'a, Ident>,
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
-    pub columns: Columns<Column<'a>, &'a stage2::Controller>,
+    pub columns: Columns<Column<'a>, ColumnOne<'a>, &'a stage2::Controller>,
 }
 
 impl<'a> Table<'a> {
@@ -312,7 +440,7 @@ impl<'a> Table<'a> {
                 let stage2::Column {
                     name, rs_name, ty, ..
                 } = column;
-                let name = &**name;
+                let name = &*name;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((table_name_extern, name));
 

@@ -263,7 +263,7 @@ impl fmt2::write_to::WriteTo for ResponseColumnGetterElement<'_> {
 
 fn create_table<'columns>(
     table_name_intern: &str,
-    columns: impl IntoIterator<Item = &'columns stage3::Column<'columns>>,
+    columns: impl IntoIterator<Item = stage3::ColumnRef<'columns>>,
 ) -> String {
     let create_columns = columns.into_iter().filter_map(|column| column.create());
 
@@ -800,8 +800,8 @@ impl From<stage3::Table<'_>> for Table {
             let (response_getter_column_elements, response_getter_column_compounds) =
                 flatten(response_getter_columns);
 
-            let request_setters = table.columns.iter().filter_map(|column| match &column {
-                stage3::Column::One(stage3::ColumnOne {
+            let request_setters = table.columns.iter().filter_map(|column| match column {
+                stage3::ColumnRef::One(stage3::ColumnOne {
                     request: stage3::RequestColumnOne::Some { setter, .. },
                     ..
                 }) => Some(setter),
@@ -830,8 +830,8 @@ impl From<stage3::Table<'_>> for Table {
 
             let request_setter_compounds_columns =
                 table.columns.iter().filter_map(|column| match column {
-                    stage3::Column::Compounds(compounds) => Some(&compounds.request.setter),
-                    stage3::Column::One(_) => None,
+                    stage3::ColumnRef::Compounds(compounds) => Some(&compounds.request.setter),
+                    stage3::ColumnRef::One(_) => None,
                 });
 
             let request_setter_compounds_create_many =
@@ -1108,8 +1108,8 @@ impl From<stage3::Table<'_>> for Table {
                 .columns
                 .iter()
                 .filter_map(|column| match column {
-                    stage3::Column::One(one) => Some(one),
-                    stage3::Column::Compounds(_) => None,
+                    stage3::ColumnRef::One(one) => Some(one),
+                    stage3::ColumnRef::Compounds(_) => None,
                 })
                 .filter_map(|column| {
                     let index = column.index?;
@@ -1206,12 +1206,14 @@ impl From<stage3::Table<'_>> for Table {
                 return token_stream;
             };
 
-            let (table_id_name, table_id_name_intern) = match table_id {
-                stage3::Column::One(one) => (one.create.name, one.response.getter.name_intern()),
-                stage3::Column::Compounds(_) => {
-                    unimplemented!("unreachable error. id does not have corresponding fields");
-                }
-            };
+            let table_id_name = table_id.create.name;
+            let table_id_name_intern = table_id.response.getter.name_intern();
+            // let (table_id_name, table_id_name_intern) = match table_id {
+            //     stage3::Column::One(one) => (one.create.name, one.response.getter.name_intern()),
+            //     stage3::Column::Compounds(_) => {
+            //         unimplemented!("unreachable error. id does not have corresponding fields");
+            //     }
+            // };
 
             let get_one = get_filter(
                 &table.name_intern,
@@ -1401,10 +1403,12 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
+                            let transaction = db.pool.begin().await?;
                             for many in many {
                                 let response = ::sqlx::query!(#create_one, one, many);
                                 response.execute(&db.pool).await?;
                             }
+                            transaction.commit().await?;
                             ::core::result::Result::Ok(())
                         }
                         async fn update_many(
@@ -1441,18 +1445,18 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 }
             }
-            let a = match a {
-                stage3::Column::One(one) => one,
-                stage3::Column::Compounds(_) => {
-                    unimplemented!("unreachable error. id does not have corresponding fields")
-                }
-            };
-            let b = match b {
-                stage3::Column::One(one) => one,
-                stage3::Column::Compounds(_) => {
-                    unimplemented!("unreachable error. id does not have corresponding fields")
-                }
-            };
+            // let a = match a {
+            //     stage3::Column::One(one) => one,
+            //     stage3::Column::Compounds(_) => {
+            //         unimplemented!("unreachable error. id does not have corresponding fields")
+            //     }
+            // };
+            // let b = match b {
+            //     stage3::Column::One(one) => one,
+            //     stage3::Column::Compounds(_) => {
+            //         unimplemented!("unreachable error. id does not have corresponding fields")
+            //     }
+            // };
 
             let a_token_stream = many_model(&table, a, b);
             let b_token_stream = many_model(&table, b, a);

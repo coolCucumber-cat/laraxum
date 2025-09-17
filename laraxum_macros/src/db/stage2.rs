@@ -497,21 +497,21 @@ impl From<stage1::TableAttrController> for Controller {
     }
 }
 
-pub enum Columns<T, C> {
+pub enum Columns<T0, T1, C> {
     CollectionOnly {
-        columns: Vec<T>,
+        columns: Vec<T0>,
     },
     Model {
-        id: T,
-        columns: Vec<T>,
+        id: T1,
+        columns: Vec<T0>,
         controller: Option<C>,
     },
     ManyModel {
-        a: T,
-        b: T,
+        a: T1,
+        b: T1,
     },
 }
-impl<T, C> Columns<T, C> {
+impl<T, C> Columns<T, T, C> {
     pub fn iter(&self) -> impl Iterator<Item = &T> + Clone {
         let (a, b, c) = match self {
             Self::CollectionOnly { columns } => (None, None, &**columns),
@@ -520,45 +520,46 @@ impl<T, C> Columns<T, C> {
         };
         a.into_iter().chain(b).chain(c)
     }
-    pub fn map_try_collect_all_default<'a, F, T2, E>(
-        &'a self,
-        mut f: F,
-    ) -> Result<Columns<T2, &'a C>, E>
-    where
-        T: 'a,
-        T2: 'a,
-        F: FnMut(&'a T) -> Result<T2, E>,
-        E: crate::utils::collections::Push<E>,
-    {
-        match self {
-            Self::CollectionOnly { columns } => {
-                let columns = columns.iter().map(f);
-                let columns: Result<Vec<T2>, E> = columns.try_collect_all_default();
-                let columns = columns?;
-                Ok(Columns::CollectionOnly { columns })
-            }
-            Self::Model {
-                id,
-                columns,
-                controller,
-            } => {
-                let id = f(id)?;
-                let columns = columns.iter().map(f);
-                let columns: Result<Vec<T2>, E> = columns.try_collect_all_default();
-                let columns = columns?;
-                Ok(Columns::Model {
-                    id,
-                    columns,
-                    controller: controller.as_ref(),
-                })
-            }
-            Self::ManyModel { a, b } => {
-                let a = f(a)?;
-                let b = f(b)?;
-                Ok(Columns::ManyModel { a, b })
-            }
-        }
-    }
+    // pub fn map_try_collect_all_default<'a, F, U0, U1, E0, E1>(
+    //     &'a self,
+    //     mut f: F,
+    // ) -> Result<Columns<U0, U1, &'a C>, E0>
+    // where
+    //     T0: 'a,
+    //     U0: 'a,
+    //     U1: TryFrom<U0, Error = E1>,
+    //     F: FnMut(&'a T0) -> Result<U0, E0>,
+    //     E0: crate::utils::collections::Push<E0> + From<E1>,
+    // {
+    //     match self {
+    //         Self::CollectionOnly { columns } => {
+    //             let columns = columns.iter().map(f);
+    //             let columns: Result<Vec<U0>, E0> = columns.try_collect_all_default();
+    //             let columns = columns?;
+    //             Ok(Columns::CollectionOnly { columns })
+    //         }
+    //         Self::Model {
+    //             id,
+    //             columns,
+    //             controller,
+    //         } => {
+    //             let id = f(id)?;
+    //             let columns = columns.iter().map(f);
+    //             let columns: Result<Vec<U0>, E0> = columns.try_collect_all_default();
+    //             let columns = columns?;
+    //             Ok(Columns::Model {
+    //                 id,
+    //                 columns,
+    //                 controller: controller.as_ref(),
+    //             })
+    //         }
+    //         Self::ManyModel { a, b } => {
+    //             let a = f(a)?;
+    //             let b = f(b)?;
+    //             Ok(Columns::ManyModel { a, b })
+    //         }
+    //     }
+    // }
     // pub fn map_try_collect_all_default<'a, F, C2, E>(&'a self, mut f: F) -> Result<Columns<C2>, E>
     // where
     //     C: 'a,
@@ -595,13 +596,15 @@ impl<T, C> Columns<T, C> {
     //         }
     //     }
     // }
-    pub const fn model(&self) -> Option<&T> {
+}
+impl<T0, T1, C> Columns<T0, T1, C> {
+    pub const fn model(&self) -> Option<&T1> {
         match self {
             Self::Model { id, .. } => Some(id),
             _ => None,
         }
     }
-    pub const fn many_model(&self) -> Option<(&T, &T)> {
+    pub const fn many_model(&self) -> Option<(&T1, &T1)> {
         match self {
             Self::ManyModel { a, b } => Some((a, b)),
             _ => None,
@@ -624,7 +627,7 @@ pub struct Table {
     /// the name for the table struct, for example `Customer`
     pub rs_name: Ident,
     /// the columns in the database
-    pub columns: Columns<Column, Controller>,
+    pub columns: Columns<Column, Column, Controller>,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
