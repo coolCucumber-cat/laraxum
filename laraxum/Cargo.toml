@@ -15,14 +15,14 @@ laraxum_macros = { version = "0.1.5", optional = true }
 sqlx = "0.8.6"
 axum = "0.8.4"
 axum-extra = { version = "0.10.1", features = ["typed-header"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.145"
 mime = "0.3.17"
 bytes = "1.10.1"
 thiserror = "2.0.16"
 jsonwebtoken = { version = "9.3.1", optional = true }
-chrono = { version = "0.4.41", optional = true }
-time = { version = "0.3.41", optional = true }
+chrono = { version = "0.4.42", optional = true }
+time = { version = "0.3.43", optional = true }
 
 [features]
 default = ["mysql", "macros", "auth_token"]

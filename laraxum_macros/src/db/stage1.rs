@@ -278,8 +278,6 @@ pub struct TableAttr {
     pub attrs: Vec<Attribute>,
     // TODO: this was removed for simplicity, add it back
     // pub collection: Option<darling::util::SpannedValue<()>>,
-    // pub many_model: Option<darling::util::SpannedValue<()>>,
-    // pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
 }
 
 pub struct Table {

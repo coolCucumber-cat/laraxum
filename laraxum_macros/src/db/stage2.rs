@@ -340,7 +340,7 @@ impl TryFrom<stage1::Column> for Column {
         let real_rs_ty = real_ty.map(|real_rs_ty| real_rs_ty.0);
         let real_rs_ty = real_rs_ty.as_deref();
         let real_rs_ty = real_rs_ty.unwrap_or(&*rs_ty);
-        // let real_rs_ty = attr.real_ty.map_or(&*rs_ty, |real_rs_ty| real_rs_ty.0);
+
         let attr_ty = ColumnAttrTy::from(attr_ty);
         let ty = match attr_ty {
             ColumnAttrTy::Compound(attr_ty_compound) => {
@@ -520,82 +520,6 @@ impl<T, C> Columns<T, T, C> {
         };
         a.into_iter().chain(b).chain(c)
     }
-    // pub fn map_try_collect_all_default<'a, F, U0, U1, E0, E1>(
-    //     &'a self,
-    //     mut f: F,
-    // ) -> Result<Columns<U0, U1, &'a C>, E0>
-    // where
-    //     T0: 'a,
-    //     U0: 'a,
-    //     U1: TryFrom<U0, Error = E1>,
-    //     F: FnMut(&'a T0) -> Result<U0, E0>,
-    //     E0: crate::utils::collections::Push<E0> + From<E1>,
-    // {
-    //     match self {
-    //         Self::CollectionOnly { columns } => {
-    //             let columns = columns.iter().map(f);
-    //             let columns: Result<Vec<U0>, E0> = columns.try_collect_all_default();
-    //             let columns = columns?;
-    //             Ok(Columns::CollectionOnly { columns })
-    //         }
-    //         Self::Model {
-    //             id,
-    //             columns,
-    //             controller,
-    //         } => {
-    //             let id = f(id)?;
-    //             let columns = columns.iter().map(f);
-    //             let columns: Result<Vec<U0>, E0> = columns.try_collect_all_default();
-    //             let columns = columns?;
-    //             Ok(Columns::Model {
-    //                 id,
-    //                 columns,
-    //                 controller: controller.as_ref(),
-    //             })
-    //         }
-    //         Self::ManyModel { a, b } => {
-    //             let a = f(a)?;
-    //             let b = f(b)?;
-    //             Ok(Columns::ManyModel { a, b })
-    //         }
-    //     }
-    // }
-    // pub fn map_try_collect_all_default<'a, F, C2, E>(&'a self, mut f: F) -> Result<Columns<C2>, E>
-    // where
-    //     C: 'a,
-    //     C2: 'a,
-    //     F: FnMut(&'a C) -> Result<C2, E>,
-    //     E: crate::utils::collections::Push<E>,
-    // {
-    //     match self {
-    //         Self::CollectionOnly { columns } => {
-    //             let columns = columns.iter().map(f);
-    //             let columns: Result<Vec<C2>, E> = columns.try_collect_all_default();
-    //             let columns = columns?;
-    //             Ok(Columns::CollectionOnly { columns })
-    //         }
-    //         Self::Model {
-    //             id,
-    //             columns,
-    //             controller,
-    //         } => {
-    //             let id = f(id)?;
-    //             let columns = columns.iter().map(f);
-    //             let columns: Result<Vec<C2>, E> = columns.try_collect_all_default();
-    //             let columns = columns?;
-    //             Ok(Columns::Model {
-    //                 id,
-    //                 columns,
-    //                 controller: *controller,
-    //             })
-    //         }
-    //         Self::ManyModel { a, b } => {
-    //             let a = f(a)?;
-    //             let b = f(b)?;
-    //             Ok(Columns::ManyModel { a, b })
-    //         }
-    //     }
-    // }
 }
 impl<T0, T1, C> Columns<T0, T1, C> {
     pub const fn model(&self) -> Option<&T1> {
@@ -657,11 +581,6 @@ impl TryFrom<stage1::Table> for Table {
             .map(|column| {
                 let column = Column::try_from(column)?;
                 if matches!(column.ty, Ty::Element(TyElement::Id)) {
-                    // match model {
-                    //     Some(model)if model.many=>return Err(syn::Error::new(rs_name.span(), TABLE_MUST_NOT_HAVE_ID)),
-                    //     None=>return Err(syn::Error::new(rs_name.span(), TABLE_MUST_IMPLEMENT_MODEL)),
-                    //     _=>{}
-                    // }
                     if id.is_some() {
                         return Err(syn::Error::new(
                             column.rs_name.span(),

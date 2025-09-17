@@ -130,6 +130,7 @@ pub enum ResponseColumnGetter<'a> {
     One(ResponseColumnGetterOne<'a>),
     Compounds(ResponseColumnGetterCompounds<'a>),
 }
+
 #[derive(Clone, Copy)]
 pub enum ResponseColumnGetterRef<'a> {
     One(&'a ResponseColumnGetterOne<'a>),
@@ -144,10 +145,10 @@ impl ResponseColumnGetterRef<'_> {
     }
 }
 impl<'a> From<&'a ResponseColumnGetter<'a>> for ResponseColumnGetterRef<'a> {
-    fn from(value: &'a ResponseColumnGetter<'a>) -> Self {
-        match value {
-            ResponseColumnGetter::One(one) => Self::One(one),
-            ResponseColumnGetter::Compounds(compounds) => Self::Compounds(compounds),
+    fn from(column: &'a ResponseColumnGetter<'a>) -> Self {
+        match *column {
+            ResponseColumnGetter::One(ref one) => Self::One(one),
+            ResponseColumnGetter::Compounds(ref compounds) => Self::Compounds(compounds),
         }
     }
 }
@@ -176,11 +177,9 @@ pub struct RequestColumnSetterOne<'a> {
     pub validate: &'a [stage2::ValidateRule],
 }
 
-#[expect(clippy::struct_field_names)]
 pub struct RequestColumnSetterCompounds<'a> {
     pub rs_name: &'a Ident,
     pub table_rs_name: &'a Ident,
-    // pub table_id_rs_name: &'a Ident,
     pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
@@ -223,60 +222,6 @@ impl ColumnOne<'_> {
         self.response.getter.name_intern()
     }
 }
-
-pub struct ColumnCompounds<'a> {
-    pub response: ResponseColumnCompounds<'a>,
-    pub request: RequestColumnCompounds<'a>,
-}
-
-pub enum Column<'a> {
-    One(ColumnOne<'a>),
-    Compounds(ColumnCompounds<'a>),
-}
-impl Column<'_> {
-    pub const fn create(&self) -> Option<&CreateColumn<'_>> {
-        match self {
-            Self::One(one) => Some(&one.create),
-            Self::Compounds(_) => None,
-        }
-    }
-    pub const fn response_field(&self) -> &ResponseColumnField<'_> {
-        match self {
-            Self::One(one) => &one.response.field,
-            Self::Compounds(compounds) => &compounds.response.field,
-        }
-    }
-    pub const fn response_getter(&self) -> ResponseColumnGetterRef<'_> {
-        match self {
-            Self::One(one) => ResponseColumnGetterRef::One(&one.response.getter),
-            Self::Compounds(compounds) => {
-                ResponseColumnGetterRef::Compounds(&compounds.response.getter)
-            }
-        }
-    }
-    pub const fn request_field(&self) -> Option<&RequestColumnField<'_>> {
-        match self {
-            Self::One(ColumnOne {
-                request: RequestColumnOne::Some { field, .. },
-                ..
-            }) => Some(field),
-            Self::One(_) => None,
-            Self::Compounds(compounds) => Some(&compounds.request.field),
-        }
-    }
-    pub const fn request_one(&self) -> Option<&RequestColumnOne<'_>> {
-        match self {
-            Self::One(one) => Some(&one.request),
-            Self::Compounds(_) => None,
-        }
-    }
-    pub const fn request_compounds(&self) -> Option<&RequestColumnCompounds<'_>> {
-        match self {
-            Self::One(_) => None,
-            Self::Compounds(compounds) => Some(&compounds.request),
-        }
-    }
-}
 impl<'a> TryFrom<Column<'a>> for ColumnOne<'a> {
     type Error = syn::Error;
     fn try_from(column: Column<'a>) -> Result<Self, Self::Error> {
@@ -288,6 +233,16 @@ impl<'a> TryFrom<Column<'a>> for ColumnOne<'a> {
             )),
         }
     }
+}
+
+pub struct ColumnCompounds<'a> {
+    pub response: ResponseColumnCompounds<'a>,
+    pub request: RequestColumnCompounds<'a>,
+}
+
+pub enum Column<'a> {
+    One(ColumnOne<'a>),
+    Compounds(ColumnCompounds<'a>),
 }
 
 #[derive(Clone, Copy)]
@@ -339,6 +294,14 @@ impl<'a> ColumnRef<'a> {
         }
     }
 }
+impl<'a> From<&'a Column<'a>> for ColumnRef<'a> {
+    fn from(column: &'a Column<'a>) -> Self {
+        match *column {
+            Column::One(ref one) => ColumnRef::One(one),
+            Column::Compounds(ref compounds) => ColumnRef::Compounds(compounds),
+        }
+    }
+}
 
 impl<T, C> Columns<T, T, C> {
     pub fn map_try_collect_all_default<'a, F>(
@@ -385,21 +348,17 @@ impl<T, C> Columns<T, T, C> {
 }
 impl<'a, C> Columns<Column<'a>, ColumnOne<'a>, C> {
     pub fn iter(&'a self) -> impl Iterator<Item = ColumnRef<'a>> + Clone {
-        fn map<'a>(column: &'a Column<'a>) -> ColumnRef<'a> {
-            match *column {
-                Column::One(ref one) => ColumnRef::One(one),
-                Column::Compounds(ref compounds) => ColumnRef::Compounds(compounds),
-            }
-        }
         let (a, b, c) = match self {
-            Self::CollectionOnly { columns } => (None, None, columns.iter().map(map)),
-            Self::Model { id, columns, .. } => {
-                (Some(ColumnRef::One(id)), None, columns.iter().map(map))
-            }
+            Self::CollectionOnly { columns } => (None, None, columns.iter().map(ColumnRef::from)),
+            Self::Model { id, columns, .. } => (
+                Some(ColumnRef::One(id)),
+                None,
+                columns.iter().map(ColumnRef::from),
+            ),
             Self::ManyModel { a, b } => (
                 Some(ColumnRef::One(a)),
                 Some(ColumnRef::One(b)),
-                [].iter().map(map),
+                [].iter().map(ColumnRef::from),
             ),
         };
         a.into_iter().chain(b).chain(c)
@@ -595,7 +554,6 @@ impl<'a> Table<'a> {
                             name_intern((&*foreign_table_name_extern, &foreign_table_id.name));
 
                         let columns = traverse(&foreign_table_name_extern, foreign_table, db);
-                        // let columns = traverse(table_name_extern, table, db);
                         let columns: Result<Vec<ResponseColumnGetter>, syn::Error> =
                             columns.try_collect_all_default();
                         let columns = columns?;
@@ -670,7 +628,6 @@ impl<'a> Table<'a> {
                         let compounds_setter = RequestColumnSetterCompounds {
                             rs_name,
                             table_rs_name,
-                            // table_id_rs_name: &table_id.rs_name,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
@@ -700,7 +657,6 @@ impl<'a> Table<'a> {
                 Ok(column0)
             },
         );
-        // let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
         let columns = columns?;
 
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
@@ -729,16 +685,6 @@ pub struct Db<'a> {
     /// visibility
     pub rs_vis: &'a Visibility,
 }
-// pub struct Db<'a> {
-//     /// the name of the database
-//     pub name: String,
-//     /// the name for the database module, for example `db`
-//     pub rs_name: Ident,
-//     /// the tables in the database
-//     pub tables: Vec<Table<'a>>,
-//     /// visibility
-//     pub rs_vis: Visibility,
-// }
 
 impl<'a> TryFrom<&'a stage2::Db> for Db<'a> {
     type Error = syn::Error;

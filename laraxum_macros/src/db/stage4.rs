@@ -565,29 +565,12 @@ fn response_getter(
 
 fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     quote! {
-        async |response| match response {
-            ::core::result::Result::Ok(response) => ::core::result::Result::Ok(#getter),
-            ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
-        }
+            async |response| match response {
+                ::core::result::Result::Ok(response) => ::core::result::Result::Ok(#getter),
+                ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
+            }
     }
-    // let getter = catch_option(getter);
-    // quote! {
-    //     async |response| match response {
-    //         ::core::result::Result::Ok(response) => {
-    //             match #getter {
-    //                 ::core::option::Option::Some(response) => {
-    //                     ::core::result::Result::Ok(response)
-    //                 }
-    //                 ::core::option::Option::None => {
-    //                     ::core::result::Result::Err(::sqlx::Error::RowNotFound)
-    //                 }
-    //             }
-    //         }
-    //         ::core::result::Result::Err(err) => ::core::result::Result::Err(err),
-    //     }
-    // }
 }
-
 impl super::stage2::ValidateRule {
     fn to_token_stream(&self, value: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         match *self {
@@ -1208,12 +1191,6 @@ impl From<stage3::Table<'_>> for Table {
 
             let table_id_name = table_id.create.name;
             let table_id_name_intern = table_id.response.getter.name_intern();
-            // let (table_id_name, table_id_name_intern) = match table_id {
-            //     stage3::Column::One(one) => (one.create.name, one.response.getter.name_intern()),
-            //     stage3::Column::Compounds(_) => {
-            //         unimplemented!("unreachable error. id does not have corresponding fields");
-            //     }
-            // };
 
             let get_one = get_filter(
                 &table.name_intern,
@@ -1445,18 +1422,6 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 }
             }
-            // let a = match a {
-            //     stage3::Column::One(one) => one,
-            //     stage3::Column::Compounds(_) => {
-            //         unimplemented!("unreachable error. id does not have corresponding fields")
-            //     }
-            // };
-            // let b = match b {
-            //     stage3::Column::One(one) => one,
-            //     stage3::Column::Compounds(_) => {
-            //         unimplemented!("unreachable error. id does not have corresponding fields")
-            //     }
-            // };
 
             let a_token_stream = many_model(&table, a, b);
             let b_token_stream = many_model(&table, b, a);
