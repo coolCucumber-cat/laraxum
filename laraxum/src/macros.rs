@@ -1,20 +1,20 @@
 #[macro_export]
 macro_rules! impl_encode_decode {
     { $ty:ty => $inner:ty => $decode:expr => $encode:expr $(, $($tt:tt)+)? $(,)? } => {
-        impl $crate::backend::Decode for $ty {
-            type Decode = <$inner as $crate::backend::Decode>::Decode;
+        impl $crate::model::Decode for $ty {
+            type Decode = <$inner as $crate::model::Decode>::Decode;
             #[inline]
             fn decode(decode: Self::Decode) -> Self {
-                let decode = <$inner as $crate::backend::Decode>::decode(decode);
+                let decode = <$inner as $crate::model::Decode>::decode(decode);
                 ($decode)(decode)
             }
         }
-        impl $crate::backend::Encode for $ty {
-            type Encode = <$inner as $crate::backend::Encode>::Encode;
+        impl $crate::model::Encode for $ty {
+            type Encode = <$inner as $crate::model::Encode>::Encode;
             #[inline]
             fn encode(self) -> Self::Encode {
                 let encode = ($encode)(self);
-                <$inner as $crate::backend::Encode>::encode(encode)
+                <$inner as $crate::model::Encode>::encode(encode)
             }
         }
         $( $crate::impl_encode_decode! { $($tt)+ } )?
@@ -34,14 +34,14 @@ macro_rules! impl_encode_decode {
 macro_rules! impl_encode_decode_self {
     { $($ty:ty),* $(,)? } => {
         $(
-            impl $crate::backend::Decode for $ty {
+            impl $crate::model::Decode for $ty {
                 type Decode = $ty;
                 #[inline]
                 fn decode(decode: Self::Decode) -> Self {
                     ::core::convert::From::from(decode)
                 }
             }
-            impl $crate::backend::Encode for $ty {
+            impl $crate::model::Encode for $ty {
                 type Encode = $ty;
                 #[inline]
                 fn encode(self) -> Self::Encode {
@@ -145,7 +145,7 @@ macro_rules! transparent_enum {
         }
         impl ::core::convert::TryFrom<$inner> for $ty {
             type Error = ();
-            fn try_from(value: $inner) -> Result<Self, Self::Error> {
+            fn try_from(value: $inner) -> ::core::result::Result::Result<Self, Self::Error> {
                 match value {
                     $value0 => ::core::result::Result::Ok(Self::$var0),
                     $(

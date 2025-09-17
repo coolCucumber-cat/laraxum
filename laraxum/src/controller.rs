@@ -1,6 +1,6 @@
 use crate::{
-    backend::{Collection, Model, Table},
     error::{AuthError, Error, ModelError},
+    model::{Collection, Model, Table},
 };
 
 use core::ops::Deref;

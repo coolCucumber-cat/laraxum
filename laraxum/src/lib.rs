@@ -1,14 +1,14 @@
-pub mod backend;
+pub mod controller;
 pub mod error;
-pub mod frontend;
 pub mod macros;
+pub mod model;
 pub mod request;
 
-pub use backend::{
+pub use controller::{AuthToken, Authenticate, AuthenticateToken, Authorize, Controller, Json};
+pub use error::{AppError, AuthError, Error, ModelError};
+pub use model::{
     Collection, CollectionIndexMany, CollectionIndexOne, Connect, Db, Id, ManyModel, Model, Table,
 };
-pub use error::{AppError, AuthError, Error, ModelError};
-pub use frontend::{AuthToken, Authenticate, AuthenticateToken, Authorize, Controller, Json};
 pub use request::Request;
 
 #[cfg(feature = "macros")]

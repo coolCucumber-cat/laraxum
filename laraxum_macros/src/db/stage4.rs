@@ -430,7 +430,7 @@ fn response_getter_column(
     if optional {
         quote! {
             if let ::core::option::Option::Some(v) = #field_access {
-                ::core::option::Option::Some(::laraxum::backend::Decode::decode(v))
+                ::core::option::Option::Some(::laraxum::model::Decode::decode(v))
             } else {
                 ::core::option::Option::None
             }
@@ -438,14 +438,14 @@ fn response_getter_column(
     } else if parent_optional {
         quote! {
             if let ::core::option::Option::Some(v) = #field_access {
-                ::laraxum::backend::Decode::decode(v)
+                ::laraxum::model::Decode::decode(v)
             } else {
                 return ::core::result::Result::Ok(::core::option::Option::None);
             }
         }
     } else {
         quote! {
-            ::laraxum::backend::Decode::decode(#field_access)
+            ::laraxum::model::Decode::decode(#field_access)
         }
     }
 }
@@ -749,7 +749,7 @@ impl From<stage3::Table<'_>> for Table {
                 #(#response_column_fields),*
             }
 
-            impl ::laraxum::backend::Decode for #table_rs_name {
+            impl ::laraxum::model::Decode for #table_rs_name {
                 type Decode = Self;
                 #[inline]
                 fn decode(decode: Self::Decode) -> Self {
@@ -757,7 +757,7 @@ impl From<stage3::Table<'_>> for Table {
                 }
             }
 
-            impl ::laraxum::backend::Encode for #table_rs_name {
+            impl ::laraxum::model::Encode for #table_rs_name {
                 type Encode = Self;
                 #[inline]
                 fn encode(self) -> Self::Encode {
@@ -798,12 +798,12 @@ impl From<stage3::Table<'_>> for Table {
                     quote! {
                         ::core::option::Option::map(
                             request.#rs_name,
-                            ::laraxum::backend::Encode::encode
+                            ::laraxum::model::Encode::encode
                         )
                     }
                 } else {
                     quote! {
-                        ::laraxum::backend::Encode::encode(request.#rs_name)
+                        ::laraxum::model::Encode::encode(request.#rs_name)
                     }
                 }
             });
@@ -1508,7 +1508,7 @@ impl From<stage3::Db<'_>> for Db {
             impl ::laraxum::Connect for #db_ident {
                 type Error = ::sqlx::Error;
                 async fn connect() -> ::core::result::Result<Self, Self::Error> {
-                    let connect_options = ::laraxum::backend::database_url()
+                    let connect_options = ::laraxum::model::database_url()
                         .map(|url| {
                             <
                                 <

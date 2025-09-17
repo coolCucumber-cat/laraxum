@@ -1,4 +1,4 @@
-use crate::frontend::Json;
+use crate::controller::Json;
 
 use axum::{
     http::StatusCode,
