@@ -291,8 +291,8 @@ pub struct ColumnAttrRequest {
 
 pub struct Index {
     pub name: Ident,
-    pub request_ty: Option<Box<Type>>,
-    pub request_ty_ref: bool,
+    // pub request_ty: Option<Box<Type>>,
+    // pub request_ty_ref: bool,
 }
 
 pub struct Column {
@@ -310,6 +310,8 @@ pub struct Column {
     pub request: ColumnAttrRequest,
     /// validation rules
     pub validate: Vec<ValidateRule>,
+    /// borrowing behaviour
+    pub borrow: Option<Option<Box<Type>>>,
     /// index
     pub index: Option<Index>,
 
@@ -329,6 +331,7 @@ impl TryFrom<stage1::Column> for Column {
                     request,
                     real_ty,
                     unique,
+                    borrow,
                     index,
                     attrs: rs_attrs,
                 },
@@ -466,10 +469,13 @@ impl TryFrom<stage1::Column> for Column {
             skip: response.skip,
         };
         let request = ColumnAttrRequest { name: request.name };
+
+        let borrow = borrow.map(|borrow| borrow.0);
+
         let index = index.map(|index| Index {
             name: index.name.0,
-            request_ty: index.request_ty.map(|ty| ty.0),
-            request_ty_ref: index.request_ty_ref,
+            // request_ty: index.request_ty.map(|ty| ty.0),
+            // request_ty_ref: index.request_ty_ref,
         });
 
         Ok(Self {
@@ -480,6 +486,7 @@ impl TryFrom<stage1::Column> for Column {
             response,
             request,
             validate,
+            borrow,
             index,
             rs_attrs,
         })

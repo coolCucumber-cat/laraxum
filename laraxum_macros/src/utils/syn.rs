@@ -21,9 +21,7 @@ impl Parse for ParsePat {
 ///
 /// Useful when you want an attribute to not need quotes,
 /// like `function(a::b::c)` instead of `function = "a::b::c"`.
-pub struct TokenStreamAttr<T>(pub T)
-where
-    T: syn::parse::Parse;
+pub struct TokenStreamAttr<T>(pub T);
 impl<T> darling::FromMeta for TokenStreamAttr<T>
 where
     T: syn::parse::Parse,
@@ -41,14 +39,40 @@ where
     }
 }
 
-/// Allow anything that implements [`syn::parse::Parse`] to be used as a list of attributes by [`darling`].
+/// Allow anything that implements [`syn::parse::Parse`] to be used as an optional attribute by [`darling`].
 ///
-/// Like [`TokenStreamAttr<T>`] but for lists instead of one item.
-#[expect(dead_code)]
-pub struct TokenStreamListAttr<T>(pub Vec<T>)
+/// Like [`TokenStreamAttr<T>`] but for [`Option<T>`] instead of [`T`].
+pub struct TokenStreamAttrOption<T>(pub Option<T>)
 where
     T: syn::parse::Parse;
-impl<T> darling::FromMeta for TokenStreamListAttr<T>
+impl<T> darling::FromMeta for TokenStreamAttrOption<T>
+where
+    T: syn::parse::Parse,
+{
+    fn from_meta(item: &Meta) -> darling::Result<Self> {
+        (match *item {
+            Meta::Path(_) => Self::from_word(),
+            Meta::List(ref value) => {
+                let parse2 = syn::parse2::<T>(value.tokens.clone())?;
+                Ok(Self(Some(parse2)))
+            }
+            Meta::NameValue(ref value) => Self::from_expr(&value.value),
+        })
+        .map_err(|e| e.with_span(item))
+    }
+    fn from_word() -> darling::Result<Self> {
+        Ok(Self(None))
+    }
+}
+
+/// Allow anything that implements [`syn::parse::Parse`] to be used as a list of attributes by [`darling`].
+///
+/// Like [`TokenStreamAttr<T>`] but for [`Vec<T>`] instead of [`T`].
+#[expect(dead_code)]
+pub struct TokenStreamAttrVec<T>(pub Vec<T>)
+where
+    T: syn::parse::Parse;
+impl<T> darling::FromMeta for TokenStreamAttrVec<T>
 where
     T: syn::parse::Parse,
 {

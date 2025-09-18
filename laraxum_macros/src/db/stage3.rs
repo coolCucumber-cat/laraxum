@@ -213,6 +213,7 @@ pub struct ColumnOne<'a> {
     pub response: ResponseColumnOne<'a>,
     pub request: RequestColumnOne<'a>,
     pub index: Option<&'a Index>,
+    pub borrow: Option<Option<&'a Type>>,
 }
 impl ColumnOne<'_> {
     pub const fn name(&self) -> &str {
@@ -485,11 +486,14 @@ impl<'a> Table<'a> {
                     response: attr_response,
                     request: attr_request,
                     validate,
+                    borrow,
                     index,
                     rs_attrs,
                 } = column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
+                let index = index.as_ref();
+                let borrow = borrow.as_ref().map(Option::as_deref);
 
                 let column0 = match *ty {
                     stage2::Ty::Element(ref ty_element) => Column::One(ColumnOne {
@@ -535,7 +539,8 @@ impl<'a> Table<'a> {
                             },
                             TyElement::AutoTime(_) | TyElement::Id => RequestColumnOne::None,
                         },
-                        index: index.as_ref(),
+                        index,
+                        borrow,
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: ref foreign_table_rs_name,
@@ -604,7 +609,8 @@ impl<'a> Table<'a> {
                                     validate,
                                 },
                             },
-                            index: index.as_ref(),
+                            index,
+                            borrow,
                         })
                     }
                     stage2::Ty::Compound(stage2::TyCompound {

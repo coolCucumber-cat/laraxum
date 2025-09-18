@@ -1097,13 +1097,11 @@ impl From<stage3::Table<'_>> for Table {
                 .filter_map(|column| {
                     let index = column.index?;
                     let index_name = &index.name;
-                    let rs_ty = index
-                        .request_ty
-                        .as_deref()
-                        .unwrap_or(column.response.field.rs_ty);
-                    let rs_ty = if index.request_ty_ref {
+                    let rs_ty = column.response.field.rs_ty;
+                    let rs_ty = if let Some(borrow) = column.borrow {
+                        let borrow = borrow.unwrap_or(rs_ty);
                         quote! {
-                            &'a #rs_ty
+                            &'a #borrow
                         }
                     } else {
                         rs_ty.to_token_stream()

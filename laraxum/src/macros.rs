@@ -145,7 +145,7 @@ macro_rules! transparent_enum {
         }
         impl ::core::convert::TryFrom<$inner> for $ty {
             type Error = ();
-            fn try_from(value: $inner) -> ::core::result::Result::Result<Self, Self::Error> {
+            fn try_from(value: $inner) -> ::core::result::Result<Self, Self::Error> {
                 match value {
                     $value0 => ::core::result::Result::Ok(Self::$var0),
                     $(
@@ -228,7 +228,7 @@ macro_rules! env_var_opt {
 macro_rules! serve {
     ($app:expr) => {
         async {
-            let url = $crate::frontend::url();
+            let url = $crate::controller::url();
             let url = &*url;
             let app_listener = ::tokio::net::TcpListener::bind(url).await?;
             ::std::println!("Listening at: {url:?}");

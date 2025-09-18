@@ -198,9 +198,9 @@ pub struct ColumnAttrRequest {
 #[derive(darling::FromMeta)]
 pub struct TableAttrIndex {
     pub name: crate::utils::syn::TokenStreamAttr<Ident>,
-    pub request_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
-    #[darling(default)]
-    pub request_ty_ref: bool,
+    // pub request_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+    // #[darling(default)]
+    // pub request_ty_ref: bool,
 }
 
 // use `TokenStreamAttr` because it can be parsed by `darling`.
@@ -213,6 +213,7 @@ pub struct ColumnAttr {
     pub request: ColumnAttrRequest,
     pub real_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
     pub unique: bool,
+    pub borrow: Option<crate::utils::syn::TokenStreamAttrOption<Box<Type>>>,
     pub index: Option<TableAttrIndex>,
     pub attrs: Vec<Attribute>,
 }
