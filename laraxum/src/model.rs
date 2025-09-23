@@ -140,6 +140,11 @@ pub trait CollectionIndexOne<Index>: Collection {
     }
 }
 
+pub enum Sort {
+    Ascending,
+    Descending,
+}
+
 /// Decode from the value stored in the database.
 pub trait Decode {
     type Decode;

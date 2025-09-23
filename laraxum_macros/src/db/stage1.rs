@@ -196,11 +196,12 @@ pub struct ColumnAttrRequest {
 
 // use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta)]
-pub struct TableAttrIndex {
-    pub name: crate::utils::syn::TokenStreamAttr<Ident>,
-    // pub request_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
-    // #[darling(default)]
-    // pub request_ty_ref: bool,
+pub struct ColumnAttrIndex {
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform")]
+    pub name: Ident,
+    pub filter: bool,
+    #[darling(default)]
+    pub sort: bool,
 }
 
 // use `TokenStreamAttr` because it can be parsed by `darling`.
@@ -214,7 +215,8 @@ pub struct ColumnAttr {
     pub real_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
     pub unique: bool,
     pub borrow: Option<crate::utils::syn::TokenStreamAttrOption<Box<Type>>>,
-    pub index: Option<TableAttrIndex>,
+    #[darling(multiple)]
+    pub index: Vec<ColumnAttrIndex>,
     pub attrs: Vec<Attribute>,
 }
 

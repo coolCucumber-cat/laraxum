@@ -264,10 +264,11 @@ impl Ty {
     }
 }
 
-pub struct ColumnAttrResponse {
-    pub name: Option<String>,
-    pub skip: bool,
-}
+pub use stage1::ColumnAttrResponse;
+// pub struct ColumnAttrResponse {
+//     pub name: Option<String>,
+//     pub skip: bool,
+// }
 
 pub enum ValidateRule {
     MinLen(Expr),
@@ -285,15 +286,11 @@ pub enum ValidateRule {
 
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
+    pub validate: Vec<ValidateRule>,
     // pub ty: Option<Type>,
-    // pub validate: Vec<ValidateRule>,
 }
 
-pub struct Index {
-    pub name: Ident,
-    // pub request_ty: Option<Box<Type>>,
-    // pub request_ty_ref: bool,
-}
+pub use stage1::ColumnAttrIndex;
 
 pub struct Column {
     /// the name of the column in the database
@@ -308,12 +305,12 @@ pub struct Column {
     pub response: ColumnAttrResponse,
     /// the request attribute of the column
     pub request: ColumnAttrRequest,
-    /// validation rules
-    pub validate: Vec<ValidateRule>,
+    // /// validation rules
+    // pub validate: Vec<ValidateRule>,
     /// borrowing behaviour
     pub borrow: Option<Option<Box<Type>>>,
     /// index
-    pub index: Option<Index>,
+    pub index: Vec<ColumnAttrIndex>,
 
     pub rs_attrs: Vec<Attribute>,
 }
@@ -464,19 +461,12 @@ impl TryFrom<stage1::Column> for Column {
         let validate = validate.chain(max_len_validate_rule);
         let validate = validate.collect();
 
-        let response = ColumnAttrResponse {
-            name: response.name,
-            skip: response.skip,
+        let request = ColumnAttrRequest {
+            name: request.name,
+            validate,
         };
-        let request = ColumnAttrRequest { name: request.name };
 
         let borrow = borrow.map(|borrow| borrow.0);
-
-        let index = index.map(|index| Index {
-            name: index.name.0,
-            // request_ty: index.request_ty.map(|ty| ty.0),
-            // request_ty_ref: index.request_ty_ref,
-        });
 
         Ok(Self {
             name,
@@ -485,7 +475,7 @@ impl TryFrom<stage1::Column> for Column {
             rs_ty,
             response,
             request,
-            validate,
+            // validate,
             borrow,
             index,
             rs_attrs,

@@ -1,11 +1,14 @@
 use super::stage2;
 
 pub use stage2::{
-    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, Index, TyElement,
+    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, TyElement,
     TyElementAutoTime,
 };
 
-use crate::utils::{borrow::DerefEither, collections::TryCollectAll};
+use crate::{
+    db::stage1,
+    utils::{borrow::DerefEither, collections::TryCollectAll},
+};
 
 use std::borrow::Cow;
 
@@ -80,6 +83,7 @@ pub struct ResponseColumnGetterElement<'a> {
     pub name_extern: String,
     pub optional: bool,
     pub rs_name: &'a Ident,
+    pub rs_ty: &'a Type,
 }
 
 pub struct ResponseColumnGetterCompound<'a> {
@@ -89,6 +93,7 @@ pub struct ResponseColumnGetterCompound<'a> {
     pub foreign_table_name_extern: String,
     pub optional: bool,
     pub rs_name: &'a Ident,
+    pub rs_ty: &'a Type,
     pub foreign_table_rs_name: &'a Ident,
     pub columns: Vec<ResponseColumnGetter<'a>>,
 }
@@ -110,6 +115,12 @@ impl ResponseColumnGetterOne<'_> {
             Self::Compound(compound) => compound.rs_name,
         }
     }
+    pub const fn rs_ty(&self) -> &Type {
+        match self {
+            Self::Element(element) => element.rs_ty,
+            Self::Compound(compound) => compound.rs_ty,
+        }
+    }
     pub const fn optional(&self) -> bool {
         match self {
             Self::Element(element) => element.optional,
@@ -120,6 +131,7 @@ impl ResponseColumnGetterOne<'_> {
 
 pub struct ResponseColumnGetterCompounds<'a> {
     pub rs_name: &'a Ident,
+    pub rs_ty: &'a Type,
     pub table_rs_name: &'a Ident,
     pub table_id_name_extern: String,
     pub foreign_table_rs_name: &'a Ident,
@@ -141,6 +153,12 @@ impl ResponseColumnGetterRef<'_> {
         match self {
             Self::One(one) => one.rs_name(),
             Self::Compounds(compounds) => compounds.rs_name,
+        }
+    }
+    pub const fn rs_ty(&self) -> &Type {
+        match self {
+            Self::One(one) => one.rs_ty(),
+            Self::Compounds(compounds) => compounds.rs_ty,
         }
     }
 }
@@ -212,7 +230,7 @@ pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
     pub request: RequestColumnOne<'a>,
-    pub index: Option<&'a Index>,
+    pub index: &'a [stage1::ColumnAttrIndex],
     pub borrow: Option<Option<&'a Type>>,
 }
 impl ColumnOne<'_> {
@@ -398,7 +416,11 @@ impl<'a> Table<'a> {
         ) -> impl Iterator<Item = syn::Result<ResponseColumnGetter<'iter>>> {
             table.columns.iter().map(move |column| {
                 let stage2::Column {
-                    name, rs_name, ty, ..
+                    name,
+                    rs_name,
+                    ty,
+                    rs_ty,
+                    ..
                 } = column;
                 let name = &*name;
                 let (column_name_intern, column_name_extern) =
@@ -410,6 +432,7 @@ impl<'a> Table<'a> {
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
                             rs_name,
+                            rs_ty,
                             optional: ty_element.optional(),
                         };
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
@@ -446,6 +469,7 @@ impl<'a> Table<'a> {
                             foreign_table_name_intern,
                             foreign_table_name_extern,
                             rs_name,
+                            rs_ty,
                             foreign_table_rs_name: &foreign_table.rs_name,
                             optional,
                             columns,
@@ -464,6 +488,7 @@ impl<'a> Table<'a> {
                         let table_id_name_extern = name_extern((table_name_extern, &table_id.name));
                         ResponseColumnGetter::Compounds(ResponseColumnGetterCompounds {
                             rs_name,
+                            rs_ty,
                             table_rs_name,
                             table_id_name_extern,
                             foreign_table_rs_name,
@@ -485,14 +510,14 @@ impl<'a> Table<'a> {
                     rs_ty,
                     response: attr_response,
                     request: attr_request,
-                    validate,
+                    // validate,
                     borrow,
                     index,
                     rs_attrs,
                 } = column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
-                let index = index.as_ref();
+                let index = &**index;
                 let borrow = borrow.as_ref().map(Option::as_deref);
 
                 let column0 = match *ty {
@@ -507,6 +532,7 @@ impl<'a> Table<'a> {
                                 name_extern: column_name_extern,
                                 optional: ty_element.optional(),
                                 rs_name,
+                                rs_ty,
                             }),
                             field: ResponseColumnField {
                                 rs_name,
@@ -527,7 +553,7 @@ impl<'a> Table<'a> {
                                     rs_name,
                                     name,
                                     optional: ty_element.optional(),
-                                    validate,
+                                    validate: &attr_request.validate,
                                 },
                             },
                             TyElement::AutoTime(TyElementAutoTime {
@@ -569,6 +595,7 @@ impl<'a> Table<'a> {
                             foreign_table_name_intern,
                             foreign_table_name_extern,
                             rs_name,
+                            rs_ty,
                             foreign_table_rs_name: &foreign_table.rs_name,
                             optional,
                             columns,
@@ -606,7 +633,7 @@ impl<'a> Table<'a> {
                                     rs_name,
                                     name,
                                     optional,
-                                    validate,
+                                    validate: &attr_request.validate,
                                 },
                             },
                             index,
@@ -626,6 +653,7 @@ impl<'a> Table<'a> {
                             name_extern((&table_name_extern, &table_id.name));
                         let compounds_getter = ResponseColumnGetterCompounds {
                             rs_name,
+                            rs_ty,
                             table_rs_name,
                             table_id_name_extern,
                             foreign_table_rs_name,

@@ -22,6 +22,34 @@ impl Parse for ParsePat {
 /// Useful when you want an attribute to not need quotes,
 /// like `function(a::b::c)` instead of `function = "a::b::c"`.
 pub struct TokenStreamAttr<T>(pub T);
+impl<T> TokenStreamAttr<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+impl<T> TokenStreamAttr<T>
+where
+    T: syn::parse::Parse,
+{
+    pub fn transform(item: Meta) -> darling::Result<T> {
+        <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
+    }
+    pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
+        item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
+            .transpose()
+    }
+}
+impl TokenStreamAttr<Pat> {
+    pub fn transform_pat(item: Meta) -> darling::Result<Pat> {
+        <TokenStreamAttr<ParsePat> as darling::FromMeta>::from_meta(&item)
+            .map(TokenStreamAttr::into_inner)
+            .map(|pat| pat.0)
+    }
+    // pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
+    //     item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
+    //         .transpose()
+    // }
+}
 impl<T> darling::FromMeta for TokenStreamAttr<T>
 where
     T: syn::parse::Parse,
@@ -42,9 +70,27 @@ where
 /// Allow anything that implements [`syn::parse::Parse`] to be used as an optional attribute by [`darling`].
 ///
 /// Like [`TokenStreamAttr<T>`] but for [`Option<T>`] instead of [`T`].
-pub struct TokenStreamAttrOption<T>(pub Option<T>)
-where
-    T: syn::parse::Parse;
+pub struct TokenStreamAttrOption<T>(pub Option<T>);
+// impl<T> TokenStreamAttrOption<T>
+// where
+//     T: syn::parse::Parse,
+// {
+//     pub fn into_inner(self) -> T {
+//         self.0
+//     }
+// }
+// impl<T> TokenStreamAttrOption<T>
+// where
+//     T: syn::parse::Parse,
+// {
+//     pub fn transform(item: Meta) -> darling::Result<T> {
+//         <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
+//     }
+//     pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
+//         item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
+//             .transpose()
+//     }
+// }
 impl<T> darling::FromMeta for TokenStreamAttrOption<T>
 where
     T: syn::parse::Parse,
@@ -69,9 +115,24 @@ where
 ///
 /// Like [`TokenStreamAttr<T>`] but for [`Vec<T>`] instead of [`T`].
 #[expect(dead_code)]
-pub struct TokenStreamAttrVec<T>(pub Vec<T>)
+pub struct TokenStreamAttrVec<T>(pub Vec<T>);
+impl<T> TokenStreamAttrVec<T> {
+    pub fn into_inner(self) -> Vec<T> {
+        self.0
+    }
+}
+impl<T> TokenStreamAttrVec<T>
 where
-    T: syn::parse::Parse;
+    T: syn::parse::Parse,
+{
+    pub fn transform(item: Meta) -> darling::Result<Vec<T>> {
+        <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
+    }
+    pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Vec<T>>> {
+        item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
+            .transpose()
+    }
+}
 impl<T> darling::FromMeta for TokenStreamAttrVec<T>
 where
     T: syn::parse::Parse,
