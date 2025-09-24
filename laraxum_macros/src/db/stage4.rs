@@ -653,13 +653,15 @@ fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenSt
 fn transform_response_one(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
+    pool: &proc_macro2::TokenStream,
+    response_ty: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {{
         let response = #response;
-        let response = response.fetch(&db.pool);
+        let response = response.fetch(#pool);
         let mut response = ::futures::StreamExt::then(response, #response_getter);
         let mut response = ::core::pin::pin!(response);
-        let response: ::core::option::Option<Self::OneResponse> =
+        let response: ::core::option::Option<#response_ty> =
             ::futures::TryStreamExt::try_next(&mut response).await?;
         ::core::option::Option::ok_or(response, ::laraxum::Error::NotFound)
     }}
@@ -667,12 +669,14 @@ fn transform_response_one(
 fn transform_response_many(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
+    pool: &proc_macro2::TokenStream,
+    response_ty: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {{
         let response = #response;
-        let response = response.fetch(&db.pool);
+        let response = response.fetch(#pool);
         let response = ::futures::StreamExt::then(response, #response_getter);
-        let response: ::std::vec::Vec<Self::ManyResponse> =
+        let response: ::std::vec::Vec<#response_ty> =
             ::futures::TryStreamExt::try_collect(response).await?;
         ::core::result::Result::Ok(response)
     }}
@@ -680,12 +684,15 @@ fn transform_response_many(
 fn transform_response(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
+    pool: &proc_macro2::TokenStream,
+    response_ty_one: &proc_macro2::TokenStream,
+    response_ty_many: &proc_macro2::TokenStream,
     one: bool,
 ) -> proc_macro2::TokenStream {
     if one {
-        transform_response_one(response, response_getter)
+        transform_response_one(response, response_getter, pool, response_ty_one)
     } else {
-        transform_response_many(response, response_getter)
+        transform_response_many(response, response_getter, pool, response_ty_many)
     }
 }
 
@@ -812,6 +819,12 @@ struct Table {
 impl From<stage3::Table<'_>> for Table {
     #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
+        let response_ty = quote! { Self::Response };
+        let response_ty = &response_ty;
+        let response_ty_one = quote! { Self::OneResponse };
+        let response_ty_one = &response_ty_one;
+        let response_ty_many = quote! { Self::ManyResponse };
+        let response_ty_many = &response_ty_many;
         let response_column_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
                 rs_name,
@@ -1011,6 +1024,14 @@ impl From<stage3::Table<'_>> for Table {
                 &table.name_extern,
                 response_getter_columns,
             );
+            let get_all_response = transform_response_many(
+                &quote! {
+                    ::sqlx::query!(#get_all)
+                },
+                response_getter,
+                &quote! { &db.pool },
+                response_ty,
+            );
             let request_columns = table
                 .columns
                 .iter()
@@ -1038,12 +1059,7 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::Error,
                         >
                     {
-                        let response = ::sqlx::query!(#get_all);
-                        let response = response.fetch(&db.pool);
-                        let response = ::futures::StreamExt::then(response, #response_getter);
-                        let response: ::std::vec::Vec<Self::Response> =
-                            ::futures::TryStreamExt::try_collect(response).await?;
-                        ::core::result::Result::Ok(response)
+                        #get_all_response
                     }
                     async fn create_one(
                         db: &Self::Db,
@@ -1224,8 +1240,7 @@ impl From<stage3::Table<'_>> for Table {
                         rs_ty.to_token_stream()
                     };
                     let name_intern = column.name_intern();
-                    let unique: bool = column.create.ty.unique();
-                    let one = unique;
+                    let unique = column.create.ty.unique();
 
                     let table_name_intern = &*table.name_intern;
                     let table_name_extern = &*table.name_extern;
@@ -1239,7 +1254,7 @@ impl From<stage3::Table<'_>> for Table {
                                     response_getter_columns,
                                     Some(name_intern),
                                     name_intern,
-                                    one,
+                                    unique,
                                 );
                                 let request_rs_ty = quote! {
                                     (::laraxum::model::Sort, #rs_ty)
@@ -1248,14 +1263,26 @@ impl From<stage3::Table<'_>> for Table {
                                 let response_sort_asc = quote! {
                                     ::sqlx::query!(#get_sort_asc, request.1)
                                 };
-                                let response_sort_asc =
-                                    transform_response(&response_sort_asc, &response_getter, one);
+                                let response_sort_asc = transform_response(
+                                    &response_sort_asc,
+                                    response_getter,
+                                    &quote! { &db.pool },
+                                    response_ty_one,
+                                    response_ty_many,
+                                    unique,
+                                );
 
                                 let response_sort_desc = quote! {
                                     ::sqlx::query!(#get_sort_desc, request.1)
                                 };
-                                let response_sort_desc =
-                                    transform_response(&response_sort_desc, &response_getter, one);
+                                let response_sort_desc = transform_response(
+                                    &response_sort_desc,
+                                    response_getter,
+                                    &quote! { &db.pool },
+                                    response_ty_one,
+                                    response_ty_many,
+                                    unique,
+                                );
                                 let response = quote! {
                                     match request.0 {
                                         ::laraxum::model::Sort::Ascending => #response_sort_asc,
@@ -1267,29 +1294,36 @@ impl From<stage3::Table<'_>> for Table {
                             // filter
                             (true, false) => {
                                 let get = get(
-                                    &table_name_intern,
-                                    &table_name_extern,
+                                    table_name_intern,
+                                    table_name_extern,
                                     response_getter_columns,
                                     Some(name_intern),
                                     None,
-                                    one,
+                                    unique,
                                 );
                                 let response = quote! {
                                     ::sqlx::query!(#get, request)
                                 };
-                                let response = transform_response(&response, &response_getter, one);
+                                let response = transform_response(
+                                    &response,
+                                    response_getter,
+                                    &quote! { &db.pool },
+                                    response_ty_one,
+                                    response_ty_many,
+                                    unique,
+                                );
                                 (response, rs_ty.clone())
                                 // (response, request_rs_ty)
                             }
                             // sort
                             (false, true) => {
                                 let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
-                                    &table_name_intern,
-                                    &table_name_extern,
+                                    table_name_intern,
+                                    table_name_extern,
                                     response_getter_columns,
                                     None,
                                     name_intern,
-                                    one,
+                                    unique,
                                 );
                                 let request_rs_ty = quote! {
                                     ::laraxum::model::Sort
@@ -1298,14 +1332,26 @@ impl From<stage3::Table<'_>> for Table {
                                 let response_sort_asc = quote! {
                                     ::sqlx::query!(#get_sort_asc)
                                 };
-                                let response_sort_asc =
-                                    transform_response(&response_sort_asc, &response_getter, one);
+                                let response_sort_asc = transform_response(
+                                    &response_sort_asc,
+                                    response_getter,
+                                    &quote! { &db.pool },
+                                    response_ty_one,
+                                    response_ty_many,
+                                    unique,
+                                );
 
                                 let response_sort_desc = quote! {
                                     ::sqlx::query!(#get_sort_desc)
                                 };
-                                let response_sort_desc =
-                                    transform_response(&response_sort_desc, &response_getter, one);
+                                let response_sort_desc = transform_response(
+                                    &response_sort_desc,
+                                    response_getter,
+                                    &quote! { &db.pool },
+                                    response_ty_one,
+                                    response_ty_many,
+                                    unique,
+                                );
 
                                 let response = quote! {
                                     match request {
@@ -1317,26 +1363,33 @@ impl From<stage3::Table<'_>> for Table {
                             }
                             (false, false) => {
                                 let get = get(
-                                    &table_name_intern,
-                                    &table_name_extern,
+                                    table_name_intern,
+                                    table_name_extern,
                                     response_getter_columns,
                                     None,
                                     None,
-                                    one,
+                                    unique,
                                 );
                                 let request_rs_ty = quote! { () };
 
                                 let response = quote! {
                                     ::sqlx::query!(#get)
                                 };
-                                let response = transform_response(&response, &response_getter, one);
+                                let response = transform_response(
+                                    &response,
+                                    response_getter,
+                                    &quote! { &db.pool },
+                                    response_ty_one,
+                                    response_ty_many,
+                                    unique,
+                                );
 
                                 (response, request_rs_ty)
                             }
                         };
 
                         let index_name = &index.name;
-                        let index_token_stream = if one {
+                        let index_token_stream = if unique {
                             quote! {
                                 impl ::laraxum::CollectionIndexOne<#index_name>
                                     for #table_rs_name
@@ -1406,6 +1459,14 @@ impl From<stage3::Table<'_>> for Table {
                 table_id_name_intern,
                 true,
             );
+            let get_one_response = transform_response_one(
+                &quote! {
+                    ::sqlx::query!(#get_one, id)
+                },
+                response_getter,
+                &quote! { &db.pool },
+                response_ty,
+            );
             let update_one = update_one(table_name_intern, table_id_name, request_columns);
             let delete_one = delete_one(table_name_intern, table_id_name);
 
@@ -1431,13 +1492,7 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::Error,
                         >
                     {
-                        let response = ::sqlx::query!(#get_one, id);
-                        let response = response.fetch(&db.pool);
-                        let mut response = ::futures::StreamExt::then(response, #response_getter);
-                        let mut response = ::core::pin::pin!(response);
-                        let response: ::core::option::Option<Self::Response> =
-                            ::futures::TryStreamExt::try_next(&mut response).await?;
-                        ::core::option::Option::ok_or(response, ::laraxum::Error::NotFound)
+                        #get_one_response
                     }
                     async fn create_get_one(
                         db: &Self::Db,
