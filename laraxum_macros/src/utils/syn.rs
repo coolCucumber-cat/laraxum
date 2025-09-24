@@ -35,8 +35,7 @@ where
         <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
     }
     pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
-        item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
-            .transpose()
+        item.map(Self::transform).transpose()
     }
 }
 impl TokenStreamAttr<Pat> {
@@ -45,10 +44,9 @@ impl TokenStreamAttr<Pat> {
             .map(TokenStreamAttr::into_inner)
             .map(|pat| pat.0)
     }
-    // pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
-    //     item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
-    //         .transpose()
-    // }
+    pub fn transform_pat_option(item: Option<Meta>) -> darling::Result<Option<Pat>> {
+        item.map(Self::transform_pat).transpose()
+    }
 }
 impl<T> darling::FromMeta for TokenStreamAttr<T>
 where
@@ -71,26 +69,22 @@ where
 ///
 /// Like [`TokenStreamAttr<T>`] but for [`Option<T>`] instead of [`T`].
 pub struct TokenStreamAttrOption<T>(pub Option<T>);
-// impl<T> TokenStreamAttrOption<T>
-// where
-//     T: syn::parse::Parse,
-// {
-//     pub fn into_inner(self) -> T {
-//         self.0
-//     }
-// }
-// impl<T> TokenStreamAttrOption<T>
-// where
-//     T: syn::parse::Parse,
-// {
-//     pub fn transform(item: Meta) -> darling::Result<T> {
-//         <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
-//     }
-//     pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
-//         item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
-//             .transpose()
-//     }
-// }
+impl<T> TokenStreamAttrOption<T> {
+    pub fn into_inner(self) -> Option<T> {
+        self.0
+    }
+}
+impl<T> TokenStreamAttrOption<T>
+where
+    T: syn::parse::Parse,
+{
+    pub fn transform(item: Meta) -> darling::Result<Option<T>> {
+        <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
+    }
+    pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Option<T>>> {
+        item.map(Self::transform).transpose()
+    }
+}
 impl<T> darling::FromMeta for TokenStreamAttrOption<T>
 where
     T: syn::parse::Parse,
@@ -129,8 +123,7 @@ where
         <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
     }
     pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Vec<T>>> {
-        item.map(|item| <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner))
-            .transpose()
+        item.map(Self::transform).transpose()
     }
 }
 impl<T> darling::FromMeta for TokenStreamAttrVec<T>

@@ -139,11 +139,24 @@ impl TryFrom<&Type> for TyCompound {
     }
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`.
+#[derive(darling::FromMeta)]
+pub struct ColumnAttrTyCompounds {
+    #[darling(
+        and_then = "crate::utils::syn::TokenStreamAttr::transform",
+        rename = "model"
+    )]
+    pub model_rs_name: Ident,
+    #[darling(
+        and_then = "crate::utils::syn::TokenStreamAttr::transform_option",
+        rename = "index"
+    )]
+    pub index_rs_ty: Option<Ident>,
+}
+
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrTyCompound {
-    pub many: Option<crate::utils::syn::TokenStreamAttr<Ident>>,
+    pub many: Option<ColumnAttrTyCompounds>,
 }
 
 #[derive(darling::FromMeta)]
@@ -212,11 +225,18 @@ pub struct ColumnAttr {
     pub ty: Option<ColumnAttrTy>,
     pub response: ColumnAttrResponse,
     pub request: ColumnAttrRequest,
-    pub real_ty: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+    #[darling(
+        and_then = "crate::utils::syn::TokenStreamAttr::transform_option",
+        rename = "real_ty"
+    )]
+    pub real_rs_ty: Option<Box<Type>>,
     pub unique: bool,
-    pub borrow: Option<crate::utils::syn::TokenStreamAttrOption<Box<Type>>>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttrOption::transform_option")]
+    pub borrow: Option<Option<Box<Type>>>,
     #[darling(multiple)]
     pub index: Vec<ColumnAttrIndex>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
+    pub struct_name: Option<Ident>,
     pub attrs: Vec<Attribute>,
 }
 
@@ -267,7 +287,8 @@ pub struct TableAttrModel {
 // use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta)]
 pub struct TableAttrController {
-    pub auth: Option<crate::utils::syn::TokenStreamAttr<Box<Type>>>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
+    pub auth: Option<Box<Type>>,
 }
 
 // #[cfg_attr(debug_assertions, derive(PartialEq, Eq, Debug))]

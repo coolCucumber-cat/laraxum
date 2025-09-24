@@ -16,6 +16,7 @@ use syn::{Attribute, Ident, Type, Visibility};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const COLUMN_MUST_NOT_BE_COMPOUNDS: &str = "column must not be many-to-many relationship";
+// const COLUMN_MUST_HAVE_STRUCT_NAME: &str = "column must have struct name";
 
 fn name_extern((parent, child): (&str, &str)) -> String {
     fmt2::fmt! { { str } => {parent} "__" {child} }
@@ -132,7 +133,7 @@ impl ResponseColumnGetterOne<'_> {
 pub struct ResponseColumnGetterCompounds<'a> {
     pub rs_name: &'a Ident,
     pub rs_ty: &'a Type,
-    pub table_rs_name: &'a Ident,
+    pub index_rs_name: &'a Ident,
     pub table_id_name_extern: String,
     pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
@@ -197,7 +198,7 @@ pub struct RequestColumnSetterOne<'a> {
 
 pub struct RequestColumnSetterCompounds<'a> {
     pub rs_name: &'a Ident,
-    pub table_rs_name: &'a Ident,
+    pub index_rs_name: &'a Ident,
     pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
@@ -232,6 +233,7 @@ pub struct ColumnOne<'a> {
     pub request: RequestColumnOne<'a>,
     pub index: &'a [stage1::ColumnAttrIndex],
     pub borrow: Option<Option<&'a Type>>,
+    pub struct_name: Option<&'a Ident>,
 }
 impl ColumnOne<'_> {
     pub const fn name(&self) -> &str {
@@ -257,6 +259,7 @@ impl<'a> TryFrom<Column<'a>> for ColumnOne<'a> {
 pub struct ColumnCompounds<'a> {
     pub response: ResponseColumnCompounds<'a>,
     pub request: RequestColumnCompounds<'a>,
+    pub struct_name: Option<&'a Ident>,
 }
 
 pub enum Column<'a> {
@@ -310,6 +313,12 @@ impl<'a> ColumnRef<'a> {
         match self {
             Self::One(_) => None,
             Self::Compounds(compounds) => Some(&compounds.request),
+        }
+    }
+    pub const fn struct_name(self) -> Option<&'a Ident> {
+        match self {
+            Self::One(one) => one.struct_name,
+            Self::Compounds(compounds) => compounds.struct_name,
         }
     }
 }
@@ -392,7 +401,7 @@ pub struct Table<'a> {
     pub request_error_rs_name: Cow<'a, Ident>,
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
-    pub columns: Columns<Column<'a>, ColumnOne<'a>, &'a stage2::Controller>,
+    pub columns: Columns<Column<'a>, ColumnOne<'a>, &'a stage2::TableAttrController>,
 }
 
 impl<'a> Table<'a> {
@@ -479,9 +488,13 @@ impl<'a> Table<'a> {
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: ref foreign_table_rs_name,
                         multiplicity:
-                            stage2::TyCompoundMultiplicity::Many(ref many_foreign_table_rs_name),
+                            stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
+                                model_rs_name: ref many_foreign_table_rs_name,
+                                index_rs_ty: ref index,
+                            }),
                     }) => {
                         let table_rs_name = &table.rs_name;
+                        let index_rs_name = index.as_ref().unwrap_or(table_rs_name);
                         let table_id = table.columns.model().ok_or_else(|| {
                             syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
@@ -489,7 +502,7 @@ impl<'a> Table<'a> {
                         ResponseColumnGetter::Compounds(ResponseColumnGetterCompounds {
                             rs_name,
                             rs_ty,
-                            table_rs_name,
+                            index_rs_name,
                             table_id_name_extern,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
@@ -513,12 +526,14 @@ impl<'a> Table<'a> {
                     // validate,
                     borrow,
                     index,
+                    struct_name,
                     rs_attrs,
                 } = column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
                 let index = &**index;
                 let borrow = borrow.as_ref().map(Option::as_deref);
+                let struct_name = struct_name.as_ref();
 
                 let column0 = match *ty {
                     stage2::Ty::Element(ref ty_element) => Column::One(ColumnOne {
@@ -567,6 +582,7 @@ impl<'a> Table<'a> {
                         },
                         index,
                         borrow,
+                        struct_name,
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: ref foreign_table_rs_name,
@@ -638,14 +654,19 @@ impl<'a> Table<'a> {
                             },
                             index,
                             borrow,
+                            struct_name,
                         })
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
                         ty: ref foreign_table_rs_name,
                         multiplicity:
-                            stage2::TyCompoundMultiplicity::Many(ref many_foreign_table_rs_name),
+                            stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
+                                model_rs_name: ref many_foreign_table_rs_name,
+                                index_rs_ty: ref index,
+                            }),
                     }) => {
                         let table_rs_name = &table.rs_name;
+                        let index_rs_name = index.as_ref().unwrap_or(table_rs_name);
                         let table_id = table.columns.model().ok_or_else(|| {
                             syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
@@ -654,14 +675,14 @@ impl<'a> Table<'a> {
                         let compounds_getter = ResponseColumnGetterCompounds {
                             rs_name,
                             rs_ty,
-                            table_rs_name,
+                            index_rs_name,
                             table_id_name_extern,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
                         let compounds_setter = RequestColumnSetterCompounds {
                             rs_name,
-                            table_rs_name,
+                            index_rs_name,
                             foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
@@ -685,6 +706,7 @@ impl<'a> Table<'a> {
                                 },
                                 setter: compounds_setter,
                             },
+                            struct_name,
                         })
                     }
                 };

@@ -89,7 +89,7 @@ pub trait Model: Collection {
 /// A table with two columns where multiple entities are identified by the other column.
 ///
 /// This can be used to create many-to-many relationships.
-pub trait ManyModel<OneResponse>: Table {
+pub trait ManyModel<Index>: Table {
     type OneRequest;
     type ManyRequest;
     type ManyResponse;

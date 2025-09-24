@@ -594,7 +594,7 @@ fn response_getter(
             let stage3::ResponseColumnGetterCompounds {
                 rs_name: _,
                 rs_ty: _,
-                table_rs_name,
+                index_rs_name: table_rs_name,
                 table_id_name_extern,
                 foreign_table_rs_name: _,
                 many_foreign_table_rs_name,
@@ -819,11 +819,11 @@ struct Table {
 impl From<stage3::Table<'_>> for Table {
     #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
-        let response_ty = quote! { Self::Response };
+        let response_ty = std::cell::LazyCell::new(|| quote! { Self::Response });
+        let response_ty_one = std::cell::LazyCell::new(|| quote! { Self::OneResponse });
+        let response_ty_many = std::cell::LazyCell::new(|| quote! { Self::ManyResponse });
         let response_ty = &response_ty;
-        let response_ty_one = quote! { Self::OneResponse };
         let response_ty_one = &response_ty_one;
-        let response_ty_many = quote! { Self::ManyResponse };
         let response_ty_many = &response_ty_many;
         let response_column_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
@@ -958,13 +958,13 @@ impl From<stage3::Table<'_>> for Table {
                 request_setter_compounds_columns.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
-                        table_rs_name,
+                        index_rs_name,
                         foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
                         <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #table_rs_name,
+                            #index_rs_name,
                         >>::create_many(
                             db,
                             id,
@@ -980,13 +980,13 @@ impl From<stage3::Table<'_>> for Table {
                 request_setter_compounds_columns.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
-                        table_rs_name,
+                        index_rs_name,
                         foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
                         <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #table_rs_name,
+                            #index_rs_name,
                         >>::update_many(
                             db,
                             id,
@@ -1002,13 +1002,13 @@ impl From<stage3::Table<'_>> for Table {
                 request_setter_compounds_columns.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name: _,
-                        table_rs_name,
+                        index_rs_name,
                         foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
                         <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #table_rs_name,
+                            #index_rs_name,
                         >>::delete_many(
                             db,
                             id,
@@ -1073,10 +1073,12 @@ impl From<stage3::Table<'_>> for Table {
                             Self::CreateRequest
                             as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
+                        let transaction = db.pool.begin().await?;
                         let response = ::sqlx::query!(#create_one, #request_setter_token_stream);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
                         #request_setter_compounds_create_many
+                        transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
                 }
@@ -1507,10 +1509,12 @@ impl From<stage3::Table<'_>> for Table {
                             Self::CreateRequest
                             as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
+                        let transaction = db.pool.begin().await?;
                         let response = ::sqlx::query!(#create_one, #request_setter_token_stream);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
                         #request_setter_compounds_create_many
+                        transaction.commit().await?;
                         let response = Self::get_one(db, id).await?;
                         ::core::result::Result::Ok(response)
                     }
@@ -1528,10 +1532,11 @@ impl From<stage3::Table<'_>> for Table {
                             Self::UpdateRequest
                             as ::laraxum::Request::<::laraxum::request::method::Update>
                         >::validate(&request)?;
-
+                        let transaction = db.pool.begin().await?;
                         let response = ::sqlx::query!(#update_one, #request_setter_token_stream id);
                         response.execute(&db.pool).await?;
                         #request_setter_compounds_update_many
+                        transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
                     async fn update_get_one(
@@ -1558,8 +1563,10 @@ impl From<stage3::Table<'_>> for Table {
                         >
                     {
                         let response = ::sqlx::query!(#delete_one, id);
+                        let transaction = db.pool.begin().await?;
                         response.execute(&db.pool).await?;
                         #request_setter_compounds_delete_many
+                        transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
                 }
@@ -1585,8 +1592,12 @@ impl From<stage3::Table<'_>> for Table {
                 table: &stage3::Table,
                 one: &stage3::ColumnOne,
                 many: &stage3::ColumnOne,
+                response_ty_many: &proc_macro2::TokenStream,
             ) -> proc_macro2::TokenStream {
-                let one_response_rs_ty = one.response.field.rs_ty;
+                let index_ty = many.struct_name.map_or_else(
+                    || one.response.field.rs_ty.to_token_stream(),
+                    |struct_name| struct_name.to_token_stream(),
+                );
                 let many_response_rs_ty = many.response.field.rs_ty;
 
                 let many_response_getter =
@@ -1608,6 +1619,15 @@ impl From<stage3::Table<'_>> for Table {
                     one.name_intern(),
                     false,
                 );
+                let get_many_response = transform_response_many(
+                    &quote! {
+                        ::sqlx::query!(#get_many, one)
+                    },
+                    &response_getter,
+                    &quote! { &db.pool },
+                    response_ty_many,
+                );
+
                 let request_columns = [&one.request, &many.request];
                 let create_one = create_one(&table.name_intern, request_columns);
                 let delete_many = delete_one(&table.name_intern, one.name());
@@ -1615,7 +1635,7 @@ impl From<stage3::Table<'_>> for Table {
                 let table_rs_name = table.rs_name;
 
                 quote! {
-                    impl ::laraxum::ManyModel<#one_response_rs_ty> for #table_rs_name {
+                    impl ::laraxum::ManyModel<#index_ty> for #table_rs_name {
                         type OneRequest = u64;
                         type ManyRequest = u64;
                         type ManyResponse = #many_response_rs_ty;
@@ -1629,12 +1649,7 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
-                            let response = ::sqlx::query!(#get_many, one);
-                            let response = response.fetch(&db.pool);
-                            let response = ::futures::StreamExt::then(response, #response_getter);
-                            let response: ::std::vec::Vec<Self::ManyResponse> =
-                                ::futures::TryStreamExt::try_collect(response).await?;
-                            ::core::result::Result::Ok(response)
+                            #get_many_response
                         }
                         async fn create_many(
                             db: &Self::Db,
@@ -1646,12 +1661,10 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
-                            let transaction = db.pool.begin().await?;
                             for many in many {
                                 let response = ::sqlx::query!(#create_one, one, many);
                                 response.execute(&db.pool).await?;
                             }
-                            transaction.commit().await?;
                             ::core::result::Result::Ok(())
                         }
                         async fn update_many(
@@ -1665,10 +1678,10 @@ impl From<stage3::Table<'_>> for Table {
                             >
                         {
                             <
-                                Self as ::laraxum::ManyModel<#one_response_rs_ty>
+                                Self as ::laraxum::ManyModel<#index_ty>
                             >::delete_many(db, one).await?;
                             <
-                                Self as ::laraxum::ManyModel<#one_response_rs_ty>
+                                Self as ::laraxum::ManyModel<#index_ty>
                             >::create_many(db, one, many).await?;
                             ::core::result::Result::Ok(())
                         }
@@ -1689,19 +1702,30 @@ impl From<stage3::Table<'_>> for Table {
                 }
             }
 
-            let a_token_stream = many_model(&table, a, b);
-            let b_token_stream = many_model(&table, b, a);
+            let a_token_stream = many_model(&table, a, b, response_ty_many);
+            let b_token_stream = many_model(&table, b, a, response_ty_many);
             quote! {
                 #a_token_stream
                 #b_token_stream
             }
         });
 
+        let structs = table
+            .columns
+            .iter()
+            .filter_map(|column| column.struct_name())
+            .map(|struct_name| {
+                quote! {
+                    pub struct #struct_name;
+                }
+            });
+
         let table_token_stream = quote! {
             #table_token_stream
             #collection_model_token_stream
             #controller_token_stream
             #many_model_token_stream
+            #( #structs )*
         };
 
         Self {

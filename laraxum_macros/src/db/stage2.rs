@@ -128,9 +128,11 @@ enum ColumnAttrTyElement {
     AutoTime(AutoTimeEvent),
 }
 
+pub use stage1::ColumnAttrTyCompounds;
+
 enum ColumnAttrTyCompound {
     One,
-    Many(Ident),
+    Many(ColumnAttrTyCompounds),
 }
 
 enum ColumnAttrTy {
@@ -147,7 +149,7 @@ impl From<Option<stage1::ColumnAttrTy>> for ColumnAttrTy {
                 Self::Compound(CATC::One)
             }
             Some(S1CAT::Compound(stage1::ColumnAttrTyCompound { many: Some(many) })) => {
-                Self::Compound(CATC::Many(many.0))
+                Self::Compound(CATC::Many(many))
             }
 
             None => Self::Element(CATE::None),
@@ -209,7 +211,7 @@ impl TyElement {
 
 pub enum TyCompoundMultiplicity {
     One { optional: bool, unique: bool },
-    Many(Ident),
+    Many(ColumnAttrTyCompounds),
 }
 impl TyCompoundMultiplicity {
     pub const fn optional(&self) -> bool {
@@ -311,6 +313,8 @@ pub struct Column {
     pub borrow: Option<Option<Box<Type>>>,
     /// index
     pub index: Vec<ColumnAttrIndex>,
+    /// struct name
+    pub struct_name: Option<Ident>,
 
     pub rs_attrs: Vec<Attribute>,
 }
@@ -326,10 +330,11 @@ impl TryFrom<stage1::Column> for Column {
                     ty: attr_ty,
                     response,
                     request,
-                    real_ty,
+                    real_rs_ty,
                     unique,
                     borrow,
                     index,
+                    struct_name,
                     attrs: rs_attrs,
                 },
         } = column;
@@ -337,7 +342,6 @@ impl TryFrom<stage1::Column> for Column {
         let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         // the real type that we actually want to parse, while keeping the type in the field the same
-        let real_rs_ty = real_ty.map(|real_rs_ty| real_rs_ty.0);
         let real_rs_ty = real_rs_ty.as_deref();
         let real_rs_ty = real_rs_ty.unwrap_or(&*rs_ty);
 
@@ -466,8 +470,6 @@ impl TryFrom<stage1::Column> for Column {
             validate,
         };
 
-        let borrow = borrow.map(|borrow| borrow.0);
-
         Ok(Self {
             name,
             rs_name,
@@ -478,21 +480,13 @@ impl TryFrom<stage1::Column> for Column {
             // validate,
             borrow,
             index,
+            struct_name,
             rs_attrs,
         })
     }
 }
 
-pub struct Controller {
-    pub auth: Option<Box<Type>>,
-}
-impl From<stage1::TableAttrController> for Controller {
-    fn from(controller: stage1::TableAttrController) -> Self {
-        Self {
-            auth: controller.auth.map(|auth| auth.0),
-        }
-    }
-}
+pub use stage1::TableAttrController;
 
 pub enum Columns<T0, T1, C> {
     CollectionOnly {
@@ -548,7 +542,7 @@ pub struct Table {
     /// the name for the table struct, for example `Customer`
     pub rs_name: Ident,
     /// the columns in the database
-    pub columns: Columns<Column, Column, Controller>,
+    pub columns: Columns<Column, Column, TableAttrController>,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -600,7 +594,7 @@ impl TryFrom<stage1::Table> for Table {
                 let Some(id) = id else {
                     return Err(syn::Error::new(rs_name.span(), TABLE_MUST_HAVE_ID));
                 };
-                let controller = controller.map(Controller::from);
+                let controller = controller.map(TableAttrController::from);
                 Columns::Model {
                     id,
                     columns,
