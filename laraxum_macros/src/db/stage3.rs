@@ -84,7 +84,7 @@ pub struct ResponseColumnGetterElement<'a> {
     pub name_extern: String,
     pub optional: bool,
     pub rs_name: &'a Ident,
-    pub rs_ty: &'a Type,
+    // pub rs_ty: &'a Type,
 }
 
 pub struct ResponseColumnGetterCompound<'a> {
@@ -94,7 +94,7 @@ pub struct ResponseColumnGetterCompound<'a> {
     pub foreign_table_name_extern: String,
     pub optional: bool,
     pub rs_name: &'a Ident,
-    pub rs_ty: &'a Type,
+    // pub rs_ty: &'a Type,
     pub foreign_table_rs_name: &'a Ident,
     pub columns: Vec<ResponseColumnGetter<'a>>,
 }
@@ -116,12 +116,6 @@ impl ResponseColumnGetterOne<'_> {
             Self::Compound(compound) => compound.rs_name,
         }
     }
-    pub const fn rs_ty(&self) -> &Type {
-        match self {
-            Self::Element(element) => element.rs_ty,
-            Self::Compound(compound) => compound.rs_ty,
-        }
-    }
     pub const fn optional(&self) -> bool {
         match self {
             Self::Element(element) => element.optional,
@@ -132,10 +126,8 @@ impl ResponseColumnGetterOne<'_> {
 
 pub struct ResponseColumnGetterCompounds<'a> {
     pub rs_name: &'a Ident,
-    pub rs_ty: &'a Type,
     pub index_rs_name: &'a Ident,
     pub table_id_name_extern: String,
-    pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
 
@@ -154,12 +146,6 @@ impl ResponseColumnGetterRef<'_> {
         match self {
             Self::One(one) => one.rs_name(),
             Self::Compounds(compounds) => compounds.rs_name,
-        }
-    }
-    pub const fn rs_ty(&self) -> &Type {
-        match self {
-            Self::One(one) => one.rs_ty(),
-            Self::Compounds(compounds) => compounds.rs_ty,
         }
     }
 }
@@ -199,7 +185,6 @@ pub struct RequestColumnSetterOne<'a> {
 pub struct RequestColumnSetterCompounds<'a> {
     pub rs_name: &'a Ident,
     pub index_rs_name: &'a Ident,
-    pub foreign_table_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
 
@@ -425,11 +410,7 @@ impl<'a> Table<'a> {
         ) -> impl Iterator<Item = syn::Result<ResponseColumnGetter<'iter>>> {
             table.columns.iter().map(move |column| {
                 let stage2::Column {
-                    name,
-                    rs_name,
-                    ty,
-                    rs_ty,
-                    ..
+                    name, rs_name, ty, ..
                 } = column;
                 let name = &*name;
                 let (column_name_intern, column_name_extern) =
@@ -441,7 +422,6 @@ impl<'a> Table<'a> {
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
                             rs_name,
-                            rs_ty,
                             optional: ty_element.optional(),
                         };
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
@@ -478,7 +458,6 @@ impl<'a> Table<'a> {
                             foreign_table_name_intern,
                             foreign_table_name_extern,
                             rs_name,
-                            rs_ty,
                             foreign_table_rs_name: &foreign_table.rs_name,
                             optional,
                             columns,
@@ -486,7 +465,7 @@ impl<'a> Table<'a> {
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Compound(compound))
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: ref foreign_table_rs_name,
+                        ty: _,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
                                 model_rs_name: ref many_foreign_table_rs_name,
@@ -501,10 +480,8 @@ impl<'a> Table<'a> {
                         let table_id_name_extern = name_extern((table_name_extern, &table_id.name));
                         ResponseColumnGetter::Compounds(ResponseColumnGetterCompounds {
                             rs_name,
-                            rs_ty,
                             index_rs_name,
                             table_id_name_extern,
-                            foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         })
                     }
@@ -547,7 +524,6 @@ impl<'a> Table<'a> {
                                 name_extern: column_name_extern,
                                 optional: ty_element.optional(),
                                 rs_name,
-                                rs_ty,
                             }),
                             field: ResponseColumnField {
                                 rs_name,
@@ -611,7 +587,6 @@ impl<'a> Table<'a> {
                             foreign_table_name_intern,
                             foreign_table_name_extern,
                             rs_name,
-                            rs_ty,
                             foreign_table_rs_name: &foreign_table.rs_name,
                             optional,
                             columns,
@@ -658,7 +633,7 @@ impl<'a> Table<'a> {
                         })
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: ref foreign_table_rs_name,
+                        ty: _,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
                                 model_rs_name: ref many_foreign_table_rs_name,
@@ -674,16 +649,13 @@ impl<'a> Table<'a> {
                             name_extern((&table_name_extern, &table_id.name));
                         let compounds_getter = ResponseColumnGetterCompounds {
                             rs_name,
-                            rs_ty,
                             index_rs_name,
                             table_id_name_extern,
-                            foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
                         let compounds_setter = RequestColumnSetterCompounds {
                             rs_name,
                             index_rs_name,
-                            foreign_table_rs_name,
                             many_foreign_table_rs_name,
                         };
 

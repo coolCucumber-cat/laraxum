@@ -593,10 +593,8 @@ fn response_getter(
         stage3::ResponseColumnGetterRef::Compounds(compounds) => {
             let stage3::ResponseColumnGetterCompounds {
                 rs_name: _,
-                rs_ty: _,
                 index_rs_name: table_rs_name,
                 table_id_name_extern,
-                foreign_table_rs_name: _,
                 many_foreign_table_rs_name,
             } = compounds;
             let one_id = {
@@ -617,25 +615,6 @@ fn response_getter(
                         )
                     }
                 )?
-                // <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                //     #table_rs_name,
-                // >>::get_many(
-                //     db,
-                //     #one_id,
-                // ).await?
-                // match {
-                //     <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                //         #table_rs_name,
-                //     >>::get_many(
-                //         db,
-                //         #one_id,
-                //     ).await
-                // } {
-                //     ::core::result::Result::Ok(response) => response,
-                //     ::core::result::Result::Err(_) => {
-                //         return ::core::result::Result::Err(::sqlx::Error::RowNotFound);
-                //     }
-                // }
             }
         }
     }
@@ -959,7 +938,6 @@ impl From<stage3::Table<'_>> for Table {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
                         index_rs_name,
-                        foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
@@ -981,7 +959,6 @@ impl From<stage3::Table<'_>> for Table {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
                         index_rs_name,
-                        foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
@@ -1003,7 +980,6 @@ impl From<stage3::Table<'_>> for Table {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name: _,
                         index_rs_name,
-                        foreign_table_rs_name: _,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
