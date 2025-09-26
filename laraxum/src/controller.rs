@@ -14,14 +14,12 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Get the URL environment variable. Defaults to `localhost:80`.
+/// Get the URL environment variable. Defaults to `"localhost:80"`.
 ///
 /// # Panics
-/// - Invalid environment variable
+/// - not unicode
 pub fn url() -> Cow<'static, str> {
-    crate::env_var_opt!("URL")
-        .map(Cow::Owned)
-        .unwrap_or(Cow::Borrowed("localhost:80"))
+    crate::env_var_default!("URL", "localhost:80")
 }
 
 /// Accept and process requests.
@@ -114,7 +112,7 @@ where
 /// - The body contains syntactically valid JSON, but it couldn't be deserialized into the target type.
 /// - Buffering the request body fails.
 ///
-/// ⚠️ Since parsing JSON requires consuming the request body, the `Json` extractor must be
+/// ⚠️ Since parsing JSON requires consuming the request body, the [`Json`] extractor must be
 /// *last* if there are multiple extractors in a handler.
 /// See [`the order of extractors`](axum::extract#the-order-of-extractors)
 ///
@@ -417,7 +415,7 @@ pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> 
     /// Default is 4 hours.
     #[must_use]
     fn exp_duration() -> core::time::Duration {
-        core::time::Duration::from_secs(60 * 4)
+        core::time::Duration::from_secs(60 * 60 * 4)
     }
     /// The encryption and decryption keys to use.
     #[must_use]
@@ -454,7 +452,7 @@ pub struct AuthTokenExp<T>
 where
     T: AuthenticateToken,
 {
-    pub exp: u128,
+    pub exp: usize,
     #[serde(bound = "T: AuthenticateToken")]
     pub token: T,
 }
@@ -469,11 +467,12 @@ where
         let exp = now
             .checked_add(duration)
             .unwrap_or(core::time::Duration::MAX)
-            .as_millis();
+            .as_secs();
+        let exp = usize::try_from(exp).unwrap_or(usize::MAX);
         Self { exp, token }
     }
-    pub const fn new_with_millis(token: T, millis: u128) -> Self {
-        Self { exp: millis, token }
+    pub const fn new_with_secs(token: T, secs: usize) -> Self {
+        Self { exp: secs, token }
     }
     /// Encode the token with the expiration date given by the [AuthenticateToken] trait
     ///

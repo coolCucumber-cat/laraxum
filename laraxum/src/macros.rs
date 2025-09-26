@@ -174,7 +174,11 @@ macro_rules! transparent_enum {
     };
 }
 
-/// Get environment variable, else panic.
+/// Get environment variable.
+///
+/// # Panics
+/// - not present
+/// - not unicode
 #[macro_export]
 macro_rules! env_var {
     ($env_var:expr) => {
@@ -200,7 +204,10 @@ macro_rules! env_var {
         }
     };
 }
-/// Get optional environment variable, else panic.
+/// Get optional environment variable.
+///
+/// # Panics
+/// - not unicode
 #[macro_export]
 macro_rules! env_var_opt {
     ($env_var:expr) => {
@@ -220,6 +227,18 @@ macro_rules! env_var_opt {
                 );
             }
         }
+    };
+}
+/// Get environment variable with default.
+///
+/// # Panics
+/// - not unicode
+#[macro_export]
+macro_rules! env_var_default {
+    ($env_var:expr, $default:expr) => {
+        $crate::env_var_opt!($env_var)
+            .map(::std::borrow::Cow::Owned)
+            .unwrap_or(::std::borrow::Cow::Borrowed($default))
     };
 }
 

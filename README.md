@@ -14,30 +14,29 @@ Or you can just use it as an API and interact with the controller.
 
 ## Model
 
-A model manages the data storage and interacts with the database.
-It implements the collection trait:
+A model manages the data storage and interacts with the database.  
+It implements the `Collection` trait:
 
 - `get_all`
 - `create_one`
 
-and the model trait:
+and the `Model` trait:
 
 - `get_one`
 - `update_one`
 - `delete_one`
 
-### Many Model
+### ManyModel
 
 A manymodel is similar to a model but with two columns.
-The manymodel trait can be implemented for each column.
-The column will be used as an id for multiple values in the other column.
-
+The `ManyModel` trait can be implemented for each column.
+The column will be used as an id for multiple values in the other column.  
 This can be used to create many-to-many relationships.
 
 ## Controller
 
-A controller manages the connection between model and view.
-It implements the controller trait:
+A controller manages the connection between model and view.  
+It implements the `Controller` trait:
 
 - `get_many`
 - `get`
@@ -54,42 +53,48 @@ You can implement the authenticate trait for custom authentication and use it li
 
 ## Auth
 
-Implement the authenticate trait to allow custom authentication that can be used in the controller.
+Implement the `Authenticate` trait to allow custom authentication that can be used in the controller.
 `AuthToken<T>` should be returned from the login endpoint, which will encrypt it.
 To authenticate the request, it will be decrypted.
 
 Implement the authorize trait for custom authorization.
-You must specify a type that is authenticatable
+You must specify a type that is authenticatable.
 
 ### Example
 
 ```rs
+#[derive(serde::Serialize, serde::Deserialize)]
 struct UserAuth {
-    admin: bool,
+    is_admin: bool,
 }
-impl From<bool> for UserAuth {
-    fn from(admin: bool) -> Self {
-        Self { admin }
-    }
-}
-impl From<UserAuth> for bool {
-    fn from(user: UserAuth) -> Self {
-        user.admin
-    }
-}
+/// Implementation agnostic logic for authentication.
+///
+/// Implementing this also implements the `Authorize` trait.
+///
+/// Anything can implement the `Authorize` trait to extend it and add custom authorization logic.
 impl Authenticate for UserAuth {
     type State = AppDb;
+    /// Executes after user is authenticated.
+    ///
+    /// You can add extra authentication logic that applies for all users.
     fn authenticate(&self, state: &Arc<Self::State>) -> Result<(), AuthError> {
         // authenticate the user
         Ok(())
     }
 }
+/// Token specific logic for authenticatiion.
+///
+/// Has sensible defaults which can customised, like the expiration time.
+impl AuthenticateToken for UserAuth {}
 
+/// A struct using the `UserAuth` token for authentication and extending it with authorization logic.
 struct UserAuthAdmin;
 impl Authorize for UserAuthAdmin {
+    /// Use `UserAuth` for authentication.
     type Authenticate = UserAuth;
+    /// Add extra authorization logic.
     fn authorize(authorize: Self::Authenticate) -> Result<Self, AuthError> {
-        if authorize.admin {
+        if authorize.is_admin {
             Ok(UserAuthAdmin)
         } else {
             Err(AuthError::Unauthorized)
@@ -101,10 +106,10 @@ mod AppDb {
     #[db(model(), controller())]
     struct Anyone {}
 
-    #[db(model(), controller(auth(User)))]
+    #[db(model(), controller(auth(UserAuth)))]
     struct UserOnly {}
 
-    #[db(model(), controller(auth(UserAdmin)))]
+    #[db(model(), controller(auth(UserAuthAdmin)))]
     struct AdminOnly {}
 }
 ```
@@ -113,50 +118,258 @@ mod AppDb {
 
 The database is defined using the `db` attribute macro on a module:
 
-- `name`: `Option<String>`, the name of the database
+>`db(`
+>
+>>The name of the database.  
+>>Defaults to the module name.  
+>>
+>>`name =` `<String>` `,`
+>
+>`)`
 
 Each struct in the module is a table. Use the `db` attribute on the struct:
 
-- `name`: `Option<String>`, the name of the table
-- `model`: `Option<struct>`, implement model and use these options
-  - `many`: `Option<bool>`, implement a manymodel instead of model
-- `controller`: `Option<struct>`, implement controller and use these options
-  - `auth`: `Option<Type>`, the type to use for authentication and authorization
+>`db(`
+>
+>>The name of the table in the database.  
+>>Defaults to the struct name.  
+>>
+>>`name =` `<String>` `,`
+>
+>>Implement model.  
+>>
+>>`model(`
+>>
+>>>Implement manymodel instead of model.  
+>>>Use the `struct_name` attribute to change the type used to refer to each column.  
+>>>
+>>>`many,`
+>>
+>>`),`
+>
+>>Implement controller.
+>>
+>>`controller(`
+>>
+>>>The type to use for authentication and authorization.  
+>>>It must implement the `Àuthorize` trait.
+>>>Anything that implements that the `Authenticate` trait also
+>>>automatically implements the `Authorize` trait.  
+>>>
+>>>`auth(` `<Type>` `),`
+>>
+>>`),`
+>>
+>`)`
 
 Each field in the struct is a column. Use the `db` attribute on the field:
 
-- `name`: `Option<String>`, the name of the column
-- `ty`: `Option<enum>`
-    1. `id` primary key
-    2. `foreign`: `struct`, foreign key
-        - `many`: `Option<Ident>`, a many-to-many relationship with the named table
-    3. `on_create` the time this entity was created
-    4. `on_update` the time this entity was last update
-    5. `varchar`: `u16` string type with dynamic length, set max length
-    6. `char`: `u16`, string type with fixed length, set length
-    7. `text` string type for extra large strings
-- `response`: `Option<struct>`
-  - `name`: `Option<String>`, the name of the field in the response when serialized
-  - `skip`: `bool`, skip the field in the response when serialized
-- `request`:
-  - `name`: `Option<String>`, the name of the field in the request when deserialized
-  - `validate`: `Option<[enum]>`
-    1. `min_len`: `Expr`
-    2. `func`: `Expr`
-    3. `matches`: `Pat`
-    4. `n_matches`: `Pat`
-    5. `eq`: `Expr`
-    6. `n_eq`: `Expr`
-    7. `gt`: `Expr`
-    8. `lt`: `Expr`
-    9. `gte`: `Expr`
-    10. `lte`: `Expr`
-- `real_ty`: `Option<Type>`, when using wrapper types, this is the inner type
-- `unique`: `Option<bool>`, this column is unique
-- `index`: `Option<struct>`, create an index that can filter using this column, like `<User as CollectionIndexOne<UserEmail>>`
-  - `name`: `Ident`, the name of the index
-  - `request_ty`: `Option<Type>`, the type used to index
-  - `request_ty_ref`: `bool`, the type used to index is a reference
+>`db(`
+>
+>>The name of the column in the database.  
+>>Defaults to the field name.  
+>>
+>>`name =` `<String>` `,`
+>
+>>Optional type information in addition to the field's type.  
+>>They can change the behavior of the column and only work with specific types.  
+>>Without this, each field will behave as a normal readable/writable column.  
+>>
+>>`ty(`
+>>
+>> 1. >Primary Key.  
+>>    >Set automatically once when the record is created.  
+>>    >Field type must be `u64` (todo: add more possible data types and custom values).  
+>>    >
+>>    >`id`
+>>
+>> 2. >Foreign Key.  
+>>    >Refer to a record in another table.
+>>    >The field type is the struct of the table and can be an `Option<T>` to make it nullable.
+>>    >The request type is the primary key of the table.  
+>>    >By default, this is a many-to-one relation which
+>>    >means many records can refer to one foreign record.
+>>    >If the column is unique, then this is a one-to-one relation which
+>>    >means one record can refer to one foreign record.  
+>>    >Use the `many` attribute to make this a many-to-many relation.  
+>>    >
+>>    >`foreign(`
+>>    >
+>>    >>Refer to many records in another table.  
+>>    >>This a many-to-many relation which means many records can refer to many foreign records.  
+>>    >>The field type is a `Vec<T>` of the struct of the table.
+>>    >>The request type is a `Vec<T>` of the primary keys of the table.  
+>>    >>
+>>    >>`many(`
+>>    >>
+>>    >>>The manymodel that refers to this table and the foreign table.
+>>    >>>
+>>    >>>`model(` `<Ident>` `),`
+>>    >>
+>>    >>>The type used to index the manymodel to get the foreign table.  
+>>    >>>If the field in the manymodel hasn't set the `struct_name` attribute,
+>>    >>>the type is the type of this table. If you leave this attribute empty,
+>>    >>>it will be the type of this table.
+>>    >>>Therefore, if `struct_name` isn't set, don't set this attribute either.  
+>>    >>>
+>>    >>>`index(` `<Ident>` `),`
+>>    >>
+>>    >>`),`
+>>    >
+>>    >`),`
+>>
+>> 3. >The time this record was created.  
+>>    >This column isn't settable and never changes.  
+>>    >The field type must be a time type.  
+>>    >
+>>    >`on_create`
+>>
+>> 4. >The time this record was last updated.  
+>>    >This column isn't settable and changes whenever this record is updated.  
+>>    >The field type must be a time type.  
+>>    >
+>>    >`on_update`
+>>
+>> 5. >A string with a dynamic length.  
+>>    >The field type must be a `String` or an `Option<String>`.
+>>    >The number is the maximum length of the string.
+>>    >If the field type is a string and the `ty` attribute isn't set,
+>>    >it is the same thing as using this attribute with a length of `255`.  
+>>    >
+>>    >`varchar =` `<u16>`
+>>
+>> 6. >A string with a set length.
+>>    >The field type must be a `String` or an `Option<String>`.
+>>    >The number is the length of the string.  
+>>    >
+>>    >`char =` `<u16>`
+>>
+>> 7. >A string with a dynamic length for very large strings.
+>>    >The field type must be a `String` or an `Option<String>`.  
+>>    >
+>>    >`text`
+>>
+>>`),`
+>
+>>Attributes for the field in a response to get the record.
+>>
+>>`response(`
+>>
+>>>The name of the field when serializing the response.  
+>>>Defaults to the field name.  
+>>>
+>>>`name =` `<String>` `,`
+>>
+>>>Skip the field when serializing the response.  
+>>>
+>>>`skip =` `<bool>` `,`
+>>
+>>`),`
+>
+>>Attributes for the field in a request to create or update the record.
+>>
+>>`request(`
+>>
+>>>The name of the field when deserializing the request.  
+>>>
+>>>`name =` `<String>` `,`
+>>
+>>>Validation rules for the request.  
+>>>
+>>>`validate(`
+>>>
+>>>>Must be minimum length.
+>>>>
+>>>>`min_len(` `<Expr>` `),`
+>>>
+>>>>Custom function to validate.  
+>>>>The type of the function is `fn(&T) -> Result<(), &'static str>`.
+>>>>Return `Ok(())` if successful or `Err(&'static str)` with an error message if failed.  
+>>>>
+>>>>`func(` `<Expr>` `),`
+>>>
+>>>>Must match pattern.  
+>>>>
+>>>>`matches(` `<Pat>` `),`
+>>>
+>>>>Must not match pattern.  
+>>>>
+>>>>`n_matches(` `<Pat>` `),`
+>>>
+>>>>Must equal.  
+>>>>
+>>>>`eq(` `<Expr>` `),`
+>>>
+>>>>Must not equal.  
+>>>>
+>>>>`n_eq(` `<Expr>` `),`
+>>>
+>>>>Must be greater than.  
+>>>>
+>>>>`gt(` `<Expr>` `),`
+>>>
+>>>>Must be less than.  
+>>>>
+>>>>`lt(` `<Expr>` `),`
+>>>
+>>>>Must be greater or equal.  
+>>>>
+>>>>`gte(` `<Expr>` `),`
+>>>
+>>>>Must be less or equal.  
+>>>>
+>>>>`lte(` `<Expr>` `),`
+>>>
+>>>`),`
+>>
+>>`),`
+>
+>>When using a wrapper type, set this attribute to the inner type and
+>>set the field type to the wrapper type.  
+>>
+>>`real_ty(` `<Type>` `),`
+>
+>>This column is unique.  
+>>This affects how indexing works.
+>>If you filter by this column, it will return zero or one records.  
+>>
+>>`unique =` `<bool>` `,`
+>
+>>Create an index that can query this column.  
+>>This attribute can be set multiple times to create multiple indexes.  
+>>
+>>`index(`
+>>
+>>>The name.  
+>>>
+>>>`name =` `<Ident>` `,`
+>>
+>>>This index can filter by this column.  
+>>>
+>>>`filter =` `<bool>` `,`
+>>
+>>>This index can sort by this column.  
+>>>
+>>>`sort =` `<bool>` `,`
+>>
+>>`),`
+>
+>>This column should be borrowed instead of owned when possible, for example when indexing.  
+>>Optionally set a different type to use when borrowing.  
+>>When the column is a string, it is reccommended to set this attribute as `borrow(str)`,
+>>so that you don't need to allocate a `String` on the heap just to index.  
+>>
+>>`borrow`  `|`  `borrow(` `<Type>` `)` `,`
+>
+>>Create an empty struct to represent this field.
+>>This affects how the manymodel works.
+>>If this is set, the struct will be used instead of the field type.
+>>See the `ty(foreign(many(index())))` attribute to see how this affects the manymodel when
+>>a table references a manymodel.  
+>>
+>>`struct_name(` `<Ident>` `),`
+>
+>`)`
 
 If you don't use the controller option, the controller won't be implemented.
 You can implement it yourself or not at all.
@@ -206,13 +419,13 @@ pub mod AppDb {
     pub struct User {
         #[db(ty(id))]
         id: u64,
-        #[db(ty(foreign(many(GroupUser))))]
+        #[db(ty(foreign(many(model(GroupUser)))))]
         groups: Vec<Group>, // many to many relationship
         #[db(ty(foreign()), request(name = "contact_id"), name = "contact_id")]
         contact: Contact,
         #[db(ty(varchar = 255))]
         name: String,
-        #[db(ty(varchar = 255), unique, index(name(UserEmail), request_ty(str), request_ty_ref = true))] // <User as CollectionIndexOne<UserEmail>>
+        #[db(ty(varchar = 255), unique, index(name(UserEmail)), borrow(str))] // <User as CollectionIndexOne<UserEmail>>
         email: String,
         #[db(ty(varchar = 255), response(skip), request(validate(min_len(12))))]
         password: String,

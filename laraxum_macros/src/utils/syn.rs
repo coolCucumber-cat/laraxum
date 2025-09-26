@@ -11,6 +11,11 @@ use syn::{
 
 /// Allow [`syn::Pat`] to be parsed by [`syn::parse::Parse`].
 pub struct ParsePat(pub Pat);
+impl ParsePat {
+    pub fn into_inner(self) -> Pat {
+        self.0
+    }
+}
 impl Parse for ParsePat {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Pat::parse_multi(input).map(Self)
