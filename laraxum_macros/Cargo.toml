@@ -1,6 +1,6 @@
 [package]
 name = "laraxum_macros"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/coolCucumber-cat/laraxum.git"
@@ -17,7 +17,7 @@ proc-macro = true
 proc-macro2 = "1.0.101"
 syn = { version = "2.0.106", features = ["full", "extra-traits"] }
 darling = "0.21.3"
-quote = "1.0.40"
+quote = "1.0.41"
 fmt2 = "0.3.4"
 
 [features]
