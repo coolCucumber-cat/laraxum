@@ -780,14 +780,6 @@ struct Table {
 impl From<stage3::Table<'_>> for Table {
     #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
-        // let response_ty = std::cell::LazyCell::new(|| quote! { Self::Response });
-        // let response_ty_one = std::cell::LazyCell::new(|| quote! { Self::OneResponse });
-        // let response_ty_many = std::cell::LazyCell::new(|| quote! { Self::ManyResponse });
-        // let response_ty = &response_ty;
-        // let response_ty_one = &response_ty_one;
-        // let response_ty_many = &response_ty_many;
-        let vis_pub = std::cell::LazyCell::new(|| syn::token::Pub::default().to_token_stream());
-
         let response_column_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
                 rs_name,
@@ -1134,7 +1126,6 @@ impl From<stage3::Table<'_>> for Table {
                 })
                 .flat_map(|column| {
                     let rs_ty_owned = column.response.field.rs_ty;
-                    let rs_ty_owned_token_stream = rs_ty_owned.to_token_stream();
                     let is_borrowed = column.borrow.is_some();
                     let lifetime = is_borrowed.then(|| quote! { 'b });
 
@@ -1153,7 +1144,6 @@ impl From<stage3::Table<'_>> for Table {
                     let table_name_intern = &*table.name_intern;
                     let table_name_extern = &*table.name_extern;
                     let column_response_name = column.response.field.rs_name.to_string();
-                    let vis_pub = &vis_pub;
                     column.index.iter().map(move |index| {
                         let is_one = is_unique && index.filter.is_eq();
                         let index_rs_name = &index.rs_name;
@@ -1161,32 +1151,26 @@ impl From<stage3::Table<'_>> for Table {
                         let index_has_filter = index.filter.has_parameter();
                         let index_has_sort = index.sort;
 
-                        let make_filter_field = |rs_ty, is_vis_pub: bool| {
-                            let rename = fmt2::fmt! { { str } =>
-                                "filter." {column_response_name} "." {index.filter}
-                            };
-                            let vis_pub = is_vis_pub.then(|| &**vis_pub);
-                            quote! {
-                                #[serde(rename = #rename)]
-                                #vis_pub filter: #rs_ty,
-                            }
+                        let filter_field_rename = fmt2::fmt! { { str } =>
+                            "filter." {column_response_name} "." {index.filter}
                         };
-                        let make_sort_field = |is_vis_pub: bool| {
-                            let rename = fmt2::fmt! { { str } => "sort." {column_response_name} };
-                            let vis_pub = is_vis_pub.then(|| &**vis_pub);
-                            quote! {
-                                #[serde(rename = #rename)]
-                                #vis_pub sort: ::laraxum::model::Sort,
-                            }
-                        };
-                        let filter_field =
-                            index_has_filter.then(|| make_filter_field(&rs_ty, true));
-                        let filter_field_variant = index_has_filter
-                            .then(|| make_filter_field(&rs_ty_owned_token_stream, false));
-                        let sort_field = index_has_sort.then(|| make_sort_field(true));
-                        let sort_field_variant = index_has_sort.then(|| make_sort_field(false));
+                        let sort_field_rename =
+                            fmt2::fmt! { { str } => "sort." {column_response_name} };
 
-                        let index_struct = quote! {
+                        let filter_field = index_has_filter.then(|| {
+                            quote! {
+                                #[serde(rename = #filter_field_rename)]
+                                pub filter: #rs_ty,
+                            }
+                        });
+                        let sort_field = index_has_sort.then(|| {
+                            quote! {
+                                #[serde(rename = #sort_field_rename)]
+                                pub sort: ::laraxum::model::Sort,
+                            }
+                        });
+
+                        let index_struct_token_stream = quote! {
                             #[derive(::serde::Deserialize)]
                             pub struct #index_rs_name<#lifetime> {
                                 #filter_field
@@ -1196,65 +1180,6 @@ impl From<stage3::Table<'_>> for Table {
                         let filter_parameter = index_has_filter.then(|| {
                             quote! { request.filter }
                         });
-
-                        let index_variant_token_stream = quote! {
-                            #index_rs_name {
-                                #filter_field_variant
-                                #sort_field_variant
-                            }
-                        };
-                        let filter_get = index_has_filter.then(|| {
-                            if is_borrowed {
-                                quote! { ref filter, }
-                            } else {
-                                quote! { filter, }
-                            }
-                        });
-                        let sort_get = index_has_sort.then(|| {
-                            quote! { sort, }
-                        });
-
-                        let filter_set = index_has_filter.then(|| {
-                            quote! { filter, }
-                        });
-                        let sort_set = index_has_sort.then(|| {
-                            quote! { sort, }
-                        });
-
-                        let index_get = quote! {
-                            __laraxum__TableIndex__::#index_rs_name {
-                                #filter_get
-                                #sort_get
-                            }
-                        };
-                        let index_set = quote! {
-                            #index_rs_name {
-                                #filter_set
-                                #sort_set
-                            }
-                        };
-
-                        let index_getter_token_stream = if is_one {
-                            quote! {
-                                #index_get => {
-                                    <#table_rs_name as
-                                        ::laraxum::CollectionIndexOne<
-                                            #index_rs_name<#auto_lifetime>
-                                        >
-                                    >::get_index_one_vec(db, #index_set).await
-                                }
-                            }
-                        } else {
-                            quote! {
-                                #index_get => {
-                                    <#table_rs_name as
-                                        ::laraxum::CollectionIndexMany<
-                                            #index_rs_name<#auto_lifetime>
-                                        >
-                                    >::get_index_many(db, #index_set).await
-                                }
-                            }
-                        };
 
                         let response = if index_has_sort {
                             let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
@@ -1297,7 +1222,8 @@ impl From<stage3::Table<'_>> for Table {
                             };
                             transform_response(&response, response_getter, is_one)
                         };
-                        let index_token_stream = if is_one {
+
+                        let index_impl_token_stream = if is_one {
                             quote! {
                                 impl
                                     ::laraxum::CollectionIndexOne<#index_rs_name<#auto_lifetime>>
@@ -1340,30 +1266,118 @@ impl From<stage3::Table<'_>> for Table {
                                 }
                             }
                         };
-                        let index_token_stream = quote! {
-                            #index_struct
-                            #index_token_stream
+                        let index_struct_token_stream = quote! {
+                            #index_struct_token_stream
+                            #index_impl_token_stream
                         };
 
-                        let field_count = u8::from(index_has_filter) + u8::from(index_has_sort);
+                        // only include variant in enum if:
+                        // - there is a controller index query
+                        // - this variant is in the controller query index
+                        let has_index_enum = index.controller && table.index_rs_name.is_some();
+                        let index_enum = has_index_enum.then(|| {
+                            let filter_field_variant = if index_has_filter {
+                                quote! {
+                                    #[serde(rename = #filter_field_rename)]
+                                    filter: #rs_ty_owned,
+                                }
+                            } else {
+                                quote! {
+                                    #[serde(rename = #filter_field_rename)]
+                                    #[serde(default)]
+                                    filter: (),
+                                }
+                            };
+                            let sort_field_variant = if index_has_sort {
+                                quote! {
+                                    #[serde(rename = #sort_field_rename)]
+                                    sort: ::laraxum::model::Sort,
+                                }
+                            } else {
+                                quote! {
+                                    #[serde(rename = #sort_field_rename)]
+                                    #[serde(default)]
+                                    sort: (),
+                                }
+                            };
 
-                        (
-                            index_token_stream,
+                            let index_variant_def_token_stream = quote! {
+                                #index_rs_name {
+                                    #filter_field_variant
+                                    #sort_field_variant
+                                }
+                            };
+                            let filter_get = index_has_filter.then(|| {
+                                if is_borrowed {
+                                    quote! { ref filter, }
+                                } else {
+                                    quote! { filter, }
+                                }
+                            });
+                            let sort_get = index_has_sort.then(|| {
+                                quote! { sort, }
+                            });
+
+                            let filter_set = index_has_filter.then(|| {
+                                quote! { filter, }
+                            });
+                            let sort_set = index_has_sort.then(|| {
+                                quote! { sort, }
+                            });
+
+                            let index_get = quote! {
+                                __laraxum__TableIndex__::#index_rs_name {
+                                    #filter_get
+                                    #sort_get
+                                    ..
+                                }
+                            };
+                            let index_set = quote! {
+                                #index_rs_name {
+                                    #filter_set
+                                    #sort_set
+                                }
+                            };
+
+                            let index_variant_getter_token_stream = if is_one {
+                                quote! {
+                                    #index_get => {
+                                        <#table_rs_name as
+                                            ::laraxum::CollectionIndexOne<
+                                                #index_rs_name<#auto_lifetime>
+                                            >
+                                        >::get_index_one_vec(db, #index_set).await
+                                    }
+                                }
+                            } else {
+                                quote! {
+                                    #index_get => {
+                                        <#table_rs_name as
+                                            ::laraxum::CollectionIndexMany<
+                                                #index_rs_name<#auto_lifetime>
+                                            >
+                                        >::get_index_many(db, #index_set).await
+                                    }
+                                }
+                            };
                             (
-                                field_count,
-                                index_variant_token_stream,
-                                index_getter_token_stream,
-                            ),
-                        )
+                                index_variant_def_token_stream,
+                                index_variant_getter_token_stream,
+                            )
+                        });
+
+                        (index_struct_token_stream, index_enum)
                     })
                 });
 
             let token_stream = if let Some(table_index_rs_name) = table.index_rs_name {
-                let mut indexes = indexes.collect::<Vec<_>>();
-                indexes.sort_by_key(|(_, (field_count, _, _))| *field_count);
+                let indexes = indexes.collect::<Vec<_>>();
                 let index_token_streams = indexes.iter().map(|(i, _)| i);
-                let index_variant_token_streams = indexes.iter().rev().map(|(_, (_, i, _))| i);
-                let index_getter_token_streams = indexes.iter().map(|(_, (_, _, i))| i);
+                let index_variants = indexes
+                    .iter()
+                    .filter_map(|(_, index_variant)| index_variant.as_ref());
+                let index_variant_def_token_streams = index_variants.clone().map(|(i, _)| i);
+                let index_variant_getter_token_streams = index_variants.map(|(_, i)| i);
 
                 quote! {
                     #token_stream
@@ -1372,7 +1386,7 @@ impl From<stage3::Table<'_>> for Table {
                     #[derive(::serde::Deserialize)]
                     #[serde(untagged)]
                     pub enum #table_index_rs_name {
-                        #( #index_variant_token_streams, )*
+                        #( #index_variant_def_token_streams, )*
                         #table_index_rs_name {},
                     }
 
@@ -1390,7 +1404,7 @@ impl From<stage3::Table<'_>> for Table {
                         {
                             use #table_index_rs_name as __laraxum__TableIndex__;
                             match request {
-                                #( #index_getter_token_streams, )*
+                                #( #index_variant_getter_token_streams, )*
                                 __laraxum__TableIndex__::#table_index_rs_name {} => {
                                     <#table_rs_name as ::laraxum::Collection>::get_all(db).await
                                 }

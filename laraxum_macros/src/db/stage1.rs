@@ -245,6 +245,8 @@ pub struct ColumnAttrIndex {
     pub filter: ColumnAttrIndexFilter,
     #[darling(default)]
     pub sort: bool,
+    #[darling(default)]
+    pub controller: bool,
 }
 
 #[derive(darling::FromAttributes, Default)]
