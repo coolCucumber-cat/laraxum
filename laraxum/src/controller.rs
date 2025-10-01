@@ -157,45 +157,6 @@ where
         } else {
             Err(DeserializeRequestError::ContentType)
         }
-
-        // let content_type = req.extract_parts::<TypedHeader<ContentType>>().await;
-        // let mime = content_type.map(|TypedHeader(content_type)| mime::Mime::from(content_type));
-        //
-        // match mime {
-        //     Ok(mime) if json_mime(mime) => {
-        //         let bytes = bytes::Bytes::from_request(req, state)
-        //             .await
-        //             .map_err(DeserializeRequestError::Bytes)?;
-        //         Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
-        //     }
-        //     _ => Err(DeserializeRequestError::ContentType),
-        // }
-        // if content_type.is_ok_and(|TypedHeader(content_type)| json_mime(content_type.into())) {
-        //     let bytes = bytes::Bytes::from_request(req, state)
-        //         .await
-        //         .map_err(DeserializeRequestError::Bytes)?;
-        //     Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
-        // } else {
-        //     Err(DeserializeRequestError::ContentType)
-        // }
-        // match req.extract_parts::<TypedHeader<ContentType>>().await {
-        //     Ok(TypedHeader(content_type)) => {
-        //         let bytes = bytes::Bytes::from_request(req, state)
-        //             .await
-        //             .map_err(DeserializeRequestError::Bytes)?;
-        //         Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
-        //     }
-        //     _ => Err(DeserializeRequestError::ContentType),
-        // }
-        // match req.headers().get(axum::http::header::CONTENT_TYPE) {
-        //     Some(content_type_header) if json_content_type(content_type_header) => {
-        //         let bytes = bytes::Bytes::from_request(req, state)
-        //             .await
-        //             .map_err(DeserializeRequestError::Bytes)?;
-        //         Self::from_bytes(&bytes).map_err(DeserializeRequestError::Serde)
-        //     }
-        //     _ => Err(DeserializeRequestError::ContentType),
-        // }
     }
 }
 impl<T, State> OptionalFromRequest<State> for Json<T>
@@ -239,71 +200,11 @@ where
     }
 }
 
-// impl<T, E> Json<T>
-// where
-//     T: DeserializeRequest<UnprocessableEntityError = E>,
-//     // T: serde::de::DeserializeOwned,
-// {
-//     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeRequestError<E, serde_json::Error>> {
-//         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-//         T::deserialize_request(&mut deserializer).map(Json)
-//
-//         // fn map_err(err: serde_json::Error) -> DeserializeRequestError<E> {
-//         //     match err.classify() {
-//         //         serde_json::error::Category::Data => DeserializeRequestError::Data(err),
-//         //         serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
-//         //             DeserializeRequestError::Syntax(err)
-//         //         }
-//         //         serde_json::error::Category::Io => {
-//         //             #[cfg(debug_assertions)]
-//         //             {
-//         //                 // we don't use `serde_json::from_reader` and instead always buffer
-//         //                 // bodies first, so we shouldn't encounter any IO errors
-//         //                 unreachable!()
-//         //             }
-//         //             #[cfg(not(debug_assertions))]
-//         //             {
-//         //                 DeserializeRequestError::Syntax(err)
-//         //             }
-//         //         }
-//         //     }
-//         // }
-//         // let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-//         // T::deserialize(&mut deserializer).map(Json).map_err(map_err)
-//     }
-// }
-// impl<T, S, UnprocessableEntityError> FromRequest<S> for Json<T>
-// where
-//     T: DeserializeRequest<UnprocessableEntityError = UnprocessableEntityError>,
-//     S: Send + Sync,
-//     UnprocessableEntityError: Serialize,
-// {
-//     type Rejection = DeserializeRequestError<UnprocessableEntityError, serde_json::Error>;
-//     async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-//         match req.headers().get(axum::http::header::CONTENT_TYPE) {
-//             Some(content_type_header) if json_content_type(content_type_header) => {
-//                 let bytes = bytes::Bytes::from_request(req, state).await?;
-//                 Self::from_bytes(&bytes)
-//             }
-//             _ => Err(DeserializeRequestError::ContentType),
-//         }
-//     }
-// }
-
 /// Is the mime json.
 fn json_mime(mime: &mime::Mime) -> bool {
     mime.type_() == "application"
         && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"))
 }
-// pub fn content_type(content_type_header: &axum::http::HeaderValue) -> Option<mime::Mime> {
-//     let content_type = content_type_header.to_str().ok()?;
-//     content_type.parse::<mime::Mime>().ok()
-// }
-// pub fn json_content_type(content_type_header: &axum::http::HeaderValue) -> bool {
-//     content_type(content_type_header)
-//         .as_ref()
-//         .is_some_and(json_mime)
-// }
 
 /// Error when deserializing request.
 #[non_exhaustive]
@@ -325,48 +226,6 @@ where
         }
     }
 }
-
-// #[non_exhaustive]
-// #[derive(Debug)]
-// pub enum DeserializeRequestError<UnprocessableEntity, Serde> {
-//     UnprocessableEntity(UnprocessableEntity),
-//     Serde(Serde),
-//     ContentType,
-//     Bytes(axum::extract::rejection::BytesRejection),
-// }
-// impl<UnprocessableEntity, Serde> From<axum::extract::rejection::BytesRejection>
-//     for DeserializeRequestError<UnprocessableEntity, Serde>
-// {
-//     fn from(error: axum::extract::rejection::BytesRejection) -> Self {
-//         Self::Bytes(error)
-//     }
-// }
-// impl<UnprocessableEntity, Serde> IntoResponse
-//     for DeserializeRequestError<UnprocessableEntity, Serde>
-// where
-//     UnprocessableEntity: Serialize,
-//     Serde: ToString,
-// {
-//     fn into_response(self) -> Response {
-//         match self {
-//             Self::UnprocessableEntity(unprocessable_entity) => (
-//                 StatusCode::UNPROCESSABLE_ENTITY,
-//                 axum::Json(unprocessable_entity),
-//             )
-//                 .into_response(),
-//             Self::Serde(serde) => (StatusCode::BAD_REQUEST, serde.to_string()).into_response(),
-//             // Self::Data(data) => {
-//             //     (StatusCode::UNPROCESSABLE_ENTITY, data.to_string()).into_response()
-//             // }
-//             // Self::Syntax(syntax) => (StatusCode::BAD_REQUEST, syntax.to_string()).into_response(),
-//             // Self::Data(error) | Self::Syntax(error) => {
-//             //     (StatusCode::BAD_REQUEST, error.to_string()).into_response()
-//             // }
-//             Self::ContentType => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
-//             Self::Bytes(bytes) => bytes.into_response(),
-//         }
-//     }
-// }
 
 /// Authenticate the user.
 ///
@@ -447,7 +306,7 @@ pub trait AuthenticateToken: Authenticate + Serialize + for<'a> Deserialize<'a> 
 /// For internal logic only. See [`AuthToken<T>`].
 ///
 /// [`jsonwebtoken`] uses the `exp` field to verify the token is not expired.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AuthTokenExp<T>
 where
     T: AuthenticateToken,
@@ -474,6 +333,11 @@ where
     pub const fn new_with_secs(token: T, secs: usize) -> Self {
         Self { exp: secs, token }
     }
+}
+impl<T> AuthTokenExp<T>
+where
+    T: AuthenticateToken + Clone,
+{
     /// Encode the token with the expiration date given by the [AuthenticateToken] trait
     ///
     /// # Errors
@@ -525,7 +389,7 @@ where
 }
 impl<T> AuthToken<T>
 where
-    T: AuthenticateToken,
+    T: AuthenticateToken + Clone,
 {
     /// Encode the token with the expiration date given by the [Authenticate] trait
     ///
@@ -551,7 +415,7 @@ where
 impl<T, U, State> FromRequestParts<Arc<State>> for AuthToken<T>
 where
     T: Authorize<Authenticate = U>,
-    U: Authenticate<State = State> + AuthenticateToken,
+    U: Authenticate<State = State> + AuthenticateToken + Clone,
     State: Send + Sync,
 {
     type Rejection = AuthError;
