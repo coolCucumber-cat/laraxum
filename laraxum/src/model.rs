@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 use crate::{Error, ModelError};
 
 /// The type used for for an id.
@@ -138,10 +140,22 @@ pub trait CollectionIndexOne<Index>: Collection {
             Err(err) => Err(err),
         }
     }
+    async fn get_index_one_vec<'a>(
+        db: &Self::Db,
+        one: Self::OneRequest<'a>,
+    ) -> Result<Vec<Self::OneResponse>, Error> {
+        let response = Self::get_index_one_optional(db, one).await?;
+        let response = response.into_iter().collect();
+        Ok(response)
+    }
 }
 
+#[derive(Deserialize, Clone, Copy, Default)]
 pub enum Sort {
+    #[default]
+    #[serde(rename = "asc")]
     Ascending,
+    #[serde(rename = "desc")]
     Descending,
 }
 

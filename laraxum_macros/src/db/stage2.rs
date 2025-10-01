@@ -294,6 +294,8 @@ pub struct ColumnAttrRequest {
 
 pub use stage1::ColumnAttrIndex;
 
+pub use stage1::ColumnAttrIndexFilter;
+
 pub struct Column {
     /// the name of the column in the database
     pub name: String,
@@ -444,7 +446,7 @@ impl TryFrom<stage1::Column> for Column {
             }
         };
 
-        let validate = request.validate.0.into_iter().map(|validate_rule| {
+        let validate = request.validate.into_iter().map(|validate_rule| {
             use stage1::ValidateRule as S1VR;
             match validate_rule {
                 S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.0),
@@ -543,6 +545,7 @@ pub struct Table {
     pub rs_name: Ident,
     /// the columns in the database
     pub columns: Columns<Column, Column, TableAttrController>,
+    pub index_rs_name: Option<Ident>,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -559,6 +562,7 @@ impl TryFrom<stage1::Table> for Table {
                     model,
                     controller,
                     name,
+                    index_name: index_rs_name,
                     attrs: rs_attrs,
                 },
             rs_vis,
@@ -642,6 +646,7 @@ impl TryFrom<stage1::Table> for Table {
             name,
             rs_name,
             columns,
+            index_rs_name,
             rs_vis,
             rs_attrs,
         })

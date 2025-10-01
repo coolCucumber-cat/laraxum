@@ -183,7 +183,6 @@ pub struct ColumnAttrResponse {
     pub skip: bool,
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta)]
 #[darling(rename_all = "snake_case")]
 pub enum ValidateRule {
@@ -199,25 +198,55 @@ pub enum ValidateRule {
     Lte(crate::utils::syn::TokenStreamAttr<Expr>),
 }
 
-// use `EnumMetaListAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
-    pub validate: crate::utils::syn::EnumMetaListAttr<ValidateRule>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamEnumAttrVec::transform")]
+    pub validate: Vec<ValidateRule>,
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`.
+#[derive(darling::FromMeta, Clone, Copy)]
+#[darling(rename_all = "snake_case")]
+pub enum ColumnAttrIndexFilter {
+    None,
+    Eq,
+    Like,
+}
+impl fmt2::write_to::FmtAdvanced for ColumnAttrIndexFilter {
+    type Target = str;
+    fn fmt_advanced(&self) -> &Self::Target {
+        match self {
+            Self::None => "none",
+            Self::Eq => "eq",
+            Self::Like => "like",
+        }
+    }
+}
+impl ColumnAttrIndexFilter {
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+    pub fn is_eq(&self) -> bool {
+        matches!(self, Self::Eq)
+    }
+    pub fn has_parameter(&self) -> bool {
+        matches!(self, Self::Eq | Self::Like)
+    }
+}
+
 #[derive(darling::FromMeta)]
 pub struct ColumnAttrIndex {
-    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform")]
-    pub name: Ident,
-    pub filter: bool,
+    #[darling(
+        rename = "name",
+        and_then = "crate::utils::syn::TokenStreamAttr::transform"
+    )]
+    pub rs_name: Ident,
+    pub filter: ColumnAttrIndexFilter,
     #[darling(default)]
     pub sort: bool,
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromAttributes, Default)]
 #[darling(attributes(db), forward_attrs(doc, allow), default)]
 pub struct ColumnAttr {
@@ -284,7 +313,6 @@ pub struct TableAttrModel {
     pub many: bool,
 }
 
-// use `TokenStreamAttr` because it can be parsed by `darling`.
 #[derive(darling::FromMeta)]
 pub struct TableAttrController {
     #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
@@ -298,6 +326,8 @@ pub struct TableAttr {
     pub model: Option<TableAttrModel>,
     pub controller: Option<TableAttrController>,
     pub name: Option<String>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
+    pub index_name: Option<Ident>,
 
     pub attrs: Vec<Attribute>,
     // TODO: this was removed for simplicity, add it back

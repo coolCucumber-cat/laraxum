@@ -290,9 +290,9 @@ fn get(
         &[ResponseColumnGetterElement],
         &[&stage3::ResponseColumnGetterCompound],
     ),
-    filter_column_name_intern: Option<&str>,
-    sort_column_name_intern: Option<(Sort, &str)>,
-    one: bool,
+    index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
+    index_sort: Option<(Sort, &str)>,
+    is_one: bool,
 ) -> String {
     let mut get = fmt2::fmt! { { str } =>
         "SELECT "
@@ -307,11 +307,19 @@ fn get(
             {compound.name_intern} "=" {compound.foreign_table_id_name_intern}
         )
     };
-    if let Some(filter_column_name_intern) = filter_column_name_intern {
-        fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "=?" };
+    if let Some((index_filter, filter_column_name_intern)) = index_filter {
+        match index_filter {
+            stage3::ColumnAttrIndexFilter::None => {}
+            stage3::ColumnAttrIndexFilter::Eq => {
+                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "=?" };
+            }
+            stage3::ColumnAttrIndexFilter::Like => {
+                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} " LIKE CONCAT('%', ?, '%')" };
+            }
+        }
     }
-    if let Some((sort, sort_column_name_intern)) = sort_column_name_intern {
-        match sort {
+    if let Some((index_sort, sort_column_name_intern)) = index_sort {
+        match index_sort {
             Sort::Ascending => {
                 fmt2::fmt! { (get) => " ORDER BY " {sort_column_name_intern} " ASC" };
             }
@@ -320,7 +328,7 @@ fn get(
             }
         }
     }
-    if one {
+    if is_one {
         fmt2::fmt! { (get) => " LIMIT 1" };
     }
     get
@@ -342,25 +350,6 @@ fn get_all(
         false,
     )
 }
-fn get_filter(
-    table_name_intern: &str,
-    table_name_extern: &str,
-    response_getter_columns: (
-        &[ResponseColumnGetterElement],
-        &[&stage3::ResponseColumnGetterCompound],
-    ),
-    filter_column_name_intern: &str,
-    one: bool,
-) -> String {
-    get(
-        table_name_intern,
-        table_name_extern,
-        response_getter_columns,
-        Some(filter_column_name_intern),
-        None,
-        one,
-    )
-}
 fn get_sort_asc_desc(
     table_name_intern: &str,
     table_name_extern: &str,
@@ -368,26 +357,26 @@ fn get_sort_asc_desc(
         &[ResponseColumnGetterElement],
         &[&stage3::ResponseColumnGetterCompound],
     ),
-    filter_column_name_intern: Option<&str>,
+    index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     sort_column_name_intern: &str,
-    one: bool,
+    is_one: bool,
 ) -> (String, String) {
     (
         get(
             table_name_intern,
             table_name_extern,
             response_getter_columns,
-            filter_column_name_intern,
+            index_filter,
             Some((Sort::Ascending, sort_column_name_intern)),
-            one,
+            is_one,
         ),
         get(
             table_name_intern,
             table_name_extern,
             response_getter_columns,
-            filter_column_name_intern,
+            index_filter,
             Some((Sort::Descending, sort_column_name_intern)),
-            one,
+            is_one,
         ),
     )
 }
@@ -632,15 +621,13 @@ fn response_getter_fn(getter: &proc_macro2::TokenStream) -> proc_macro2::TokenSt
 fn transform_response_one(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
-    pool: &proc_macro2::TokenStream,
-    response_ty: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {{
         let response = #response;
-        let response = response.fetch(#pool);
+        let response = response.fetch(&db.pool);
         let mut response = ::futures::StreamExt::then(response, #response_getter);
         let mut response = ::core::pin::pin!(response);
-        let response: ::core::option::Option<#response_ty> =
+        let response: ::core::option::Option<_> =
             ::futures::TryStreamExt::try_next(&mut response).await?;
         ::core::option::Option::ok_or(response, ::laraxum::Error::NotFound)
     }}
@@ -648,14 +635,12 @@ fn transform_response_one(
 fn transform_response_many(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
-    pool: &proc_macro2::TokenStream,
-    response_ty: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     quote! {{
         let response = #response;
-        let response = response.fetch(#pool);
+        let response = response.fetch(&db.pool);
         let response = ::futures::StreamExt::then(response, #response_getter);
-        let response: ::std::vec::Vec<#response_ty> =
+        let response: ::std::vec::Vec<_> =
             ::futures::TryStreamExt::try_collect(response).await?;
         ::core::result::Result::Ok(response)
     }}
@@ -663,15 +648,12 @@ fn transform_response_many(
 fn transform_response(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
-    pool: &proc_macro2::TokenStream,
-    response_ty_one: &proc_macro2::TokenStream,
-    response_ty_many: &proc_macro2::TokenStream,
     one: bool,
 ) -> proc_macro2::TokenStream {
     if one {
-        transform_response_one(response, response_getter, pool, response_ty_one)
+        transform_response_one(response, response_getter)
     } else {
-        transform_response_many(response, response_getter, pool, response_ty_many)
+        transform_response_many(response, response_getter)
     }
 }
 
@@ -798,12 +780,14 @@ struct Table {
 impl From<stage3::Table<'_>> for Table {
     #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
-        let response_ty = std::cell::LazyCell::new(|| quote! { Self::Response });
-        let response_ty_one = std::cell::LazyCell::new(|| quote! { Self::OneResponse });
-        let response_ty_many = std::cell::LazyCell::new(|| quote! { Self::ManyResponse });
-        let response_ty = &response_ty;
-        let response_ty_one = &response_ty_one;
-        let response_ty_many = &response_ty_many;
+        // let response_ty = std::cell::LazyCell::new(|| quote! { Self::Response });
+        // let response_ty_one = std::cell::LazyCell::new(|| quote! { Self::OneResponse });
+        // let response_ty_many = std::cell::LazyCell::new(|| quote! { Self::ManyResponse });
+        // let response_ty = &response_ty;
+        // let response_ty_one = &response_ty_one;
+        // let response_ty_many = &response_ty_many;
+        let vis_pub = std::cell::LazyCell::new(|| syn::token::Pub::default().to_token_stream());
+
         let response_column_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
                 rs_name,
@@ -1005,8 +989,6 @@ impl From<stage3::Table<'_>> for Table {
                     ::sqlx::query!(#get_all)
                 },
                 response_getter,
-                &quote! { &db.pool },
-                response_ty,
             );
             let request_columns = table
                 .columns
@@ -1014,7 +996,7 @@ impl From<stage3::Table<'_>> for Table {
                 .filter_map(|column| column.request_one());
             let create_one = create_one(&table.name_intern, request_columns.clone());
 
-            let collection_token_stream = quote! {
+            let token_stream = quote! {
                 #[derive(::serde::Deserialize)]
                 pub struct #table_request_rs_name {
                     #(#request_column_fields),*
@@ -1106,7 +1088,9 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 });
 
-            let request_error_token_stream = quote! {
+            let token_stream = quote! {
+                #token_stream
+
                 #[derive(Default, ::serde::Serialize)]
                 pub struct #table_request_error_rs_name {
                     #( #request_error_columns ),*
@@ -1141,65 +1125,6 @@ impl From<stage3::Table<'_>> for Table {
                 }
             };
 
-            //             let request_error_token_stream = quote! {
-            //                 #[derive(Default, ::serde::Serialize)]
-            //                 pub struct #table_request_error_rs_name<'error> {
-            //                     #( #request_error_columns ),*
-            //                 }
-            //                 impl ::core::convert::From<#table_request_error_rs_name<'_>>
-            //                     for ::laraxum::ModelError<#table_request_error_rs_name<'_>>
-            //                 {
-            //                     fn from(value: #table_request_error_rs_name<'_>) -> Self {
-            //                         Self::UnprocessableEntity(value)
-            //                     }
-            //                 }
-            //
-            //                 impl ::laraxum::Request::<::laraxum::request::method::Create>
-            //                     for #table_request_rs_name
-            //                 {
-            //                     type Error = #table_request_error_rs_name<'_>;
-            //                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-            //                         let mut e = ::core::result::Result::Ok(());
-            //                         #( #request_column_validate_rules )*
-            //                         e
-            //                     }
-            //                 }
-            //                 impl ::laraxum::Request::<::laraxum::request::method::Update>
-            //                     for #table_request_rs_name
-            //                 {
-            //                     type Error = #table_request_error_rs_name<'_>;
-            //                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-            //                         <
-            //                             Self as ::laraxum::Request::<::laraxum::request::method::Create>
-            //                         >::validate(self)
-            //                     }
-            //                 }
-            //             };
-
-            //             } else {
-            //                 quote! {
-            //                     pub type #table_request_error_rs_name = ();
-            //                     // pub type #table_request_error_rs_name = ::core::convert::Infallible;
-            //                     impl ::laraxum::Request::<::laraxum::request::method::Create>
-            //                         for #table_request_rs_name
-            //                     {
-            //                         type Error = #table_request_error_rs_name;
-            //                         fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-            //                             ::core::result::Result::Ok(())
-            //                         }
-            //                     }
-            //                     impl ::laraxum::Request::<::laraxum::request::method::Update>
-            //                         for #table_request_rs_name
-            //                     {
-            //                         type Error = #table_request_error_rs_name;
-            //                         fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-            //                             ::core::result::Result::Ok(())
-            //                         }
-            //                     }
-            //
-            //                 }
-            //             };
-
             let indexes = table
                 .columns
                 .iter()
@@ -1208,171 +1133,177 @@ impl From<stage3::Table<'_>> for Table {
                     stage3::ColumnRef::Compounds(_) => None,
                 })
                 .flat_map(|column| {
-                    let rs_ty = column.response.field.rs_ty;
+                    let rs_ty_owned = column.response.field.rs_ty;
+                    let rs_ty_owned_token_stream = rs_ty_owned.to_token_stream();
+                    let is_borrowed = column.borrow.is_some();
+                    let lifetime = is_borrowed.then(|| quote! { 'b });
+
+                    let auto_lifetime = is_borrowed.then(|| quote! { '_ });
                     let rs_ty = if let Some(borrow) = column.borrow {
-                        let borrow = borrow.unwrap_or(rs_ty);
+                        let borrow = borrow.unwrap_or(rs_ty_owned);
                         quote! {
-                            &'a #borrow
+                            &'b #borrow
                         }
                     } else {
-                        rs_ty.to_token_stream()
+                        rs_ty_owned.to_token_stream()
                     };
                     let name_intern = column.name_intern();
-                    let unique = column.create.ty.unique();
+                    let is_unique = column.create.ty.unique();
 
                     let table_name_intern = &*table.name_intern;
                     let table_name_extern = &*table.name_extern;
+                    let column_response_name = column.response.field.rs_name.to_string();
+                    let vis_pub = &vis_pub;
                     column.index.iter().map(move |index| {
-                        let (response, request_rs_ty) = match (index.filter, index.sort) {
-                            // filter and sort
-                            (true, true) => {
-                                let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
-                                    table_name_intern,
-                                    table_name_extern,
-                                    response_getter_columns,
-                                    Some(name_intern),
-                                    name_intern,
-                                    unique,
-                                );
-                                let request_rs_ty = quote! {
-                                    (::laraxum::model::Sort, #rs_ty)
-                                };
+                        let is_one = is_unique && index.filter.is_eq();
+                        let index_rs_name = &index.rs_name;
 
-                                let response_sort_asc = quote! {
-                                    ::sqlx::query!(#get_sort_asc, request.1)
-                                };
-                                let response_sort_asc = transform_response(
-                                    &response_sort_asc,
-                                    response_getter,
-                                    &quote! { &db.pool },
-                                    response_ty_one,
-                                    response_ty_many,
-                                    unique,
-                                );
+                        let index_has_filter = index.filter.has_parameter();
+                        let index_has_sort = index.sort;
 
-                                let response_sort_desc = quote! {
-                                    ::sqlx::query!(#get_sort_desc, request.1)
-                                };
-                                let response_sort_desc = transform_response(
-                                    &response_sort_desc,
-                                    response_getter,
-                                    &quote! { &db.pool },
-                                    response_ty_one,
-                                    response_ty_many,
-                                    unique,
-                                );
-                                let response = quote! {
-                                    match request.0 {
-                                        ::laraxum::model::Sort::Ascending => #response_sort_asc,
-                                        ::laraxum::model::Sort::Descending => #response_sort_desc,
-                                    }
-                                };
-                                (response, request_rs_ty)
+                        let make_filter_field = |rs_ty, is_vis_pub: bool| {
+                            let rename = fmt2::fmt! { { str } =>
+                                "filter." {column_response_name} "." {index.filter}
+                            };
+                            let vis_pub = is_vis_pub.then(|| &**vis_pub);
+                            quote! {
+                                #[serde(rename = #rename)]
+                                #vis_pub filter: #rs_ty,
                             }
-                            // filter
-                            (true, false) => {
-                                let get = get(
-                                    table_name_intern,
-                                    table_name_extern,
-                                    response_getter_columns,
-                                    Some(name_intern),
-                                    None,
-                                    unique,
-                                );
-                                let response = quote! {
-                                    ::sqlx::query!(#get, request)
-                                };
-                                let response = transform_response(
-                                    &response,
-                                    response_getter,
-                                    &quote! { &db.pool },
-                                    response_ty_one,
-                                    response_ty_many,
-                                    unique,
-                                );
-                                (response, rs_ty.clone())
-                                // (response, request_rs_ty)
+                        };
+                        let make_sort_field = |is_vis_pub: bool| {
+                            let rename = fmt2::fmt! { { str } => "sort." {column_response_name} };
+                            let vis_pub = is_vis_pub.then(|| &**vis_pub);
+                            quote! {
+                                #[serde(rename = #rename)]
+                                #vis_pub sort: ::laraxum::model::Sort,
                             }
-                            // sort
-                            (false, true) => {
-                                let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
-                                    table_name_intern,
-                                    table_name_extern,
-                                    response_getter_columns,
-                                    None,
-                                    name_intern,
-                                    unique,
-                                );
-                                let request_rs_ty = quote! {
-                                    ::laraxum::model::Sort
-                                };
+                        };
+                        let filter_field =
+                            index_has_filter.then(|| make_filter_field(&rs_ty, true));
+                        let filter_field_variant = index_has_filter
+                            .then(|| make_filter_field(&rs_ty_owned_token_stream, false));
+                        let sort_field = index_has_sort.then(|| make_sort_field(true));
+                        let sort_field_variant = index_has_sort.then(|| make_sort_field(false));
 
-                                let response_sort_asc = quote! {
-                                    ::sqlx::query!(#get_sort_asc)
-                                };
-                                let response_sort_asc = transform_response(
-                                    &response_sort_asc,
-                                    response_getter,
-                                    &quote! { &db.pool },
-                                    response_ty_one,
-                                    response_ty_many,
-                                    unique,
-                                );
-
-                                let response_sort_desc = quote! {
-                                    ::sqlx::query!(#get_sort_desc)
-                                };
-                                let response_sort_desc = transform_response(
-                                    &response_sort_desc,
-                                    response_getter,
-                                    &quote! { &db.pool },
-                                    response_ty_one,
-                                    response_ty_many,
-                                    unique,
-                                );
-
-                                let response = quote! {
-                                    match request {
-                                        ::laraxum::model::Sort::Ascending => #response_sort_asc,
-                                        ::laraxum::model::Sort::Descending => #response_sort_desc,
-                                    }
-                                };
-                                (response, request_rs_ty)
+                        let index_struct = quote! {
+                            #[derive(::serde::Deserialize)]
+                            pub struct #index_rs_name<#lifetime> {
+                                #filter_field
+                                #sort_field
                             }
-                            (false, false) => {
-                                let get = get(
-                                    table_name_intern,
-                                    table_name_extern,
-                                    response_getter_columns,
-                                    None,
-                                    None,
-                                    unique,
-                                );
-                                let request_rs_ty = quote! { () };
+                        };
+                        let filter_parameter = index_has_filter.then(|| {
+                            quote! { request.filter }
+                        });
 
-                                let response = quote! {
-                                    ::sqlx::query!(#get)
-                                };
-                                let response = transform_response(
-                                    &response,
-                                    response_getter,
-                                    &quote! { &db.pool },
-                                    response_ty_one,
-                                    response_ty_many,
-                                    unique,
-                                );
+                        let index_variant_token_stream = quote! {
+                            #index_rs_name {
+                                #filter_field_variant
+                                #sort_field_variant
+                            }
+                        };
+                        let filter_get = index_has_filter.then(|| {
+                            if is_borrowed {
+                                quote! { ref filter, }
+                            } else {
+                                quote! { filter, }
+                            }
+                        });
+                        let sort_get = index_has_sort.then(|| {
+                            quote! { sort, }
+                        });
 
-                                (response, request_rs_ty)
+                        let filter_set = index_has_filter.then(|| {
+                            quote! { filter, }
+                        });
+                        let sort_set = index_has_sort.then(|| {
+                            quote! { sort, }
+                        });
+
+                        let index_get = quote! {
+                            __laraxum__TableIndex__::#index_rs_name {
+                                #filter_get
+                                #sort_get
+                            }
+                        };
+                        let index_set = quote! {
+                            #index_rs_name {
+                                #filter_set
+                                #sort_set
                             }
                         };
 
-                        let index_name = &index.name;
-                        let index_token_stream = if unique {
+                        let index_getter_token_stream = if is_one {
                             quote! {
-                                impl ::laraxum::CollectionIndexOne<#index_name>
+                                #index_get => {
+                                    <#table_rs_name as
+                                        ::laraxum::CollectionIndexOne<
+                                            #index_rs_name<#auto_lifetime>
+                                        >
+                                    >::get_index_one_vec(db, #index_set).await
+                                }
+                            }
+                        } else {
+                            quote! {
+                                #index_get => {
+                                    <#table_rs_name as
+                                        ::laraxum::CollectionIndexMany<
+                                            #index_rs_name<#auto_lifetime>
+                                        >
+                                    >::get_index_many(db, #index_set).await
+                                }
+                            }
+                        };
+
+                        let response = if index_has_sort {
+                            let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
+                                table_name_intern,
+                                table_name_extern,
+                                response_getter_columns,
+                                Some((index.filter, name_intern)),
+                                name_intern,
+                                is_one,
+                            );
+
+                            let response_sort_asc = quote! {
+                                ::sqlx::query!(#get_sort_asc, #filter_parameter)
+                            };
+                            let response_sort_asc =
+                                transform_response(&response_sort_asc, response_getter, is_one);
+
+                            let response_sort_desc = quote! {
+                                ::sqlx::query!(#get_sort_desc, #filter_parameter)
+                            };
+                            let response_sort_desc =
+                                transform_response(&response_sort_desc, response_getter, is_one);
+                            quote! {
+                                match request.sort {
+                                    ::laraxum::model::Sort::Ascending => #response_sort_asc,
+                                    ::laraxum::model::Sort::Descending => #response_sort_desc,
+                                }
+                            }
+                        } else {
+                            let get = get(
+                                table_name_intern,
+                                table_name_extern,
+                                response_getter_columns,
+                                Some((index.filter, name_intern)),
+                                None,
+                                is_one,
+                            );
+                            let response = quote! {
+                                ::sqlx::query!(#get, #filter_parameter)
+                            };
+                            transform_response(&response, response_getter, is_one)
+                        };
+                        let index_token_stream = if is_one {
+                            quote! {
+                                impl
+                                    ::laraxum::CollectionIndexOne<#index_rs_name<#auto_lifetime>>
                                     for #table_rs_name
                                 {
-                                    type OneRequest<'a> = #request_rs_ty;
+                                    type OneRequest<'b> = #index_rs_name<#lifetime>;
                                     type OneResponse = Self;
                                     async fn get_index_one<'a>(
                                         db: &Self::Db,
@@ -1389,10 +1320,11 @@ impl From<stage3::Table<'_>> for Table {
                             }
                         } else {
                             quote! {
-                                impl ::laraxum::CollectionIndexMany<#index_name>
+                                impl
+                                    ::laraxum::CollectionIndexMany<#index_rs_name<#auto_lifetime>>
                                     for #table_rs_name
                                 {
-                                    type OneRequest<'a> = #request_rs_ty;
+                                    type OneRequest<'b> = #index_rs_name<#lifetime>;
                                     type ManyResponse = Self;
                                     async fn get_index_many<'a>(
                                         db: &Self::Db,
@@ -1408,17 +1340,71 @@ impl From<stage3::Table<'_>> for Table {
                                 }
                             }
                         };
-                        quote! {
-                            pub struct #index_name;
+                        let index_token_stream = quote! {
+                            #index_struct
                             #index_token_stream
-                        }
+                        };
+
+                        let field_count = u8::from(index_has_filter) + u8::from(index_has_sort);
+
+                        (
+                            index_token_stream,
+                            (
+                                field_count,
+                                index_variant_token_stream,
+                                index_getter_token_stream,
+                            ),
+                        )
                     })
                 });
 
-            let token_stream = quote! {
-                #collection_token_stream
-                #request_error_token_stream
-                #( #indexes )*
+            let token_stream = if let Some(table_index_rs_name) = table.index_rs_name {
+                let mut indexes = indexes.collect::<Vec<_>>();
+                indexes.sort_by_key(|(_, (field_count, _, _))| *field_count);
+                let index_token_streams = indexes.iter().map(|(i, _)| i);
+                let index_variant_token_streams = indexes.iter().rev().map(|(_, (_, i, _))| i);
+                let index_getter_token_streams = indexes.iter().map(|(_, (_, _, i))| i);
+
+                quote! {
+                    #token_stream
+                    #( #index_token_streams )*
+
+                    #[derive(::serde::Deserialize)]
+                    #[serde(untagged)]
+                    pub enum #table_index_rs_name {
+                        #( #index_variant_token_streams, )*
+                        #table_index_rs_name {},
+                    }
+
+                    impl ::laraxum::CollectionIndexMany<#table_index_rs_name> for #table_rs_name {
+                        type OneRequest<'b> = #table_index_rs_name;
+                        type ManyResponse = Self;
+                        async fn get_index_many<'a>(
+                            db: &Self::Db,
+                            request: Self::OneRequest<'a>,
+                        )
+                            -> ::core::result::Result<
+                                ::std::vec::Vec<Self::ManyResponse>,
+                                ::laraxum::Error,
+                            >
+                        {
+                            use #table_index_rs_name as __laraxum__TableIndex__;
+                            match request {
+                                #( #index_getter_token_streams, )*
+                                __laraxum__TableIndex__::#table_index_rs_name {} => {
+                                    <#table_rs_name as ::laraxum::Collection>::get_all(db).await
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let index_token_streams = indexes.map(|(i, _)| i);
+
+                quote! {
+                    #token_stream
+                    #( #index_token_streams )*
+                }
             };
 
             let Some(table_id) = table.columns.model() else {
@@ -1430,11 +1416,12 @@ impl From<stage3::Table<'_>> for Table {
 
             let table_name_intern = &*table.name_intern;
             let table_name_extern = &*table.name_extern;
-            let get_one = get_filter(
+            let get_one = get(
                 &table_name_intern,
                 &table_name_extern,
                 response_getter_columns,
-                table_id_name_intern,
+                Some((stage3::ColumnAttrIndexFilter::Eq, table_id_name_intern)),
+                None,
                 true,
             );
             let get_one_response = transform_response_one(
@@ -1442,8 +1429,6 @@ impl From<stage3::Table<'_>> for Table {
                     ::sqlx::query!(#get_one, id)
                 },
                 response_getter,
-                &quote! { &db.pool },
-                response_ty,
             );
             let update_one = update_one(table_name_intern, table_id_name, request_columns);
             let delete_one = delete_one(table_name_intern, table_id_name);
@@ -1509,7 +1494,8 @@ impl From<stage3::Table<'_>> for Table {
                             as ::laraxum::Request::<::laraxum::request::method::Update>
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
-                        let response = ::sqlx::query!(#update_one, #request_setter_token_stream id);
+                        let response =
+                            ::sqlx::query!(#update_one, #request_setter_token_stream id);
                         response.execute(&db.pool).await?;
                         #request_setter_compounds_update_many
                         transaction.commit().await?;
@@ -1554,11 +1540,40 @@ impl From<stage3::Table<'_>> for Table {
                 .auth
                 .as_deref()
                 .map_or_else(|| quote! { () }, quote::ToTokens::to_token_stream);
+
+            let get_many_request_query = table.index_rs_name.map_or_else(
+                || quote! { () },
+                |index_rs_name| index_rs_name.to_token_stream(),
+            );
+
+            let get_many = table.index_rs_name.map(|index_rs_name| {
+                quote! {
+                    async fn get_many(
+                        ::axum::extract::State(state):
+                            ::axum::extract::State<::std::sync::Arc<Self::State>>,
+                        ::laraxum::AuthToken(_): ::laraxum::AuthToken<Self::Auth>,
+                        ::axum::extract::Query(query):
+                            ::axum::extract::Query<Self::GetManyRequestQuery>,
+                    ) -> ::core::result::Result<
+                            ::laraxum::Json<::std::vec::Vec<Self::Response>>,
+                            ::laraxum::Error,
+                        >
+                    {
+                        let records = <
+                            #table_rs_name as ::laraxum::CollectionIndexMany<#index_rs_name>
+                        >::get_index_many(&*state, query).await?;
+                        ::core::result::Result::Ok(::laraxum::Json(records))
+
+                    }
+                }
+            });
+
             quote! {
                 impl ::laraxum::Controller for #table_rs_name {
                     type State = #db_rs_name;
                     type Auth = #auth;
-                    type GetManyRequestQuery = ();
+                    type GetManyRequestQuery = #get_many_request_query;
+                    #get_many
                 }
             }
         });
@@ -1568,7 +1583,6 @@ impl From<stage3::Table<'_>> for Table {
                 table: &stage3::Table,
                 one: &stage3::ColumnOne,
                 many: &stage3::ColumnOne,
-                response_ty_many: &proc_macro2::TokenStream,
             ) -> proc_macro2::TokenStream {
                 let index_ty = many.struct_name.map_or_else(
                     || one.response.field.rs_ty.to_token_stream(),
@@ -1585,14 +1599,15 @@ impl From<stage3::Table<'_>> for Table {
                 let (response_getter_column_elements, response_getter_column_compounds) =
                     flatten(core::iter::once(many_response_getter));
 
-                let get_many = get_filter(
+                let get_many = get(
                     &table.name_intern,
                     &table.name_extern,
                     (
                         &response_getter_column_elements,
                         &response_getter_column_compounds,
                     ),
-                    one.name_intern(),
+                    Some((stage3::ColumnAttrIndexFilter::Eq, one.name_intern())),
+                    None,
                     false,
                 );
                 let get_many_response = transform_response_many(
@@ -1600,8 +1615,6 @@ impl From<stage3::Table<'_>> for Table {
                         ::sqlx::query!(#get_many, one)
                     },
                     &response_getter,
-                    &quote! { &db.pool },
-                    response_ty_many,
                 );
 
                 let request_columns = [&one.request, &many.request];
@@ -1678,8 +1691,8 @@ impl From<stage3::Table<'_>> for Table {
                 }
             }
 
-            let a_token_stream = many_model(&table, a, b, response_ty_many);
-            let b_token_stream = many_model(&table, b, a, response_ty_many);
+            let a_token_stream = many_model(&table, a, b);
+            let b_token_stream = many_model(&table, b, a);
             quote! {
                 #a_token_stream
                 #b_token_stream

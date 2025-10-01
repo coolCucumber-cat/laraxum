@@ -5,10 +5,7 @@ pub use stage2::{
     TyElementAutoTime,
 };
 
-use crate::{
-    db::stage1,
-    utils::{borrow::DerefEither, collections::TryCollectAll},
-};
+use crate::utils::{borrow::DerefEither, collections::TryCollectAll};
 
 use std::borrow::Cow;
 
@@ -212,11 +209,15 @@ pub struct RequestColumnCompounds<'a> {
     pub setter: RequestColumnSetterCompounds<'a>,
 }
 
+pub use stage2::ColumnAttrIndex;
+
+pub use stage2::ColumnAttrIndexFilter;
+
 pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
     pub request: RequestColumnOne<'a>,
-    pub index: &'a [stage1::ColumnAttrIndex],
+    pub index: &'a [ColumnAttrIndex],
     pub borrow: Option<Option<&'a Type>>,
     pub struct_name: Option<&'a Ident>,
 }
@@ -384,6 +385,7 @@ pub struct Table<'a> {
     pub rs_name: &'a Ident,
     pub request_rs_name: Cow<'a, Ident>,
     pub request_error_rs_name: Cow<'a, Ident>,
+    pub index_rs_name: Option<&'a Ident>,
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
     pub columns: Columns<Column<'a>, ColumnOne<'a>, &'a stage2::TableAttrController>,
@@ -690,12 +692,15 @@ impl<'a> Table<'a> {
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
         let table_request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
         let table_rs_attrs = &*table.rs_attrs;
+        let table_index_rs_name = table.index_rs_name.as_ref();
+
         Ok(Self {
             name_intern: table_name_intern,
             name_extern: table_name_extern,
             rs_name: &table.rs_name,
             request_rs_name: Cow::Owned(table_request_rs_name),
             request_error_rs_name: Cow::Owned(table_request_error_rs_name),
+            index_rs_name: table_index_rs_name,
             db_rs_name: &db.rs_name,
             rs_attrs: table_rs_attrs,
             columns,

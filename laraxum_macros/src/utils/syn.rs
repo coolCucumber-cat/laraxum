@@ -158,10 +158,24 @@ where
 /// To bypass this, we put it in its own list with [`<[T]>::windows`].
 /// The expected way to handle this would be to call [`darling::FromMeta::from_nested_meta`],
 /// but this doesn't work since it assumes you are calling it from one level higher.
-pub struct EnumMetaListAttr<T>(pub Vec<T>)
+pub struct TokenStreamEnumAttrVec<T>(pub Vec<T>);
+impl<T> TokenStreamEnumAttrVec<T> {
+    pub fn into_inner(self) -> Vec<T> {
+        self.0
+    }
+}
+impl<T> TokenStreamEnumAttrVec<T>
 where
-    T: darling::FromMeta;
-impl<T> darling::FromMeta for EnumMetaListAttr<T>
+    T: darling::FromMeta,
+{
+    pub fn transform(item: Meta) -> darling::Result<Vec<T>> {
+        <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
+    }
+    pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Vec<T>>> {
+        item.map(Self::transform).transpose()
+    }
+}
+impl<T> darling::FromMeta for TokenStreamEnumAttrVec<T>
 where
     T: darling::FromMeta,
 {
@@ -175,7 +189,7 @@ where
             .map(Self)
     }
 }
-impl<T> Default for EnumMetaListAttr<T>
+impl<T> Default for TokenStreamEnumAttrVec<T>
 where
     T: darling::FromMeta,
 {
