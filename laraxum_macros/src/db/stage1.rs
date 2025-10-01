@@ -212,6 +212,10 @@ pub enum ColumnAttrIndexFilter {
     None,
     Eq,
     Like,
+    Gt,
+    Lt,
+    Gte,
+    Lte,
 }
 impl fmt2::write_to::FmtAdvanced for ColumnAttrIndexFilter {
     type Target = str;
@@ -220,6 +224,10 @@ impl fmt2::write_to::FmtAdvanced for ColumnAttrIndexFilter {
             Self::None => "none",
             Self::Eq => "eq",
             Self::Like => "like",
+            Self::Gt => "gt",
+            Self::Lt => "lt",
+            Self::Gte => "gte",
+            Self::Lte => "lte",
         }
     }
 }
@@ -245,6 +253,7 @@ pub struct ColumnAttrIndex {
     pub filter: ColumnAttrIndexFilter,
     #[darling(default)]
     pub sort: bool,
+    pub limit: Option<u64>,
     #[darling(default)]
     pub controller: bool,
 }

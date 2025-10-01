@@ -292,7 +292,7 @@ fn get(
     ),
     index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     index_sort: Option<(Sort, &str)>,
-    is_one: bool,
+    index_limit: Option<u64>,
 ) -> String {
     let mut get = fmt2::fmt! { { str } =>
         "SELECT "
@@ -316,6 +316,18 @@ fn get(
             stage3::ColumnAttrIndexFilter::Like => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} " LIKE CONCAT('%', ?, '%')" };
             }
+            stage3::ColumnAttrIndexFilter::Gt => {
+                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} ">?" };
+            }
+            stage3::ColumnAttrIndexFilter::Lt => {
+                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "<?" };
+            }
+            stage3::ColumnAttrIndexFilter::Gte => {
+                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} ">=?" };
+            }
+            stage3::ColumnAttrIndexFilter::Lte => {
+                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "<=?" };
+            }
         }
     }
     if let Some((index_sort, sort_column_name_intern)) = index_sort {
@@ -328,8 +340,8 @@ fn get(
             }
         }
     }
-    if is_one {
-        fmt2::fmt! { (get) => " LIMIT 1" };
+    if let Some(index_limit) = index_limit {
+        fmt2::fmt! { (get) => " LIMIT " {index_limit} };
     }
     get
 }
@@ -347,7 +359,43 @@ fn get_all(
         response_getter_columns,
         None,
         None,
-        false,
+        None,
+    )
+}
+fn get_one(
+    table_name_intern: &str,
+    table_name_extern: &str,
+    response_getter_columns: (
+        &[ResponseColumnGetterElement],
+        &[&stage3::ResponseColumnGetterCompound],
+    ),
+    index_filter: (stage3::ColumnAttrIndexFilter, &str),
+) -> String {
+    get(
+        table_name_intern,
+        table_name_extern,
+        response_getter_columns,
+        Some(index_filter),
+        None,
+        Some(1),
+    )
+}
+fn get_many(
+    table_name_intern: &str,
+    table_name_extern: &str,
+    response_getter_columns: (
+        &[ResponseColumnGetterElement],
+        &[&stage3::ResponseColumnGetterCompound],
+    ),
+    index_filter: (stage3::ColumnAttrIndexFilter, &str),
+) -> String {
+    get(
+        table_name_intern,
+        table_name_extern,
+        response_getter_columns,
+        Some(index_filter),
+        None,
+        None,
     )
 }
 fn get_sort_asc_desc(
@@ -359,7 +407,7 @@ fn get_sort_asc_desc(
     ),
     index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     sort_column_name_intern: &str,
-    is_one: bool,
+    index_limit: Option<u64>,
 ) -> (String, String) {
     (
         get(
@@ -368,7 +416,7 @@ fn get_sort_asc_desc(
             response_getter_columns,
             index_filter,
             Some((Sort::Ascending, sort_column_name_intern)),
-            is_one,
+            index_limit,
         ),
         get(
             table_name_intern,
@@ -376,7 +424,7 @@ fn get_sort_asc_desc(
             response_getter_columns,
             index_filter,
             Some((Sort::Descending, sort_column_name_intern)),
-            is_one,
+            index_limit,
         ),
     )
 }
@@ -1147,9 +1195,9 @@ impl From<stage3::Table<'_>> for Table {
                     column.index.iter().map(move |index| {
                         let is_one = is_unique && index.filter.is_eq();
                         let index_rs_name = &index.rs_name;
-
                         let index_has_filter = index.filter.has_parameter();
                         let index_has_sort = index.sort;
+                        let index_limit = if is_one { Some(1) } else { index.limit };
 
                         let filter_field_rename = fmt2::fmt! { { str } =>
                             "filter." {column_response_name} "." {index.filter}
@@ -1188,7 +1236,7 @@ impl From<stage3::Table<'_>> for Table {
                                 response_getter_columns,
                                 Some((index.filter, name_intern)),
                                 name_intern,
-                                is_one,
+                                index_limit,
                             );
 
                             let response_sort_asc = quote! {
@@ -1215,7 +1263,7 @@ impl From<stage3::Table<'_>> for Table {
                                 response_getter_columns,
                                 Some((index.filter, name_intern)),
                                 None,
-                                is_one,
+                                index_limit,
                             );
                             let response = quote! {
                                 ::sqlx::query!(#get, #filter_parameter)
@@ -1430,13 +1478,11 @@ impl From<stage3::Table<'_>> for Table {
 
             let table_name_intern = &*table.name_intern;
             let table_name_extern = &*table.name_extern;
-            let get_one = get(
+            let get_one = get_one(
                 &table_name_intern,
                 &table_name_extern,
                 response_getter_columns,
-                Some((stage3::ColumnAttrIndexFilter::Eq, table_id_name_intern)),
-                None,
-                true,
+                (stage3::ColumnAttrIndexFilter::Eq, table_id_name_intern),
             );
             let get_one_response = transform_response_one(
                 &quote! {
@@ -1613,16 +1659,14 @@ impl From<stage3::Table<'_>> for Table {
                 let (response_getter_column_elements, response_getter_column_compounds) =
                     flatten(core::iter::once(many_response_getter));
 
-                let get_many = get(
+                let get_many = get_many(
                     &table.name_intern,
                     &table.name_extern,
                     (
                         &response_getter_column_elements,
                         &response_getter_column_compounds,
                     ),
-                    Some((stage3::ColumnAttrIndexFilter::Eq, one.name_intern())),
-                    None,
-                    false,
+                    (stage3::ColumnAttrIndexFilter::Eq, one.name_intern()),
                 );
                 let get_many_response = transform_response_many(
                     &quote! {

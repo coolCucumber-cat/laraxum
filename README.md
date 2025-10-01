@@ -51,69 +51,6 @@ The `Auth` type is the type that will authenticate the request.
 `AuthToken<()>` doesn't do any authentication.
 You can implement the authenticate trait for custom authentication and use it like `AuthToken<T>`.
 
-## Auth
-
-Implement the `Authenticate` trait to allow custom authentication that can be used in the controller.
-`AuthToken<T>` should be returned from the login endpoint, which will encrypt it.
-To authenticate the request, it will be decrypted.
-
-Implement the authorize trait for custom authorization.
-You must specify a type that is authenticatable.
-
-### Example
-
-```rs
-#[derive(serde::Serialize, serde::Deserialize)]
-struct UserAuth {
-    is_admin: bool,
-}
-/// Implementation agnostic logic for authentication.
-///
-/// Implementing this also implements the `Authorize` trait.
-///
-/// Anything can implement the `Authorize` trait to extend it and add custom authorization logic.
-impl Authenticate for UserAuth {
-    type State = AppDb;
-    /// Executes after user is authenticated.
-    ///
-    /// You can add extra authentication logic that applies for all users.
-    fn authenticate(&self, state: &Arc<Self::State>) -> Result<(), AuthError> {
-        // authenticate the user
-        Ok(())
-    }
-}
-/// Token specific logic for authenticatiion.
-///
-/// Has sensible defaults which can customised, like the expiration time.
-impl AuthenticateToken for UserAuth {}
-
-/// A struct using the `UserAuth` token for authentication and extending it with authorization logic.
-struct UserAuthAdmin;
-impl Authorize for UserAuthAdmin {
-    /// Use `UserAuth` for authentication.
-    type Authenticate = UserAuth;
-    /// Add extra authorization logic.
-    fn authorize(authorize: Self::Authenticate) -> Result<Self, AuthError> {
-        if authorize.is_admin {
-            Ok(UserAuthAdmin)
-        } else {
-            Err(AuthError::Unauthorized)
-        }
-    }
-}
-
-mod AppDb {
-    #[db(model(), controller())]
-    struct Anyone {}
-
-    #[db(model(), controller(auth(UserAuth)))]
-    struct UserOnly {}
-
-    #[db(model(), controller(auth(UserAuthAdmin)))]
-    struct AdminOnly {}
-}
-```
-
 ## Db
 
 The database is defined using the `db` attribute macro on a module:
@@ -159,7 +96,13 @@ Each struct in the module is a table. Use the `db` attribute on the struct:
 >>>`auth(` `<Type>` `),`
 >>
 >>`),`
+>
+>>An index for filtering and sorting for the controller of the table.  
+>>Includes all indexes for this table that have set `controller`.  
+>>A query with the corresponding keys will select one of the indexes and fetch using that index.  
 >>
+>>`index_name(` `<Ident>` `),`
+>
 >`)`
 
 Each field in the struct is a column. Use the `db` attribute on the field:
@@ -344,13 +287,51 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>>
 >>>`name =` `<Ident>` `,`
 >>
->>>This index can filter by this column.  
+>>>Filter by this column.  
 >>>
->>>`filter =` `<bool>` `,`
+>>>`filter(`
+>>>
+>>> 1. >Do not filter.  
+>>>    >
+>>>    >`none`
+>>>
+>>> 2. >Filter where equal.  
+>>>    >
+>>>    >`eq`
+>>>
+>>> 3. >Filter where using SQL like comparison.  
+>>>    >
+>>>    >`like`
+>>>
+>>> 4. >Filter where greater.
+>>>    >
+>>>    >`gt`
+>>>
+>>> 5. >Filter where less.
+>>>    >
+>>>    >`lt`
+>>>
+>>> 6. >Filter where greater or equal.
+>>>    >
+>>>    >`gte`
+>>>
+>>> 7. >Filter where less or equal.
+>>>    >
+>>>    >`lte`
+>>>
+>>>`),`
 >>
->>>This index can sort by this column.  
+>>>Sort by this column.  
 >>>
 >>>`sort =` `<bool>` `,`
+>>
+>>>Limit number of records.
+>>>
+>>>`limit =` `<u64>` `,`
+>>
+>>>If `index_name` for the table is set, this index will be in the table index as well.  
+>>>
+>>>`controller =` `<bool>` `,`
 >>
 >>`),`
 >
@@ -442,5 +423,68 @@ pub mod AppDb {
         #[db(ty(foreign()), request(name = "user_id"), name = "user_id")]
         user: User,
     }
+}
+```
+
+## Auth
+
+Implement the `Authenticate` trait to allow custom authentication that can be used in the controller.
+`AuthToken<T>` should be returned from the login endpoint, which will encrypt it.
+To authenticate the request, it will be decrypted.
+
+Implement the authorize trait for custom authorization.
+You must specify a type that is authenticatable.
+
+### Example
+
+```rs
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UserAuth {
+    is_admin: bool,
+}
+/// Implementation agnostic logic for authentication.
+///
+/// Implementing this also implements the `Authorize` trait.
+///
+/// Anything can implement the `Authorize` trait to extend it and add custom authorization logic.
+impl Authenticate for UserAuth {
+    type State = AppDb;
+    /// Executes after user is authenticated.
+    ///
+    /// You can add extra authentication logic that applies for all users.
+    fn authenticate(&self, state: &Arc<Self::State>) -> Result<(), AuthError> {
+        // authenticate the user
+        Ok(())
+    }
+}
+/// Token specific logic for authenticatiion.
+///
+/// Has sensible defaults which can customised, like the expiration time.
+impl AuthenticateToken for UserAuth {}
+
+/// A struct using the `UserAuth` token for authentication and extending it with authorization logic.
+struct UserAuthAdmin;
+impl Authorize for UserAuthAdmin {
+    /// Use `UserAuth` for authentication.
+    type Authenticate = UserAuth;
+    /// Add extra authorization logic.
+    fn authorize(authorize: Self::Authenticate) -> Result<Self, AuthError> {
+        if authorize.is_admin {
+            Ok(UserAuthAdmin)
+        } else {
+            Err(AuthError::Unauthorized)
+        }
+    }
+}
+
+mod AppDb {
+    #[db(model(), controller())]
+    struct Anyone {}
+
+    #[db(model(), controller(auth(UserAuth)))]
+    struct UserOnly {}
+
+    #[db(model(), controller(auth(UserAuthAdmin)))]
+    struct AdminOnly {}
 }
 ```
