@@ -4,8 +4,9 @@ use crate::utils::syn::from_str_to_rs_ident;
 
 use std::{borrow::Cow, vec};
 
+use fmt2::write_to::FmtAdvanced;
 use quote::{ToTokens, quote};
-use syn::Ident;
+use syn::{Ident, Type};
 
 impl stage3::AtomicTyString {
     fn ty(&self) -> Cow<'static, str> {
@@ -292,7 +293,8 @@ fn get(
     ),
     index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     index_sort: Option<(Sort, &str)>,
-    index_limit: Option<u64>,
+    index_limit: bool,
+    is_one: bool,
 ) -> String {
     let mut get = fmt2::fmt! { { str } =>
         "SELECT "
@@ -340,8 +342,10 @@ fn get(
             }
         }
     }
-    if let Some(index_limit) = index_limit {
-        fmt2::fmt! { (get) => " LIMIT " {index_limit} };
+    if is_one {
+        fmt2::fmt! { (get) => " LIMIT 1" };
+    } else if index_limit {
+        fmt2::fmt! { (get) => " LIMIT ?" };
     }
     get
 }
@@ -359,7 +363,8 @@ fn get_all(
         response_getter_columns,
         None,
         None,
-        None,
+        false,
+        false,
     )
 }
 fn get_one(
@@ -377,7 +382,8 @@ fn get_one(
         response_getter_columns,
         Some(index_filter),
         None,
-        Some(1),
+        false,
+        true,
     )
 }
 fn get_many(
@@ -395,7 +401,8 @@ fn get_many(
         response_getter_columns,
         Some(index_filter),
         None,
-        None,
+        false,
+        false,
     )
 }
 fn get_sort_asc_desc(
@@ -407,7 +414,8 @@ fn get_sort_asc_desc(
     ),
     index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     sort_column_name_intern: &str,
-    index_limit: Option<u64>,
+    index_limit: bool,
+    is_one: bool,
 ) -> (String, String) {
     (
         get(
@@ -417,6 +425,7 @@ fn get_sort_asc_desc(
             index_filter,
             Some((Sort::Ascending, sort_column_name_intern)),
             index_limit,
+            is_one,
         ),
         get(
             table_name_intern,
@@ -425,6 +434,7 @@ fn get_sort_asc_desc(
             index_filter,
             Some((Sort::Descending, sort_column_name_intern)),
             index_limit,
+            is_one,
         ),
     )
 }
@@ -808,6 +818,109 @@ impl super::stage2::ValidateRule {
     }
 }
 
+fn impl_deserialize_for_untagged_enum<'a, 'b>(
+    enum_ident: &Ident,
+    enum_variants: impl Iterator<
+        Item = (
+            &'a Ident,
+            impl Iterator<Item = (&'a Ident, &'a Type)> + Clone,
+        ),
+    > + Clone,
+    enum_default_variant: Option<&'b Ident>,
+) -> proc_macro2::TokenStream {
+    fn field_matcher(ident: &Ident) -> proc_macro2::TokenStream {
+        quote! {
+            #ident: ::core::option::Option::Some(#ident)
+        }
+    }
+    fn forbidden_field_matcher(ident: &Ident) -> proc_macro2::TokenStream {
+        quote! {
+            #ident: ::core::option::Option::None
+        }
+    }
+    let struct_fields_iter = enum_variants.clone().flat_map(|(_, fields)| fields);
+    let mut struct_fields: Vec<(&Ident, &Type)> = vec![];
+    for (ident, ty) in struct_fields_iter {
+        let other_field = struct_fields
+            .iter()
+            .find(|&&(other_ident, _)| other_ident == ident);
+        if let Some(&(_, other_ty)) = other_field {
+            // if field already exists
+
+            // types for same field must be equal
+            assert_eq!(ty, other_ty);
+        } else {
+            // if doesn't already exist
+            struct_fields.push((ident, ty));
+        }
+    }
+    let struct_fields = struct_fields;
+    let struct_field_defs = struct_fields.iter().map(|(ident, ty)| {
+        quote! {
+            #ident: ::core::option::Option<#ty>
+        }
+    });
+    let matchers = enum_variants.map(|(enum_variant_ident, enum_fields)| {
+        let enum_field_idents = enum_fields.clone().map(|(ident, _)| ident);
+        let forbidden_field_matchers = struct_fields
+            .iter()
+            .filter(|&&(struct_field_ident, _)| {
+                enum_field_idents
+                    .clone()
+                    .all(|enum_field_ident| enum_field_ident != struct_field_ident)
+            })
+            .map(|&(field_ident, _)| forbidden_field_matcher(field_ident));
+        let field_matchers = enum_field_idents.clone().map(field_matcher);
+        let field_setters = enum_field_idents.clone();
+        quote! {
+            __Struct {
+                #( #field_matchers, )*
+                #( #forbidden_field_matchers, )*
+            } => {
+                ::core::result::Result::Ok(#enum_ident::#enum_variant_ident {
+                    #( #field_setters, )*
+                })
+            }
+        }
+    });
+    let default_matcher = enum_default_variant.map(|ident| {
+        let forbidden_field_matchers = struct_fields
+            .iter()
+            .map(|&(other_ident, _)| forbidden_field_matcher(other_ident));
+        quote! {
+            __Struct {
+                #( #forbidden_field_matchers, )*
+            } => {
+                ::core::result::Result::Ok(#enum_ident::#ident)
+            }
+        }
+    });
+
+    quote! {
+        impl<'de> ::serde::Deserialize<'de> for #enum_ident {
+            fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+            where
+                D: ::serde::Deserializer<'de>,
+            {
+                #[derive(::serde::Deserialize)]
+                struct __Struct {
+                    #( #struct_field_defs ),*
+                }
+                let deserialized = <__Struct as ::serde::Deserialize>::deserialize(deserializer)?;
+                match deserialized {
+                    #( #matchers )*
+                    #default_matcher
+                    _ => ::core::result::Result::Err(
+                        ::serde::de::Error::custom("Unknown combination of fields")
+                    )
+                }
+                // #( #index_variant_deserialize_token_streams )*
+                // ::core::result::Result::Ok(#table_index_rs_name::#table_index_rs_name)
+            }
+        }
+    }
+}
+
 // fn request_setter_column(rs_name: &Ident, optional: bool) -> proc_macro2::TokenStream {
 //     if optional {
 //         quote! {
@@ -1173,18 +1286,18 @@ impl From<stage3::Table<'_>> for Table {
                     stage3::ColumnRef::Compounds(_) => None,
                 })
                 .flat_map(|column| {
-                    let rs_ty_owned = column.response.field.rs_ty;
+                    let filter_rs_ty_owned = column.response.field.rs_ty;
                     let is_borrowed = column.borrow.is_some();
                     let lifetime = is_borrowed.then(|| quote! { 'b });
 
                     let auto_lifetime = is_borrowed.then(|| quote! { '_ });
-                    let rs_ty = if let Some(borrow) = column.borrow {
-                        let borrow = borrow.unwrap_or(rs_ty_owned);
-                        quote! {
+                    let filter_rs_ty = if let Some(borrow) = column.borrow {
+                        let borrow = borrow.unwrap_or(filter_rs_ty_owned);
+                        syn::parse_quote! {
                             &'b #borrow
                         }
                     } else {
-                        rs_ty_owned.to_token_stream()
+                        filter_rs_ty_owned.clone()
                     };
                     let name_intern = column.name_intern();
                     let is_unique = column.create.ty.unique();
@@ -1196,25 +1309,56 @@ impl From<stage3::Table<'_>> for Table {
                         let is_one = is_unique && index.filter.is_eq();
                         let index_rs_name = &index.rs_name;
                         let index_has_filter = index.filter.has_parameter();
+                        let index_has_limit = index.limit && !is_one;
                         let index_has_sort = index.sort;
-                        let index_limit = if is_one { Some(1) } else { index.limit };
 
-                        let filter_field_rename = fmt2::fmt! { { str } =>
-                            "filter." {column_response_name} "." {index.filter}
-                        };
-                        let sort_field_rename =
-                            fmt2::fmt! { { str } => "sort." {column_response_name} };
+                        let filter = index_has_filter.then(|| {
+                            (
+                                quote::format_ident!("filter"),
+                                quote::format_ident!(
+                                    "filter_{}_{}",
+                                    column_response_name,
+                                    index.filter.fmt_advanced()
+                                ),
+                                &filter_rs_ty,
+                                filter_rs_ty_owned,
+                            )
+                        });
+                        let limit = index_has_limit.then(|| {
+                            (
+                                quote::format_ident!("limit"),
+                                syn::parse_quote! {
+                                    u64
+                                },
+                            )
+                        });
+                        let sort = index_has_sort.then(|| -> (Ident, Ident, Type) {
+                            (
+                                quote::format_ident!("sort"),
+                                quote::format_ident!("sort_{}", column_response_name),
+                                syn::parse_quote! {
+                                    ::laraxum::model::Sort
+                                },
+                            )
+                        });
 
-                        let filter_field = index_has_filter.then(|| {
+                        let filter_field = filter.as_ref().map(|(short_name, name, rs_ty, _)| {
+                            let name = name.to_string();
                             quote! {
-                                #[serde(rename = #filter_field_rename)]
-                                pub filter: #rs_ty,
+                                #[serde(rename = #name)]
+                                pub #short_name: #rs_ty,
                             }
                         });
-                        let sort_field = index_has_sort.then(|| {
+                        let limit_field = limit.as_ref().map(|(name, rs_ty)| {
                             quote! {
-                                #[serde(rename = #sort_field_rename)]
-                                pub sort: ::laraxum::model::Sort,
+                                pub #name: #rs_ty,
+                            }
+                        });
+                        let sort_field = sort.as_ref().map(|(short_name, name, rs_ty)| {
+                            let name = name.to_string();
+                            quote! {
+                                #[serde(rename = #name)]
+                                pub #short_name: #rs_ty,
                             }
                         });
 
@@ -1222,11 +1366,15 @@ impl From<stage3::Table<'_>> for Table {
                             #[derive(::serde::Deserialize)]
                             pub struct #index_rs_name<#lifetime> {
                                 #filter_field
+                                #limit_field
                                 #sort_field
                             }
                         };
-                        let filter_parameter = index_has_filter.then(|| {
-                            quote! { request.filter }
+                        let filter_parameter = filter.as_ref().map(|(short_name, _, _, _)| {
+                            quote! { request.#short_name, }
+                        });
+                        let limit_parameter = limit.as_ref().map(|(name, _)| {
+                            quote! { request.#name, }
                         });
 
                         let response = if index_has_sort {
@@ -1236,17 +1384,18 @@ impl From<stage3::Table<'_>> for Table {
                                 response_getter_columns,
                                 Some((index.filter, name_intern)),
                                 name_intern,
-                                index_limit,
+                                index_has_limit,
+                                is_one,
                             );
 
                             let response_sort_asc = quote! {
-                                ::sqlx::query!(#get_sort_asc, #filter_parameter)
+                                ::sqlx::query!(#get_sort_asc, #filter_parameter #limit_parameter)
                             };
                             let response_sort_asc =
                                 transform_response(&response_sort_asc, response_getter, is_one);
 
                             let response_sort_desc = quote! {
-                                ::sqlx::query!(#get_sort_desc, #filter_parameter)
+                                ::sqlx::query!(#get_sort_desc, #filter_parameter #limit_parameter)
                             };
                             let response_sort_desc =
                                 transform_response(&response_sort_desc, response_getter, is_one);
@@ -1263,10 +1412,11 @@ impl From<stage3::Table<'_>> for Table {
                                 response_getter_columns,
                                 Some((index.filter, name_intern)),
                                 None,
-                                index_limit,
+                                index_has_limit,
+                                is_one,
                             );
                             let response = quote! {
-                                ::sqlx::query!(#get, #filter_parameter)
+                                ::sqlx::query!(#get, #filter_parameter #limit_parameter)
                             };
                             transform_response(&response, response_getter, is_one)
                         };
@@ -1322,72 +1472,85 @@ impl From<stage3::Table<'_>> for Table {
                         // only include variant in enum if:
                         // - there is a controller index query
                         // - this variant is in the controller query index
-                        let has_index_enum = index.controller && table.index_rs_name.is_some();
-                        let index_enum = has_index_enum.then(|| {
-                            let filter_field_variant = if index_has_filter {
+                        let index_enum = table.index_rs_name.filter(|_| index.controller);
+                        let index_enum = index_enum.map(|table_index_rs_name| {
+                            let filter_field = filter.as_ref().map(|(_, name, _, rs_ty_owned)| {
                                 quote! {
-                                    #[serde(rename = #filter_field_rename)]
-                                    filter: #rs_ty_owned,
+                                    #name: #rs_ty_owned,
                                 }
-                            } else {
+                            });
+                            let limit_field = limit.as_ref().map(|(name, rs_ty)| {
                                 quote! {
-                                    #[serde(rename = #filter_field_rename)]
-                                    #[serde(default)]
-                                    filter: (),
+                                    #name: #rs_ty,
                                 }
-                            };
-                            let sort_field_variant = if index_has_sort {
+                            });
+                            let sort_field = sort.as_ref().map(|(_, name, rs_ty)| {
                                 quote! {
-                                    #[serde(rename = #sort_field_rename)]
-                                    sort: ::laraxum::model::Sort,
+                                    #name: #rs_ty,
                                 }
-                            } else {
-                                quote! {
-                                    #[serde(rename = #sort_field_rename)]
-                                    #[serde(default)]
-                                    sort: (),
-                                }
-                            };
+                            });
 
                             let index_variant_def_token_stream = quote! {
                                 #index_rs_name {
-                                    #filter_field_variant
-                                    #sort_field_variant
+                                    #filter_field
+                                    #limit_field
+                                    #sort_field
                                 }
                             };
-                            let filter_get = index_has_filter.then(|| {
+
+                            let filter_get = filter.as_ref().map(|(short_name, name, _, _)| {
                                 if is_borrowed {
-                                    quote! { ref filter, }
+                                    quote! {
+                                        #name: ref #short_name,
+                                    }
                                 } else {
-                                    quote! { filter, }
+                                    quote! {
+                                        #name: #short_name,
+                                    }
                                 }
                             });
-                            let sort_get = index_has_sort.then(|| {
-                                quote! { sort, }
+                            let limit_get = limit.as_ref().map(|(name, _)| {
+                                quote! {
+                                    #name,
+                                }
+                            });
+                            let sort_get = sort.as_ref().map(|(short_name, name, _)| {
+                                quote! {
+                                    #name: #short_name,
+                                }
                             });
 
-                            let filter_set = index_has_filter.then(|| {
-                                quote! { filter, }
+                            let filter_set = filter.as_ref().map(|(short_name, _, _, _)| {
+                                quote! {
+                                    #short_name,
+                                }
                             });
-                            let sort_set = index_has_sort.then(|| {
-                                quote! { sort, }
+                            let limit_set = limit.as_ref().map(|(name, _)| {
+                                quote! {
+                                    #name,
+                                }
+                            });
+                            let sort_set = sort.as_ref().map(|(short_name, _, _)| {
+                                quote! {
+                                    #short_name,
+                                }
                             });
 
                             let index_get = quote! {
-                                __laraxum__TableIndex__::#index_rs_name {
+                                #table_index_rs_name::#index_rs_name {
                                     #filter_get
+                                    #limit_get
                                     #sort_get
-                                    ..
                                 }
                             };
                             let index_set = quote! {
                                 #index_rs_name {
                                     #filter_set
+                                    #limit_set
                                     #sort_set
                                 }
                             };
-
-                            let index_variant_getter_token_stream = if is_one {
+                            let index_variant_match_token_stream = if is_one {
                                 quote! {
                                     #index_get => {
                                         <#table_rs_name as
@@ -1408,9 +1571,21 @@ impl From<stage3::Table<'_>> for Table {
                                     }
                                 }
                             };
+                            let index_variants = [
+                                filter.map(|(_, name, _, rs_ty_owned)| (name, rs_ty_owned.clone())),
+                                limit.map(|(name, rs_ty)| (name, rs_ty)),
+                                sort.map(|(_, name, rs_ty)| (name, rs_ty)),
+                            ];
+                            // let index_variants = filter
+                            //     .map(|(_, name, _, rs_ty_owned)| (name, rs_ty_owned.clone()))
+                            //     .into_iter()
+                            //     .chain(limit.into_iter().map(|(name, rs_ty)| (name, rs_ty)))
+                            //     .chain(sort.into_iter().map(|(_, name, rs_ty)| (name, rs_ty)));
+                            let index_variant_type_signature = (index_rs_name, index_variants);
                             (
                                 index_variant_def_token_stream,
-                                index_variant_getter_token_stream,
+                                index_variant_match_token_stream,
+                                index_variant_type_signature,
                             )
                         });
 
@@ -1424,20 +1599,33 @@ impl From<stage3::Table<'_>> for Table {
                 let index_variants = indexes
                     .iter()
                     .filter_map(|(_, index_variant)| index_variant.as_ref());
-                let index_variant_def_token_streams = index_variants.clone().map(|(i, _)| i);
-                let index_variant_getter_token_streams = index_variants.map(|(_, i)| i);
+                let index_variant_def_token_streams = index_variants.clone().map(|(i, _, _)| i);
+                let index_variant_match_token_streams = index_variants.clone().map(|(_, i, _)| i);
+                let index_variant_type_signatures =
+                    index_variants.map(|(_, _, (index_rs_name, fields))| {
+                        (
+                            *index_rs_name,
+                            fields.iter().flat_map(|field| {
+                                field.as_ref().map(|(rs_name, rs_ty)| (rs_name, rs_ty))
+                            }),
+                        )
+                    });
+
+                let impl_deserialize_for_table_index = impl_deserialize_for_untagged_enum(
+                    table_index_rs_name,
+                    index_variant_type_signatures,
+                    Some(table_index_rs_name),
+                );
 
                 quote! {
                     #token_stream
                     #( #index_token_streams )*
 
-                    #[derive(::serde::Deserialize)]
-                    #[serde(untagged)]
                     pub enum #table_index_rs_name {
                         #( #index_variant_def_token_streams, )*
-                        #table_index_rs_name {},
+                        #table_index_rs_name,
                     }
-
+                    #impl_deserialize_for_table_index
                     impl ::laraxum::CollectionIndexMany<#table_index_rs_name> for #table_rs_name {
                         type OneRequest<'b> = #table_index_rs_name;
                         type ManyResponse = Self;
@@ -1450,10 +1638,9 @@ impl From<stage3::Table<'_>> for Table {
                                 ::laraxum::Error,
                             >
                         {
-                            use #table_index_rs_name as __laraxum__TableIndex__;
                             match request {
-                                #( #index_variant_getter_token_streams, )*
-                                __laraxum__TableIndex__::#table_index_rs_name {} => {
+                                #( #index_variant_match_token_streams, )*
+                                #table_index_rs_name::#table_index_rs_name => {
                                     <#table_rs_name as ::laraxum::Collection>::get_all(db).await
                                 }
                             }

@@ -253,7 +253,8 @@ pub struct ColumnAttrIndex {
     pub filter: ColumnAttrIndexFilter,
     #[darling(default)]
     pub sort: bool,
-    pub limit: Option<u64>,
+    #[darling(default)]
+    pub limit: bool,
     #[darling(default)]
     pub controller: bool,
 }
