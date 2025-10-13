@@ -12,13 +12,33 @@ const TABLE_MUST_HAVE_TWO_COLUMNS: &str = "table must have two columns";
 const TABLE_DOES_NOT_EXIST: &str = "table does not exist";
 const TABLE_MUST_NOT_IMPLEMENT_CONTROLLER: &str = "table must not implement controller";
 // const MODEL_AND_MANY_MODEL_CONFLICT: &str = "model and many_model conflict";
-const ID_MUST_BE_U64: &str = "id must be u64";
+const ID_MUST_BE_INT: &str = "id must be int";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
 const COLUMN_MUST_NOT_BE_UNIQUE: &str = "column must not be unique";
 const COLUMN_MUST_BE_VEC: &str = "column must be Vec";
 const COLUMN_MUST_SPECIFY_INTERMEDIATE_TABLE: &str = "column must specify intermediate table";
+
+#[expect(non_camel_case_types)]
+#[derive(Clone)]
+pub enum AtomicTyInt {
+    u8,
+    i8,
+    u16,
+    i16,
+    u32,
+    i32,
+    u64,
+    i64,
+}
+
+#[expect(non_camel_case_types)]
+#[derive(Clone)]
+pub enum AtomicTyFloat {
+    f32,
+    f64,
+}
 
 #[derive(Clone)]
 pub enum AtomicTyString {
@@ -47,16 +67,8 @@ pub enum AtomicTyTime {
 #[derive(Clone)]
 pub enum AtomicTy {
     bool,
-    u8,
-    i8,
-    u16,
-    i16,
-    u32,
-    i32,
-    u64,
-    i64,
-    f32,
-    f64,
+    Int(AtomicTyInt),
+    Float(AtomicTyFloat),
     String(AtomicTyString),
     Time(AtomicTyTime),
 }
@@ -64,16 +76,18 @@ impl From<stage1::AtomicTy> for AtomicTy {
     fn from(atomic_ty: stage1::AtomicTy) -> Self {
         match atomic_ty {
             stage1::AtomicTy::bool => Self::bool,
-            stage1::AtomicTy::u8 => Self::u8,
-            stage1::AtomicTy::i8 => Self::i8,
-            stage1::AtomicTy::u16 => Self::u16,
-            stage1::AtomicTy::i16 => Self::i16,
-            stage1::AtomicTy::u32 => Self::u32,
-            stage1::AtomicTy::i32 => Self::i32,
-            stage1::AtomicTy::u64 => Self::u64,
-            stage1::AtomicTy::i64 => Self::i64,
-            stage1::AtomicTy::f32 => Self::f32,
-            stage1::AtomicTy::f64 => Self::f64,
+
+            stage1::AtomicTy::u8 => Self::Int(AtomicTyInt::u8),
+            stage1::AtomicTy::i8 => Self::Int(AtomicTyInt::i8),
+            stage1::AtomicTy::u16 => Self::Int(AtomicTyInt::u16),
+            stage1::AtomicTy::i16 => Self::Int(AtomicTyInt::i16),
+            stage1::AtomicTy::u32 => Self::Int(AtomicTyInt::u32),
+            stage1::AtomicTy::i32 => Self::Int(AtomicTyInt::i32),
+            stage1::AtomicTy::u64 => Self::Int(AtomicTyInt::u64),
+            stage1::AtomicTy::i64 => Self::Int(AtomicTyInt::i64),
+
+            stage1::AtomicTy::f32 => Self::Float(AtomicTyFloat::f32),
+            stage1::AtomicTy::f64 => Self::Float(AtomicTyFloat::f64),
 
             stage1::AtomicTy::String => Self::String(AtomicTyString::Varchar(255)),
 
@@ -171,7 +185,7 @@ pub enum DefaultValue<'a> {
 
 #[derive(Clone)]
 pub enum TyElement {
-    Id,
+    Id(AtomicTyInt),
     Value(TyElementValue),
     AutoTime(TyElementAutoTime),
 }
@@ -181,13 +195,19 @@ impl TyElement {
     }
     pub const fn unique(&self) -> bool {
         match self {
-            Self::Id => true,
+            Self::Id(_) => true,
             Self::Value(value) => value.unique,
             Self::AutoTime(_) => false,
         }
     }
+    pub const fn id(&self) -> Option<&AtomicTyInt> {
+        match self {
+            Self::Id(id) => Some(id),
+            _ => None,
+        }
+    }
     pub const fn is_id(&self) -> bool {
-        matches!(self, Self::Id)
+        matches!(self, Self::Id(_))
     }
     pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
         match self {
@@ -223,7 +243,7 @@ impl TyCompoundMultiplicity {
 }
 
 pub struct TyCompound {
-    pub ty: Ident,
+    pub rs_ty_name: Ident,
     pub multiplicity: TyCompoundMultiplicity,
 }
 impl TyCompound {
@@ -250,6 +270,12 @@ impl Ty {
         match self {
             Self::Compound(compound) => compound.unique(),
             Self::Element(element) => element.unique(),
+        }
+    }
+    pub const fn id(&self) -> Option<&AtomicTyInt> {
+        match self {
+            Self::Compound(_) => None,
+            Self::Element(element) => element.id(),
         }
     }
     pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
@@ -380,7 +406,7 @@ impl TryFrom<stage1::Column> for Column {
                     }
                 };
                 Ty::Compound(TyCompound {
-                    ty,
+                    rs_ty_name: ty,
                     multiplicity: ty_compound_multiplicity,
                 })
             }
@@ -399,13 +425,13 @@ impl TryFrom<stage1::Column> for Column {
                         if unique {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_UNIQUE));
                         }
-                        let AtomicTy::u64 = ty else {
-                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_U64));
+                        let AtomicTy::Int(ty) = ty else {
+                            return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_INT));
                         };
                         if optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         }
-                        Ty::Element(TyElement::Id)
+                        Ty::Element(TyElement::Id(ty))
                     }
                     CATE::String(atomic_ty_string) => {
                         let TyElementValue {
@@ -577,7 +603,7 @@ impl TryFrom<stage1::Table> for Table {
             .into_iter()
             .map(|column| {
                 let column = Column::try_from(column)?;
-                if matches!(column.ty, Ty::Element(TyElement::Id)) {
+                if matches!(column.ty, Ty::Element(TyElement::Id(_))) {
                     if id.is_some() {
                         return Err(syn::Error::new(
                             column.rs_name.span(),

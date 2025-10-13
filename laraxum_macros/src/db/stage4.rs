@@ -7,6 +7,30 @@ use std::{borrow::Cow, vec};
 use quote::{ToTokens, quote};
 use syn::{Ident, Type};
 
+impl stage3::AtomicTyInt {
+    const fn ty(&self) -> &'static str {
+        match self {
+            Self::u8 => "TINYINT UNSIGNED",
+            Self::i8 => "TINYINT",
+            Self::u16 => "SMALLINT UNSIGNED",
+            Self::i16 => "SMALLINT",
+            Self::u32 => "INT UNSIGNED",
+            Self::i32 => "INT",
+            Self::u64 => "BIGINT UNSIGNED",
+            Self::i64 => "BIGINT",
+        }
+    }
+}
+
+impl stage3::AtomicTyFloat {
+    const fn ty(&self) -> &'static str {
+        match self {
+            Self::f32 => "FLOAT",
+            Self::f64 => "DOUBLE",
+        }
+    }
+}
+
 impl stage3::AtomicTyString {
     fn ty(&self) -> Cow<'static, str> {
         #[cfg(feature = "mysql")]
@@ -19,7 +43,7 @@ impl stage3::AtomicTyString {
 }
 
 impl stage3::AtomicTyTime {
-    pub const fn ty(&self) -> &'static str {
+    const fn ty(&self) -> &'static str {
         #[cfg(feature = "mysql")]
         match self {
             Self::ChronoDateTimeUtc | Self::ChronoDateTimeLocal | Self::TimeOffsetDateTime => {
@@ -32,7 +56,7 @@ impl stage3::AtomicTyTime {
             }
         }
     }
-    pub const fn current_time_func(&self) -> &'static str {
+    const fn current_time_func(&self) -> &'static str {
         #[cfg(feature = "mysql")]
         match self {
             Self::ChronoDateTimeUtc => "UTC_TIMESTAMP()",
@@ -53,56 +77,46 @@ impl stage3::AtomicTy {
         #[cfg(feature = "mysql")]
         match self {
             Self::bool => Cow::Borrowed("BOOL"),
-            Self::u8 => Cow::Borrowed("TINYINT UNSIGNED"),
-            Self::i8 => Cow::Borrowed("TINYINT"),
-            Self::u16 => Cow::Borrowed("SMALLINT UNSIGNED"),
-            Self::i16 => Cow::Borrowed("SMALLINT"),
-            Self::u32 => Cow::Borrowed("INT UNSIGNED"),
-            Self::i32 => Cow::Borrowed("INT"),
-            Self::u64 => Cow::Borrowed("BIGINT UNSIGNED"),
-            Self::i64 => Cow::Borrowed("BIGINT"),
-            Self::f32 => Cow::Borrowed("FLOAT"),
-            Self::f64 => Cow::Borrowed("DOUBLE"),
-
+            Self::Int(int) => Cow::Borrowed(int.ty()),
+            Self::Float(float) => Cow::Borrowed(float.ty()),
             Self::String(string) => string.ty(),
             Self::Time(time) => Cow::Borrowed(time.ty()),
         }
-
-        #[cfg(feature = "sqlite")]
-        match self {
-            Self::bool => Cow::Borrowed("BOOLEAN"),
-            Self::u8 => Cow::Borrowed("INTEGER"),
-            Self::i8 => Cow::Borrowed("INTEGER"),
-            Self::u16 => Cow::Borrowed("INTEGER"),
-            Self::i16 => Cow::Borrowed("INTEGER"),
-            Self::u32 => Cow::Borrowed("INTEGER"),
-            Self::i32 => Cow::Borrowed("INTEGER"),
-            Self::u64 => Cow::Borrowed("INTEGER"),
-            Self::i64 => Cow::Borrowed("BIGINT"),
-            Self::f32 => Cow::Borrowed("FLOAT"),
-            Self::f64 => Cow::Borrowed("DOUBLE"),
-
-            Self::String(string) => string.sql_ty(),
-            Self::Time(time) => Cow::Borrowed(time.sql_ty()),
-        }
-
-        #[cfg(feature = "postgres")]
-        match self {
-            Self::bool => Cow::Borrowed("BOOL"),
-            Self::u8 => Cow::Borrowed("CHAR"),
-            Self::i8 => Cow::Borrowed("CHAR"),
-            Self::u16 => Cow::Borrowed("INT2"),
-            Self::i16 => Cow::Borrowed("INT2"),
-            Self::u32 => Cow::Borrowed("INT4"),
-            Self::i32 => Cow::Borrowed("INT4"),
-            Self::u64 => Cow::Borrowed("INT8"),
-            Self::i64 => Cow::Borrowed("INT8"),
-            Self::f32 => Cow::Borrowed("FLOAT4"),
-            Self::f64 => Cow::Borrowed("FLOAT8"),
-
-            Self::String(string) => string.sql_ty(),
-            Self::Time(time) => Cow::Borrowed(time.sql_ty()),
-        }
+        //         #[cfg(feature = "sqlite")]
+        //         match self {
+        //             Self::bool => Cow::Borrowed("BOOLEAN"),
+        //             Self::u8 => Cow::Borrowed("INTEGER"),
+        //             Self::i8 => Cow::Borrowed("INTEGER"),
+        //             Self::u16 => Cow::Borrowed("INTEGER"),
+        //             Self::i16 => Cow::Borrowed("INTEGER"),
+        //             Self::u32 => Cow::Borrowed("INTEGER"),
+        //             Self::i32 => Cow::Borrowed("INTEGER"),
+        //             Self::u64 => Cow::Borrowed("INTEGER"),
+        //             Self::i64 => Cow::Borrowed("BIGINT"),
+        //             Self::f32 => Cow::Borrowed("FLOAT"),
+        //             Self::f64 => Cow::Borrowed("DOUBLE"),
+        //
+        //             Self::String(string) => string.sql_ty(),
+        //             Self::Time(time) => Cow::Borrowed(time.sql_ty()),
+        //         }
+        //
+        //         #[cfg(feature = "postgres")]
+        //         match self {
+        //             Self::bool => Cow::Borrowed("BOOL"),
+        //             Self::u8 => Cow::Borrowed("CHAR"),
+        //             Self::i8 => Cow::Borrowed("CHAR"),
+        //             Self::u16 => Cow::Borrowed("INT2"),
+        //             Self::i16 => Cow::Borrowed("INT2"),
+        //             Self::u32 => Cow::Borrowed("INT4"),
+        //             Self::i32 => Cow::Borrowed("INT4"),
+        //             Self::u64 => Cow::Borrowed("INT8"),
+        //             Self::i64 => Cow::Borrowed("INT8"),
+        //             Self::f32 => Cow::Borrowed("FLOAT4"),
+        //             Self::f64 => Cow::Borrowed("FLOAT8"),
+        //
+        //             Self::String(string) => string.sql_ty(),
+        //             Self::Time(time) => Cow::Borrowed(time.sql_ty()),
+        //         }
     }
 }
 
@@ -117,20 +131,23 @@ impl stage3::DefaultValue<'_> {
 impl stage3::TyElement {
     fn ty(&self) -> Cow<'static, str> {
         match self {
-            Self::Id => Cow::Borrowed({
-                #[cfg(feature = "mysql")]
-                {
-                    "BIGINT UNSIGNED"
-                }
-                #[cfg(feature = "sqlite")]
-                {
-                    "INTEGER"
-                }
-                #[cfg(feature = "postgres")]
-                {
-                    "BIGSERIAL"
-                }
-            }),
+            Self::Id(id) => Cow::Borrowed(id.ty()),
+            // Self::Id(id) => Cow::Borrowed(
+            //     {
+            //     #[cfg(feature = "mysql")]
+            //     {
+            //         "BIGINT UNSIGNED"
+            //     }
+            //     #[cfg(feature = "sqlite")]
+            //     {
+            //         "INTEGER"
+            //     }
+            //     #[cfg(feature = "postgres")]
+            //     {
+            //         "BIGSERIAL"
+            //     }
+            //     }
+            // ),
             Self::Value(value) => value.ty.ty(),
             Self::AutoTime(auto_time) => Cow::Borrowed(auto_time.ty.ty()),
         }
@@ -140,20 +157,21 @@ impl stage3::TyElement {
 impl stage3::TyCompound<'_> {
     #[expect(clippy::unused_self)]
     const fn ty(&self) -> &'static str {
-        {
-            #[cfg(feature = "mysql")]
-            {
-                "BIGINT UNSIGNED"
-            }
-            #[cfg(feature = "sqlite")]
-            {
-                "INTEGER"
-            }
-            #[cfg(feature = "postgres")]
-            {
-                "BIGINT"
-            }
-        }
+        self.ty.ty()
+        // {
+        //     #[cfg(feature = "mysql")]
+        //     {
+        //         "BIGINT UNSIGNED"
+        //     }
+        //     #[cfg(feature = "sqlite")]
+        //     {
+        //         "INTEGER"
+        //     }
+        //     #[cfg(feature = "postgres")]
+        //     {
+        //         "BIGINT"
+        //     }
+        // }
     }
 }
 
@@ -182,7 +200,7 @@ impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
             fmt2::fmt! { (? w) => " DEFAULT " {default_value} }?;
         }
         match self {
-            Self::Element(stage3::TyElement::Id) => {
+            Self::Element(stage3::TyElement::Id(_)) => {
                 #[cfg(feature = "mysql")]
                 fmt2::fmt! { (? w) => " PRIMARY KEY AUTO_INCREMENT" }?;
                 #[cfg(feature = "sqlite")]
@@ -1675,6 +1693,7 @@ impl From<stage3::Table<'_>> for Table {
                 return token_stream;
             };
 
+            let table_id_rs_ty = table_id.response.field.rs_ty;
             let table_id_name = table_id.create.name;
             let table_id_name_intern = table_id.response.getter.name_intern();
 
@@ -1699,7 +1718,7 @@ impl From<stage3::Table<'_>> for Table {
                 #token_stream
 
                 impl ::laraxum::Model for #table_rs_name {
-                    type Id = u64;
+                    type Id = #table_id_rs_ty;
                     type UpdateRequest = #table_request_rs_name;
                     type UpdateRequestError = #table_request_error_rs_name;
 
@@ -1846,10 +1865,12 @@ impl From<stage3::Table<'_>> for Table {
                 one: &stage3::ColumnOne,
                 many: &stage3::ColumnOne,
             ) -> proc_macro2::TokenStream {
-                let index_ty = many.struct_name.map_or_else(
+                let index_rs_ty = many.struct_name.map_or_else(
                     || one.response.field.rs_ty.to_token_stream(),
                     |struct_name| struct_name.to_token_stream(),
                 );
+                let one_request_rs_ty = one.request.request_field().map(|field| &*field.rs_ty);
+                let many_request_rs_ty = many.request.request_field().map(|field| &*field.rs_ty);
                 let many_response_rs_ty = many.response.field.rs_ty;
 
                 let many_response_getter =
@@ -1884,9 +1905,9 @@ impl From<stage3::Table<'_>> for Table {
                 let table_rs_name = table.rs_name;
 
                 quote! {
-                    impl ::laraxum::ManyModel<#index_ty> for #table_rs_name {
-                        type OneRequest = u64;
-                        type ManyRequest = u64;
+                    impl ::laraxum::ManyModel<#index_rs_ty> for #table_rs_name {
+                        type OneRequest = #one_request_rs_ty;
+                        type ManyRequest = #many_request_rs_ty;
                         type ManyResponse = #many_response_rs_ty;
 
                         async fn get_many(
@@ -1927,10 +1948,10 @@ impl From<stage3::Table<'_>> for Table {
                             >
                         {
                             <
-                                Self as ::laraxum::ManyModel<#index_ty>
+                                Self as ::laraxum::ManyModel<#index_rs_ty>
                             >::delete_many(db, one).await?;
                             <
-                                Self as ::laraxum::ManyModel<#index_ty>
+                                Self as ::laraxum::ManyModel<#index_rs_ty>
                             >::create_many(db, one, many).await?;
                             ::core::result::Result::Ok(())
                         }

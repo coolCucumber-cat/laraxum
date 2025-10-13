@@ -1,8 +1,8 @@
 use super::stage2;
 
 pub use stage2::{
-    AtomicTy, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns, DefaultValue, TyElement,
-    TyElementAutoTime,
+    AtomicTy, AtomicTyFloat, AtomicTyInt, AtomicTyString, AtomicTyTime, AutoTimeEvent, Columns,
+    DefaultValue, TyElementAutoTime,
 };
 
 use crate::utils::{borrow::DerefEither, collections::TryCollectAll};
@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use syn::{Attribute, Ident, Type, Visibility};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
+const TABLE_ID_MUST_BE_INT: &str = "table ID must be int";
 const COLUMN_MUST_NOT_BE_COMPOUNDS: &str = "column must not be many-to-many relationship";
 // const COLUMN_MUST_HAVE_STRUCT_NAME: &str = "column must have struct name";
 
@@ -28,9 +29,12 @@ fn name_intern_extern(parent_child: (&str, &str)) -> (String, String) {
     (name_intern(parent_child), name_extern(parent_child))
 }
 
+pub use stage2::TyElement;
+
 pub struct TyCompound<'a> {
     pub foreign_table_name: &'a str,
     pub foreign_table_id_name: &'a str,
+    pub ty: &'a AtomicTyInt,
     pub optional: bool,
     pub unique: bool,
 }
@@ -203,6 +207,20 @@ pub enum RequestColumnOne<'a> {
     },
     None,
 }
+impl RequestColumnOne<'_> {
+    pub const fn request_field(&self) -> Option<&RequestColumnField> {
+        match self {
+            Self::Some { field, setter: _ } => Some(field),
+            _ => None,
+        }
+    }
+    pub const fn request_setter(&self) -> Option<&RequestColumnSetterOne> {
+        match self {
+            Self::Some { setter, field: _ } => Some(setter),
+            _ => None,
+        }
+    }
+}
 
 pub struct RequestColumnCompounds<'a> {
     pub field: RequestColumnField<'a>,
@@ -283,11 +301,7 @@ impl<'a> ColumnRef<'a> {
     }
     pub const fn request_field(self) -> Option<&'a RequestColumnField<'a>> {
         match self {
-            Self::One(ColumnOne {
-                request: RequestColumnOne::Some { field, .. },
-                ..
-            }) => Some(field),
-            Self::One(_) => None,
+            Self::One(one) => one.request.request_field(),
             Self::Compounds(compounds) => Some(&compounds.request.field),
         }
     }
@@ -396,16 +410,31 @@ pub struct Table<'a> {
 impl<'a> Table<'a> {
     #[expect(clippy::too_many_lines)]
     fn try_new(table: &'a stage2::Table, db: &'a stage2::Db) -> syn::Result<Self> {
-        fn rs_ty_compound_request(optional: bool) -> Type {
+        fn rs_ty_compound_request(
+            rs_ty: &Type,
+            optional: bool,
+        ) -> DerefEither<Type, &Type, Box<Type>> {
             if optional {
-                syn::parse_quote!(Option<u64>)
+                DerefEither::Right(Box::new(syn::parse_quote!(Option<#rs_ty>)))
             } else {
-                syn::parse_quote!(u64)
+                DerefEither::Left(rs_ty)
             }
         }
-        fn rs_ty_compounds_request() -> Type {
-            syn::parse_quote!(Vec<u64>)
+        fn rs_ty_compounds_request(
+            many_foreign_table_rs_name: &Ident,
+            index_rs_name: &Ident,
+        ) -> Type {
+            syn::parse_quote!(
+                Vec<
+                    <
+                        #many_foreign_table_rs_name as ::laraxum::ManyModel<#index_rs_name>
+                    >::ManyRequest
+                >
+            )
         }
+        // fn rs_ty_compounds_request(rs_ty: &Type) -> Type {
+        //     syn::parse_quote!(Vec<#rs_ty>)
+        // }
 
         fn traverse<'table: 'iter, 'iter>(
             table_name_extern: &str,
@@ -431,7 +460,7 @@ impl<'a> Table<'a> {
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: ref foreign_table_rs_name,
+                        rs_ty_name: ref foreign_table_rs_name,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::One {
                                 optional,
@@ -469,7 +498,7 @@ impl<'a> Table<'a> {
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Compound(compound))
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: _,
+                        rs_ty_name: _,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
                                 model_rs_name: ref many_foreign_table_rs_name,
@@ -558,20 +587,24 @@ impl<'a> Table<'a> {
                                 name,
                                 time_ty: ty.clone(),
                             },
-                            TyElement::AutoTime(_) | TyElement::Id => RequestColumnOne::None,
+                            TyElement::AutoTime(_) | TyElement::Id(_) => RequestColumnOne::None,
                         },
                         index,
                         borrow,
                         struct_name,
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: ref foreign_table_rs_name,
+                        rs_ty_name: ref foreign_table_rs_name,
                         multiplicity: stage2::TyCompoundMultiplicity::One { optional, unique },
                     }) => {
                         let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
                         let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
                             syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
+                        let foreign_table_id_ty = foreign_table_id.ty.id().ok_or_else(|| {
+                            syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
+                        })?;
+                        let foreign_table_id_rs_ty = &*foreign_table_id.rs_ty;
 
                         let foreign_table_name_intern =
                             name_intern((&db.name, &foreign_table.name));
@@ -602,6 +635,7 @@ impl<'a> Table<'a> {
                                 ty: Ty::Compound(TyCompound {
                                     foreign_table_name: &foreign_table.name,
                                     foreign_table_id_name: &foreign_table_id.name,
+                                    ty: foreign_table_id_ty,
                                     optional,
                                     unique,
                                 }),
@@ -618,9 +652,7 @@ impl<'a> Table<'a> {
                             request: RequestColumnOne::Some {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: DerefEither::Right(Box::new(rs_ty_compound_request(
-                                        optional,
-                                    ))),
+                                    rs_ty: rs_ty_compound_request(foreign_table_id_rs_ty, optional),
                                     attr: attr_request,
                                     rs_attrs,
                                 },
@@ -637,7 +669,7 @@ impl<'a> Table<'a> {
                         })
                     }
                     stage2::Ty::Compound(stage2::TyCompound {
-                        ty: _,
+                        rs_ty_name: _,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
                                 model_rs_name: ref many_foreign_table_rs_name,
@@ -676,7 +708,10 @@ impl<'a> Table<'a> {
                             request: RequestColumnCompounds {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: DerefEither::Right(Box::new(rs_ty_compounds_request())),
+                                    rs_ty: DerefEither::Right(Box::new(rs_ty_compounds_request(
+                                        many_foreign_table_rs_name,
+                                        index_rs_name,
+                                    ))),
                                     attr: attr_request,
                                     rs_attrs,
                                 },
