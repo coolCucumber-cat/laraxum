@@ -4,7 +4,6 @@ use crate::utils::syn::from_str_to_rs_ident;
 
 use std::{borrow::Cow, vec};
 
-use fmt2::write_to::FmtAdvanced;
 use quote::{ToTokens, quote};
 use syn::{Ident, Type};
 
@@ -293,7 +292,7 @@ fn get(
     ),
     index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     index_sort: Option<(Sort, &str)>,
-    index_limit: bool,
+    index_limit: Option<stage3::ColumnAttrIndexLimit>,
     is_one: bool,
 ) -> String {
     let mut get = fmt2::fmt! { { str } =>
@@ -344,8 +343,17 @@ fn get(
     }
     if is_one {
         fmt2::fmt! { (get) => " LIMIT 1" };
-    } else if index_limit {
-        fmt2::fmt! { (get) => " LIMIT ?" };
+    } else if let Some(index_limit) = index_limit {
+        match index_limit {
+            stage3::ColumnAttrIndexLimit::None => {}
+            stage3::ColumnAttrIndexLimit::Limit => {
+                fmt2::fmt! { (get) => " LIMIT ?" };
+            }
+            stage3::ColumnAttrIndexLimit::Page { per_page } => {
+                // the `OFFSET` is set in the parameter as `OFFSET * per_page`
+                fmt2::fmt! { (get) => " LIMIT " {per_page} " OFFSET ? " };
+            }
+        }
     }
     get
 }
@@ -363,7 +371,7 @@ fn get_all(
         response_getter_columns,
         None,
         None,
-        false,
+        None,
         false,
     )
 }
@@ -382,7 +390,7 @@ fn get_one(
         response_getter_columns,
         Some(index_filter),
         None,
-        false,
+        None,
         true,
     )
 }
@@ -401,7 +409,7 @@ fn get_many(
         response_getter_columns,
         Some(index_filter),
         None,
-        false,
+        None,
         false,
     )
 }
@@ -414,7 +422,7 @@ fn get_sort_asc_desc(
     ),
     index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
     sort_column_name_intern: &str,
-    index_limit: bool,
+    index_limit: Option<stage3::ColumnAttrIndexLimit>,
     is_one: bool,
 ) -> (String, String) {
     (
@@ -1308,31 +1316,33 @@ impl From<stage3::Table<'_>> for Table {
                     column.index.iter().map(move |index| {
                         let is_one = is_unique && index.filter.is_eq();
                         let index_rs_name = &index.rs_name;
-                        let index_has_filter = index.filter.has_parameter();
-                        let index_has_limit = index.limit && !is_one;
-                        let index_has_sort = index.sort;
 
-                        let filter = index_has_filter.then(|| {
+                        let filter = index.filter.parameter().map(|parameter_name| {
                             (
                                 quote::format_ident!("filter"),
                                 quote::format_ident!(
                                     "filter_{}_{}",
                                     column_response_name,
-                                    index.filter.fmt_advanced()
+                                    parameter_name
                                 ),
                                 &filter_rs_ty,
                                 filter_rs_ty_owned,
                             )
                         });
-                        let limit = index_has_limit.then(|| {
-                            (
-                                quote::format_ident!("limit"),
-                                syn::parse_quote! {
-                                    u64
-                                },
-                            )
-                        });
-                        let sort = index_has_sort.then(|| -> (Ident, Ident, Type) {
+                        let limit =
+                            index
+                                .limit
+                                .parameter()
+                                .filter(|_| !is_one)
+                                .map(|parameter_name| {
+                                    (
+                                        quote::format_ident!("{}", parameter_name),
+                                        syn::parse_quote! {
+                                            u64
+                                        },
+                                    )
+                                });
+                        let sort = index.sort.then(|| -> (Ident, Ident, Type) {
                             (
                                 quote::format_ident!("sort"),
                                 quote::format_ident!("sort_{}", column_response_name),
@@ -1373,18 +1383,23 @@ impl From<stage3::Table<'_>> for Table {
                         let filter_parameter = filter.as_ref().map(|(short_name, _, _, _)| {
                             quote! { request.#short_name, }
                         });
-                        let limit_parameter = limit.as_ref().map(|(name, _)| {
-                            quote! { request.#name, }
+                        let limit_parameter = limit.as_ref().map(|(name, _)| match index.limit {
+                            stage3::ColumnAttrIndexLimit::Page { per_page } => {
+                                quote! { request.#name * #per_page, }
+                            }
+                            _ => {
+                                quote! { request.#name, }
+                            }
                         });
 
-                        let response = if index_has_sort {
+                        let response = if index.sort {
                             let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
                                 table_name_intern,
                                 table_name_extern,
                                 response_getter_columns,
                                 Some((index.filter, name_intern)),
                                 name_intern,
-                                index_has_limit,
+                                Some(index.limit),
                                 is_one,
                             );
 
@@ -1412,7 +1427,7 @@ impl From<stage3::Table<'_>> for Table {
                                 response_getter_columns,
                                 Some((index.filter, name_intern)),
                                 None,
-                                index_has_limit,
+                                Some(index.limit),
                                 is_one,
                             );
                             let response = quote! {

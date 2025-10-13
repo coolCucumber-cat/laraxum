@@ -58,7 +58,7 @@ The database is defined using the `db` attribute macro on a module:
 >`db(`
 >
 >>The name of the database.  
->>Defaults to the module name.  
+>>Default: the module name.  
 >>
 >>`name =` `<String>` `,`
 >
@@ -69,7 +69,7 @@ Each struct in the module is a table. Use the `db` attribute on the struct:
 >`db(`
 >
 >>The name of the table in the database.  
->>Defaults to the struct name.  
+>>Default: the struct name.  
 >>
 >>`name =` `<String>` `,`
 >
@@ -79,12 +79,13 @@ Each struct in the module is a table. Use the `db` attribute on the struct:
 >>
 >>>Implement manymodel instead of model.  
 >>>Use the `struct_name` attribute to change the type used to refer to each column.  
+>>>Default: `false`.  
 >>>
->>>`many,`
+>>>`many =` `<bool>` `,`
 >>
 >>`),`
 >
->>Implement controller.
+>>Implement controller.  
 >>
 >>`controller(`
 >>
@@ -110,7 +111,7 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >`db(`
 >
 >>The name of the column in the database.  
->>Defaults to the field name.  
+>>Default: the field name.  
 >>
 >>`name =` `<String>` `,`
 >
@@ -199,11 +200,12 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>`response(`
 >>
 >>>The name of the field when serializing the response.  
->>>Defaults to the field name.  
+>>>Default: the field name.  
 >>>
 >>>`name =` `<String>` `,`
 >>
 >>>Skip the field when serializing the response.  
+>>>Default: `false`.  
 >>>
 >>>`skip =` `<bool>` `,`
 >>
@@ -214,6 +216,7 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>`request(`
 >>
 >>>The name of the field when deserializing the request.  
+>>>Default: the field name.  
 >>>
 >>>`name =` `<String>` `,`
 >>
@@ -275,6 +278,7 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>This column is unique.  
 >>This affects how indexing works.
 >>If you filter by this column, it will return zero or one records.  
+>>Default: `false`.  
 >>
 >>`unique =` `<bool>` `,`
 >
@@ -288,10 +292,11 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>>`name =` `<Ident>` `,`
 >>
 >>>Filter by this column.  
+>>>Default: `none`.  
 >>>
 >>>`filter(`
 >>>
->>> 1. >Do not filter.  
+>>> 1. >Do not use filter.  
 >>>    >
 >>>    >`none`
 >>>
@@ -322,14 +327,39 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>>`),`
 >>
 >>>Sort by this column.  
+>>>Default: `false`.  
 >>>
 >>>`sort =` `<bool>` `,`
 >>
->>>Limit number of records.
+>>>Limit number of records.  
+>>>Default: `none`.  
 >>>
->>>`limit =` `<u64>` `,`
+>>>`limit(`
+>>>
+>>> 1. >Do not use limit.  
+>>>    >
+>>>    >`none`
+>>>
+>>> 2. >Use limit.  
+>>>    >
+>>>    >`limit`
+>>>
+>>> 3. >Page based pagination.  
+>>>    >Select page to view with a number.  
+>>>    >Page size isn't dynamic (yet) so you have to choose one size to use.  
+>>>    >
+>>>    >`page(`
+>>>    >
+>>>    >>How many items per page.  
+>>>    >>
+>>>    >>`per_page =` `<u64>`
+>>>    >
+>>>    >`)`
+>>>
+>>>`),`
 >>
 >>>If `index_name` for the table is set, this index will be in the table index as well.  
+>>>Default: `false`.  
 >>>
 >>>`controller =` `<bool>` `,`
 >>

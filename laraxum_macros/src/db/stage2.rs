@@ -296,6 +296,8 @@ pub use stage1::ColumnAttrIndex;
 
 pub use stage1::ColumnAttrIndexFilter;
 
+pub use stage1::ColumnAttrIndexLimit;
+
 pub struct Column {
     /// the name of the column in the database
     pub name: String,

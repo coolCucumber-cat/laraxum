@@ -206,9 +206,10 @@ pub struct ColumnAttrRequest {
     pub validate: Vec<ValidateRule>,
 }
 
-#[derive(darling::FromMeta, Clone, Copy)]
+#[derive(darling::FromMeta, Default, Clone, Copy)]
 #[darling(rename_all = "snake_case")]
 pub enum ColumnAttrIndexFilter {
+    #[default]
     None,
     Eq,
     Like,
@@ -217,29 +218,43 @@ pub enum ColumnAttrIndexFilter {
     Gte,
     Lte,
 }
-impl fmt2::write_to::FmtAdvanced for ColumnAttrIndexFilter {
-    type Target = str;
-    fn fmt_advanced(&self) -> &Self::Target {
+impl ColumnAttrIndexFilter {
+    pub fn parameter(&self) -> Option<&'static str> {
         match self {
-            Self::None => "none",
-            Self::Eq => "eq",
-            Self::Like => "like",
-            Self::Gt => "gt",
-            Self::Lt => "lt",
-            Self::Gte => "gte",
-            Self::Lte => "lte",
+            Self::None => None,
+            Self::Eq => Some("eq"),
+            Self::Like => Some("like"),
+            Self::Gt => Some("gt"),
+            Self::Lt => Some("lt"),
+            Self::Gte => Some("gte"),
+            Self::Lte => Some("lte"),
         }
     }
-}
-impl ColumnAttrIndexFilter {
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }
     pub fn is_eq(&self) -> bool {
         matches!(self, Self::Eq)
     }
-    pub fn has_parameter(&self) -> bool {
-        matches!(self, Self::Eq | Self::Like)
+}
+
+#[derive(darling::FromMeta, Default, Clone, Copy)]
+#[darling(rename_all = "snake_case")]
+pub enum ColumnAttrIndexLimit {
+    #[default]
+    None,
+    Limit,
+    Page {
+        per_page: u64,
+    },
+}
+impl ColumnAttrIndexLimit {
+    pub fn parameter(&self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Limit => Some("limit"),
+            Self::Page { .. } => Some("page"),
+        }
     }
 }
 
@@ -250,11 +265,12 @@ pub struct ColumnAttrIndex {
         and_then = "crate::utils::syn::TokenStreamAttr::transform"
     )]
     pub rs_name: Ident,
+    #[darling(default)]
     pub filter: ColumnAttrIndexFilter,
     #[darling(default)]
     pub sort: bool,
     #[darling(default)]
-    pub limit: bool,
+    pub limit: ColumnAttrIndexLimit,
     #[darling(default)]
     pub controller: bool,
 }

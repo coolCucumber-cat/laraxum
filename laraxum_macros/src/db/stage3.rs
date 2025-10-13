@@ -213,6 +213,8 @@ pub use stage2::ColumnAttrIndex;
 
 pub use stage2::ColumnAttrIndexFilter;
 
+pub use stage2::ColumnAttrIndexLimit;
+
 pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
