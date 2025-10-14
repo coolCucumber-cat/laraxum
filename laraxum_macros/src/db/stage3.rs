@@ -402,6 +402,7 @@ pub struct Table<'a> {
     pub name_extern: String,
     pub rs_name: &'a Ident,
     pub request_rs_name: Cow<'a, Ident>,
+    pub request_patch_rs_name: Cow<'a, Ident>,
     pub request_error_rs_name: Cow<'a, Ident>,
     pub index_rs_name: Option<&'a Ident>,
     pub db_rs_name: &'a Ident,
@@ -724,6 +725,7 @@ impl<'a> Table<'a> {
         let columns = columns?;
 
         let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
+        let table_request_patch_rs_name = quote::format_ident!("{}PatchRequest", table.rs_name);
         let table_request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
         let table_rs_attrs = &*table.rs_attrs;
         let table_index_rs_name = table.index_rs_name.as_ref();
@@ -733,6 +735,7 @@ impl<'a> Table<'a> {
             name_extern: table_name_extern,
             rs_name: &table.rs_name,
             request_rs_name: Cow::Owned(table_request_rs_name),
+            request_patch_rs_name: Cow::Owned(table_request_patch_rs_name),
             request_error_rs_name: Cow::Owned(table_request_error_rs_name),
             index_rs_name: table_index_rs_name,
             db_rs_name: &db.rs_name,

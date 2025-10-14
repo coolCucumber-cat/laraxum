@@ -4,8 +4,10 @@ pub mod method {
     pub struct Get;
     /// POST
     pub struct Create;
-    /// PUT/PATCH
+    /// PUT
     pub struct Update;
+    /// PATCH
+    pub struct Patch;
     /// DELETE
     pub struct Delete;
 }

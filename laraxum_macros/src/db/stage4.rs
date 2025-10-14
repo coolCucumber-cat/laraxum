@@ -964,18 +964,28 @@ impl From<stage3::Table<'_>> for Table {
 
                 let serde_name = attr.name.as_deref().map(serde_name);
 
-                quote! {
+                let token_stream = quote! {
                     #(#rs_attrs)* #serde_name
-                    pub #rs_name: #rs_ty
-                }
+                    pub #rs_name:
+                };
+                let request_column_field = quote! {
+                    #token_stream #rs_ty,
+                };
+                let request_patch_column_field = quote! {
+                    #token_stream ::core::option::Option<#rs_ty>,
+                };
+                [request_column_field, request_patch_column_field]
             });
+        let [request_column_fields, request_patch_column_fields] =
+            crate::utils::syn::unzip_token_streams(request_column_fields);
 
         let create_table = create_table(&table.name_intern, table.columns.iter());
         let delete_table = delete_table(&table.name_intern);
 
-        let table_rs_name = &table.rs_name;
-        let table_request_rs_name = &table.request_rs_name;
-        let table_request_error_rs_name = &table.request_error_rs_name;
+        let table_rs_name = table.rs_name;
+        let table_request_rs_name = &*table.request_rs_name;
+        let table_request_patch_rs_name = &*table.request_patch_rs_name;
+        let table_request_error_rs_name = &*table.request_error_rs_name;
         // let table_record_rs_name = quote::format_ident!("{table_rs_name}Record");
         let table_rs_attrs = table.rs_attrs;
         let db_rs_name = &table.db_rs_name;
@@ -1028,6 +1038,7 @@ impl From<stage3::Table<'_>> for Table {
             );
 
             let request_setters = table.columns.iter().filter_map(|column| match column {
+                // TODO: use methods
                 stage3::ColumnRef::One(stage3::ColumnOne {
                     request: stage3::RequestColumnOne::Some { setter, .. },
                     ..
@@ -1052,7 +1063,7 @@ impl From<stage3::Table<'_>> for Table {
                 }
             });
             let request_setter_token_stream = quote! {
-                #(#request_setter_columns,)*
+                #( #request_setter_columns, )*
             };
 
             let request_setter_compounds_columns =
@@ -1140,10 +1151,10 @@ impl From<stage3::Table<'_>> for Table {
                 .filter_map(|column| column.request_one());
             let create_one = create_one(&table.name_intern, request_columns.clone());
 
-            let token_stream = quote! {
+            let collection_token_stream = quote! {
                 #[derive(::serde::Deserialize)]
                 pub struct #table_request_rs_name {
-                    #(#request_column_fields),*
+                    #request_column_fields
                 }
 
                 impl ::laraxum::Collection for #table_rs_name {
@@ -1215,25 +1226,48 @@ impl From<stage3::Table<'_>> for Table {
                         }
                     }
                 });
-                let validate_result = if column.optional {
+                let validate_results = quote! { #( #validate_results )* };
+                let validate_result_update_create = if column.optional {
                     quote! {
                         if let ::core::option::Option::Some(#validate_var_rs_name) = #value {
-                            #( #validate_results )*
+                            #validate_results
                         }
                     }
                 } else {
                     quote! {
                         let #validate_var_rs_name = #value;
-                        #( #validate_results )*
+                        #validate_results
                     }
                 };
-                (error_field, validate_result)
+                let validate_result_patch = if column.optional {
+                    quote! {
+                        if let ::core::option::Option::Some(
+                            ::core::option::Option::Some(#validate_var_rs_name)
+                        ) = #value {
+                            #validate_results
+                        }
+                    }
+                } else {
+                    quote! {
+                        if let ::core::option::Option::Some(#validate_var_rs_name) = #value {
+                            #validate_results
+                        }
+                    }
+                };
+                [
+                    error_field,
+                    validate_result_update_create,
+                    validate_result_patch,
+                ]
             });
-            let (request_error_fields, request_validate_results) =
-                crate::utils::syn::unzip_token_streams(request_validate);
+            let [
+                request_error_fields,
+                request_validate_results_update_create,
+                request_validate_results_patch,
+            ] = crate::utils::syn::unzip_token_streams(request_validate);
 
-            let token_stream = quote! {
-                #token_stream
+            let collection_token_stream = quote! {
+                #collection_token_stream
 
                 #[derive(Default, ::serde::Serialize)]
                 pub struct #table_request_error_rs_name {
@@ -1253,7 +1287,7 @@ impl From<stage3::Table<'_>> for Table {
                     type Error = #table_request_error_rs_name;
                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
                         let mut e = ::core::result::Result::Ok(());
-                        #request_validate_results
+                        #request_validate_results_update_create
                         e
                     }
                 }
@@ -1586,7 +1620,7 @@ impl From<stage3::Table<'_>> for Table {
                     })
                 });
 
-            let token_stream = if let Some(table_index_rs_name) = table.index_rs_name {
+            let collection_token_stream = if let Some(table_index_rs_name) = table.index_rs_name {
                 let indexes = indexes.collect::<Vec<_>>();
                 let index_token_streams = indexes.iter().map(|(i, _)| i);
                 let index_variants = indexes
@@ -1611,7 +1645,7 @@ impl From<stage3::Table<'_>> for Table {
                 );
 
                 quote! {
-                    #token_stream
+                    #collection_token_stream
                     #( #index_token_streams )*
 
                     pub enum #table_index_rs_name {
@@ -1644,24 +1678,22 @@ impl From<stage3::Table<'_>> for Table {
                 let index_token_streams = indexes.map(|(i, _)| i);
 
                 quote! {
-                    #token_stream
+                    #collection_token_stream
                     #( #index_token_streams )*
                 }
             };
 
             let Some(table_id) = table.columns.model() else {
-                return token_stream;
+                return collection_token_stream;
             };
 
             let table_id_rs_ty = table_id.response.field.rs_ty;
             let table_id_name = table_id.create.name;
             let table_id_name_intern = table_id.response.getter.name_intern();
 
-            let table_name_intern = &*table.name_intern;
-            let table_name_extern = &*table.name_extern;
             let get_one = get_one(
-                &table_name_intern,
-                &table_name_extern,
+                &table.name_intern,
+                &table.name_extern,
                 response_getter_columns,
                 (stage3::ColumnAttrIndexFilter::Eq, table_id_name_intern),
             );
@@ -1671,11 +1703,27 @@ impl From<stage3::Table<'_>> for Table {
                 },
                 response_getter,
             );
-            let update_one = update_one(table_name_intern, table_id_name, request_columns);
-            let delete_one = delete_one(table_name_intern, table_id_name);
+            let update_one = update_one(&table.name_intern, table_id_name, request_columns);
+            let delete_one = delete_one(&table.name_intern, table_id_name);
 
             quote! {
-                #token_stream
+                #collection_token_stream
+
+                #[derive(::serde::Deserialize)]
+                pub struct #table_request_patch_rs_name {
+                    #request_patch_column_fields
+                }
+
+                impl ::laraxum::Request::<::laraxum::request::method::Patch>
+                    for #table_request_patch_rs_name
+                {
+                    type Error = #table_request_error_rs_name;
+                    fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                        let mut e = ::core::result::Result::Ok(());
+                        #request_validate_results_patch
+                        e
+                    }
+                }
 
                 impl ::laraxum::Model for #table_rs_name {
                     type Id = #table_id_rs_ty;
