@@ -183,27 +183,23 @@ pub struct ColumnAttrResponse {
     pub skip: bool,
 }
 
-#[derive(darling::FromMeta)]
-#[darling(rename_all = "snake_case")]
-pub enum ValidateRule {
-    MinLen(crate::utils::syn::TokenStreamAttr<Expr>),
-    Func(crate::utils::syn::TokenStreamAttr<Expr>),
-    Matches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
-    NMatches(crate::utils::syn::TokenStreamAttr<crate::utils::syn::ParsePat>),
-    Eq(crate::utils::syn::TokenStreamAttr<Expr>),
-    NEq(crate::utils::syn::TokenStreamAttr<Expr>),
-    Gt(crate::utils::syn::TokenStreamAttr<Expr>),
-    Lt(crate::utils::syn::TokenStreamAttr<Expr>),
-    Gte(crate::utils::syn::TokenStreamAttr<Expr>),
-    Lte(crate::utils::syn::TokenStreamAttr<Expr>),
+#[derive(darling::FromMeta, Default)]
+#[darling(default)]
+pub struct Validate {
+    #[darling(skip)]
+    pub max_len: Option<usize>,
+    pub min_len: Option<usize>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
+    pub func: Option<Expr>,
+    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
+    pub matches: Option<syn::PatRange>,
 }
 
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrRequest {
     pub name: Option<String>,
-    #[darling(and_then = "crate::utils::syn::TokenStreamEnumAttrVec::transform")]
-    pub validate: Vec<ValidateRule>,
+    pub validate: Validate,
 }
 
 #[derive(darling::FromMeta, Default, Clone, Copy)]

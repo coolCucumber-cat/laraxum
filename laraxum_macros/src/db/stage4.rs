@@ -741,106 +741,71 @@ fn transform_response(
     }
 }
 
-impl super::stage2::ValidateRule {
-    fn to_token_stream(&self, value: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        match *self {
-            Self::MaxLen(max_len) => {
+impl stage3::Validate {
+    fn to_token_stream(
+        &self,
+        value: &proc_macro2::TokenStream,
+    ) -> [Option<proc_macro2::TokenStream>; 4] {
+        [
+            self.max_len.map(|max_len| {
                 let err_message = format!("max length is {max_len}");
                 quote! {
                     if #value.len() <= #max_len {
                         ::core::result::Result::Ok(())
                     } else { ::core::result::Result::Err(#err_message) }
                 }
-            }
-            Self::MinLen(ref min_len) => {
-                let min_len = min_len.to_token_stream();
+            }),
+            self.min_len.map(|min_len| {
                 let err_message = format!("min length is {min_len}");
                 quote! {
                     if #value.len() >= #min_len {
                         ::core::result::Result::Ok(())
                     } else { ::core::result::Result::Err(#err_message) }
                 }
-            }
-            Self::Func(ref f) => {
+            }),
+            self.func.as_ref().map(|func| {
                 quote! {
-                    (#f)(#value)
+                    (#func)(#value)
                 }
-            }
-            Self::Matches(ref matches) => {
-                let matches = matches.to_token_stream();
-                let err_message = format!("must match pattern {matches}");
-                quote! {
-                    match #value {
-                        #matches => ::core::result::Result::Ok(()),
-                        _ => ::core::result::Result::Err(#err_message),
+            }),
+            self.matches.as_ref().and_then(|matches| {
+                let end = matches.end.as_deref().map(|end| match matches.limits {
+                    syn::RangeLimits::Closed(_) => {
+                        let lte = end.to_token_stream();
+                        let err_message = format!("must less than or equal to {lte}");
+                        quote! {
+                            if #value <= &#lte {
+                                ::core::result::Result::Ok(())
+                            } else { ::core::result::Result::Err(#err_message) }
+                        }
                     }
-                }
-            }
-            Self::NMatches(ref n_matches) => {
-                let n_matches = n_matches.to_token_stream();
-                let err_message = format!("must not match pattern {n_matches}");
-                quote! {
-                    match #value {
-                        #n_matches => ::core::result::Result::Err(#err_message),
-                        _ => ::core::result::Result::Ok(()),
+                    syn::RangeLimits::HalfOpen(_) => {
+                        let lt = end.to_token_stream();
+                        let err_message = format!("must be less than {lt}");
+                        quote! {
+                            if #value < &#lt {
+                                ::core::result::Result::Ok(())
+                            } else { ::core::result::Result::Err(#err_message) }
+                        }
                     }
-                }
-            }
-            Self::Eq(ref eq) => {
-                let eq = eq.to_token_stream();
-                let err_message = format!("must be equal to {eq}");
-                quote! {
-                    if #value == &#eq {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }
-            Self::NEq(ref n_eq) => {
-                let n_eq = n_eq.to_token_stream();
-                let err_message = format!("must not be equal to {n_eq}");
-                quote! {
-                    if #value != &#n_eq {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }
-            Self::Gt(ref gt) => {
-                let gt = gt.to_token_stream();
-                let err_message = format!("must be greater than {gt}");
-                quote! {
-                    if #value > &#gt {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }
-            Self::Lt(ref lt) => {
-                let lt = lt.to_token_stream();
-                let err_message = format!("must be less than {lt}");
-                quote! {
-                    if #value < &#lt {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }
-            Self::Gte(ref gte) => {
-                let gte = gte.to_token_stream();
-                let err_message = format!("must be greater than or equal to {gte}");
-                quote! {
-                    if #value >= &#gte {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }
-            Self::Lte(ref lte) => {
-                let lte = lte.to_token_stream();
-                let err_message = format!("must less than or equal to {lte}");
-                quote! {
-                    if #value <= &#lte {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }
-        }
+                });
+                let start = matches.start.as_deref().map(|gte| {
+                    let ok = std::cell::LazyCell::new(|| {
+                        quote! { ::core::result::Result::Ok(()) }
+                    });
+                    let end = end.as_ref().unwrap_or_else(|| &*ok);
+
+                    let gte = gte.to_token_stream();
+                    let err_message = format!("must be greater than or equal to {gte}");
+                    quote! {
+                        if #value >= &#gte {
+                            #end
+                        } else { ::core::result::Result::Err(#err_message) }
+                    }
+                });
+                start.or(end)
+            }),
+        ]
     }
 }
 
@@ -1221,58 +1186,58 @@ impl From<stage3::Table<'_>> for Table {
                 }
             };
 
-            let request_column_validate =
-                request_setters.filter(|column| !column.validate.is_empty());
-            // let request_error_token_stream = if request_column_validate.clone().next().is_some() {
-            let request_error_columns = request_column_validate.clone().map(
-                |stage3::RequestColumnSetterOne { rs_name, .. }| {
+            let validate_var_rs_name = quote! { value };
+            let request_column_validate = request_setters.filter_map(|column| {
+                let validate = column.validate.to_token_stream(&validate_var_rs_name);
+                let validate = validate.into_iter().flatten();
+                let not_empty = validate.clone().count() != 0;
+                not_empty.then_some((column, validate))
+            });
+            let request_validate = request_column_validate.map(|(column, validate)| {
+                let rs_name = column.rs_name;
+                let error_field = quote! {
+                    #[serde(skip_serializing_if = "<[&str]>::is_empty")]
+                    pub #rs_name: ::std::vec::Vec::<&'static str>,
+                };
+                let value = quote! {
+                    &self.#rs_name
+                };
+                let validate_results = validate.map(|validate_result| {
                     quote! {
-                        #[serde(skip_serializing_if = "<[&str]>::is_empty")]
-                        pub #rs_name: ::std::vec::Vec::<&'static str>
-                    }
-                },
-            );
-            let request_column_validate_rules = request_column_validate
-                .flat_map(|column| {
-                    column
-                        .validate
-                        .iter()
-                        .map(|validate_rule| (validate_rule, column.optional, column.rs_name))
-                })
-                .map(|(validate_rule, optional, rs_name)| {
-                    let var = quote! { value };
-                    let value = quote! {
-                        &self.#rs_name
-                    };
-                    let result = validate_rule.to_token_stream(&var);
-                    let validate = quote! {
-                        if let ::core::result::Result::Err(err) = #result {
-                            ::laraxum::request::error_builder::<(), #table_request_error_rs_name>(
+                        if let ::core::result::Result::Err(err) = #validate_result {
+                            ::laraxum::request::error_builder::<
+                                (),
+                                #table_request_error_rs_name,
+                            >(
                                 &mut e,
                                 |e| e.#rs_name.push(err),
                             );
                         }
-                    };
-                    if optional {
-                        quote! {
-                            if let ::core::option::Option::Some(#var) = #value {
-                                #validate
-                            }
-                        }
-                    } else {
-                        quote! {
-                            let #var = #value;
-                            #validate
-                        }
                     }
                 });
+                let validate_result = if column.optional {
+                    quote! {
+                        if let ::core::option::Option::Some(#validate_var_rs_name) = #value {
+                            #( #validate_results )*
+                        }
+                    }
+                } else {
+                    quote! {
+                        let #validate_var_rs_name = #value;
+                        #( #validate_results )*
+                    }
+                };
+                (error_field, validate_result)
+            });
+            let (request_error_fields, request_validate_results) =
+                crate::utils::syn::unzip_token_streams(request_validate);
 
             let token_stream = quote! {
                 #token_stream
 
                 #[derive(Default, ::serde::Serialize)]
                 pub struct #table_request_error_rs_name {
-                    #( #request_error_columns ),*
+                    #request_error_fields
                 }
                 impl ::core::convert::From<#table_request_error_rs_name>
                     for ::laraxum::ModelError<#table_request_error_rs_name>
@@ -1288,7 +1253,7 @@ impl From<stage3::Table<'_>> for Table {
                     type Error = #table_request_error_rs_name;
                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
                         let mut e = ::core::result::Result::Ok(());
-                        #( #request_column_validate_rules )*
+                        #request_validate_results
                         e
                     }
                 }
@@ -1609,11 +1574,6 @@ impl From<stage3::Table<'_>> for Table {
                                 limit.map(|(name, rs_ty)| (name, rs_ty)),
                                 sort.map(|(_, name, rs_ty)| (name, rs_ty)),
                             ];
-                            // let index_variants = filter
-                            //     .map(|(_, name, _, rs_ty_owned)| (name, rs_ty_owned.clone()))
-                            //     .into_iter()
-                            //     .chain(limit.into_iter().map(|(name, rs_ty)| (name, rs_ty)))
-                            //     .chain(sort.into_iter().map(|(_, name, rs_ty)| (name, rs_ty)));
                             let index_variant_type_signature = (index_rs_name, index_variants);
                             (
                                 index_variant_def_token_stream,

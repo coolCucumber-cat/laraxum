@@ -3,24 +3,8 @@ mod kw {
 }
 
 use syn::{
-    GenericArgument, Ident, Meta, Pat, Path, PathSegment, Token, Type, TypePath,
-    parse::{Parse, ParseBuffer, ParseStream},
-    punctuated::Punctuated,
-    spanned::Spanned,
+    Ident, Meta, Path, PathSegment, Token, Type, TypePath, punctuated::Punctuated, spanned::Spanned,
 };
-
-/// Allow [`syn::Pat`] to be parsed by [`syn::parse::Parse`].
-pub struct ParsePat(pub Pat);
-impl ParsePat {
-    pub fn into_inner(self) -> Pat {
-        self.0
-    }
-}
-impl Parse for ParsePat {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        Pat::parse_multi(input).map(Self)
-    }
-}
 
 /// Allow anything that implements [`syn::parse::Parse`] to be used as an attribute by [`darling`].
 ///
@@ -41,16 +25,6 @@ where
     }
     pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<T>> {
         item.map(Self::transform).transpose()
-    }
-}
-impl TokenStreamAttr<Pat> {
-    pub fn transform_pat(item: Meta) -> darling::Result<Pat> {
-        <TokenStreamAttr<ParsePat> as darling::FromMeta>::from_meta(&item)
-            .map(TokenStreamAttr::into_inner)
-            .map(|pat| pat.0)
-    }
-    pub fn transform_pat_option(item: Option<Meta>) -> darling::Result<Option<Pat>> {
-        item.map(Self::transform_pat).transpose()
     }
 }
 impl<T> darling::FromMeta for TokenStreamAttr<T>
@@ -110,93 +84,47 @@ where
     }
 }
 
-/// Allow anything that implements [`syn::parse::Parse`] to be used as a list of attributes by [`darling`].
-///
-/// Like [`TokenStreamAttr<T>`] but for [`Vec<T>`] instead of [`T`].
-#[expect(dead_code)]
-pub struct TokenStreamAttrVec<T>(pub Vec<T>);
-impl<T> TokenStreamAttrVec<T> {
-    pub fn into_inner(self) -> Vec<T> {
-        self.0
-    }
-}
-impl<T> TokenStreamAttrVec<T>
-where
-    T: syn::parse::Parse,
-{
-    pub fn transform(item: Meta) -> darling::Result<Vec<T>> {
-        <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
-    }
-    pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Vec<T>>> {
-        item.map(Self::transform).transpose()
-    }
-}
-impl<T> darling::FromMeta for TokenStreamAttrVec<T>
-where
-    T: syn::parse::Parse,
-{
-    fn from_meta(item: &Meta) -> darling::Result<Self> {
-        (match *item {
-            Meta::Path(_) => Self::from_word(),
-            Meta::List(ref value) => {
-                let punctuated = syn::parse::Parser::parse2(
-                    syn::punctuated::Punctuated::<T, Token![,]>::parse_terminated,
-                    value.tokens.clone(),
-                )?;
-                let collect = punctuated.into_iter().collect::<Vec<T>>();
-                Ok(Self(collect))
-            }
-            Meta::NameValue(ref value) => Self::from_expr(&value.value),
-        })
-        .map_err(|e| e.with_span(item))
-    }
-}
-
-/// Allow enum variants to be parsed in a list by [`darling`].
-///
-/// Darling only allows enum variants to be parsed in a list as the only element.
-/// To bypass this, we put it in its own list with [`<[T]>::windows`].
-/// The expected way to handle this would be to call [`darling::FromMeta::from_nested_meta`],
-/// but this doesn't work since it assumes you are calling it from one level higher.
-pub struct TokenStreamEnumAttrVec<T>(pub Vec<T>);
-impl<T> TokenStreamEnumAttrVec<T> {
-    pub fn into_inner(self) -> Vec<T> {
-        self.0
-    }
-}
-impl<T> TokenStreamEnumAttrVec<T>
-where
-    T: darling::FromMeta,
-{
-    pub fn transform(item: Meta) -> darling::Result<Vec<T>> {
-        <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
-    }
-    pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Vec<T>>> {
-        item.map(Self::transform).transpose()
-    }
-}
-impl<T> darling::FromMeta for TokenStreamEnumAttrVec<T>
-where
-    T: darling::FromMeta,
-{
-    fn from_list(items: &[darling::ast::NestedMeta]) -> darling::Result<Self> {
-        items
-            .windows(1)
-            .map(T::from_list)
-            // .iter()
-            // .map(T::from_nested_meta)
-            .collect::<Result<Vec<T>, darling::Error>>()
-            .map(Self)
-    }
-}
-impl<T> Default for TokenStreamEnumAttrVec<T>
-where
-    T: darling::FromMeta,
-{
-    fn default() -> Self {
-        Self(vec![])
-    }
-}
+// /// Allow anything that implements [`syn::parse::Parse`] to be used as a list of attributes by [`darling`].
+// ///
+// /// Like [`TokenStreamAttr<T>`] but for [`Vec<T>`] instead of [`T`].
+// #[expect(dead_code)]
+// pub struct TokenStreamAttrVec<T>(pub Vec<T>);
+// impl<T> TokenStreamAttrVec<T> {
+//     pub fn into_inner(self) -> Vec<T> {
+//         self.0
+//     }
+// }
+// impl<T> TokenStreamAttrVec<T>
+// where
+//     T: syn::parse::Parse,
+// {
+//     pub fn transform(item: Meta) -> darling::Result<Vec<T>> {
+//         <Self as darling::FromMeta>::from_meta(&item).map(Self::into_inner)
+//     }
+//     pub fn transform_option(item: Option<Meta>) -> darling::Result<Option<Vec<T>>> {
+//         item.map(Self::transform).transpose()
+//     }
+// }
+// impl<T> darling::FromMeta for TokenStreamAttrVec<T>
+// where
+//     T: syn::parse::Parse,
+// {
+//     fn from_meta(item: &Meta) -> darling::Result<Self> {
+//         (match *item {
+//             Meta::Path(_) => Self::from_word(),
+//             Meta::List(ref value) => {
+//                 let punctuated = syn::parse::Parser::parse2(
+//                     syn::punctuated::Punctuated::<T, Token![,]>::parse_terminated,
+//                     value.tokens.clone(),
+//                 )?;
+//                 let collect = punctuated.into_iter().collect::<Vec<T>>();
+//                 Ok(Self(collect))
+//             }
+//             Meta::NameValue(ref value) => Self::from_expr(&value.value),
+//         })
+//         .map_err(|e| e.with_span(item))
+//     }
+// }
 
 const EXPECTED_IDENT: &str = "expected identifier";
 
@@ -212,7 +140,9 @@ pub fn from_str_to_rs_ident(s: &str) -> Ident {
     quote::format_ident!("{s}")
 }
 
-pub fn parse_curly_brackets(input: ParseStream) -> syn::Result<ParseBuffer> {
+pub fn parse_curly_brackets(
+    input: syn::parse::ParseStream,
+) -> syn::Result<syn::parse::ParseBuffer> {
     Ok(syn::__private::parse_braces(input)?.content)
 }
 
@@ -281,8 +211,20 @@ pub fn parse_type_single_arg_from_path_segments(
         return None;
     };
     let args = &args.args;
-    let Some(GenericArgument::Type(ty2)) = parse_exactly_one_punctuated(args) else {
+    let Some(syn::GenericArgument::Type(ty2)) = parse_exactly_one_punctuated(args) else {
         return None;
     };
     Some((ident, ty2))
+}
+
+pub fn unzip_token_streams(
+    token_streams: impl Iterator<Item = (proc_macro2::TokenStream, proc_macro2::TokenStream)>,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let mut token_streams_a = proc_macro2::TokenStream::new();
+    let mut token_streams_b = proc_macro2::TokenStream::new();
+    for (token_stream_a, token_stream_b) in token_streams {
+        token_streams_a.extend(token_stream_a);
+        token_streams_b.extend(token_stream_b);
+    }
+    (token_streams_a, token_streams_b)
 }

@@ -176,11 +176,13 @@ pub struct ResponseColumnCompounds<'a> {
     pub getter: ResponseColumnGetterCompounds<'a>,
 }
 
+pub use stage2::Validate;
+
 pub struct RequestColumnSetterOne<'a> {
     pub rs_name: &'a Ident,
     pub name: &'a str,
     pub optional: bool,
-    pub validate: &'a [stage2::ValidateRule],
+    pub validate: &'a Validate,
 }
 
 pub struct RequestColumnSetterCompounds<'a> {
@@ -208,13 +210,13 @@ pub enum RequestColumnOne<'a> {
     None,
 }
 impl RequestColumnOne<'_> {
-    pub const fn request_field(&self) -> Option<&RequestColumnField> {
+    pub const fn request_field(&self) -> Option<&RequestColumnField<'_>> {
         match self {
             Self::Some { field, setter: _ } => Some(field),
             _ => None,
         }
     }
-    pub const fn request_setter(&self) -> Option<&RequestColumnSetterOne> {
+    pub const fn request_setter(&self) -> Option<&RequestColumnSetterOne<'_>> {
         match self {
             Self::Some { setter, field: _ } => Some(setter),
             _ => None,
@@ -432,9 +434,6 @@ impl<'a> Table<'a> {
                 >
             )
         }
-        // fn rs_ty_compounds_request(rs_ty: &Type) -> Type {
-        //     syn::parse_quote!(Vec<#rs_ty>)
-        // }
 
         fn traverse<'table: 'iter, 'iter>(
             table_name_extern: &str,
@@ -480,7 +479,6 @@ impl<'a> Table<'a> {
                             name_intern((&*foreign_table_name_extern, &foreign_table_id.name));
 
                         let columns = traverse(&foreign_table_name_extern, foreign_table, db);
-                        // let columns = traverse(table_name_extern, table, db);
                         let columns: Result<Vec<ResponseColumnGetter>, syn::Error> =
                             columns.try_collect_all_default();
                         let columns = columns?;
@@ -533,7 +531,6 @@ impl<'a> Table<'a> {
                     rs_ty,
                     response: attr_response,
                     request: attr_request,
-                    // validate,
                     borrow,
                     index,
                     struct_name,
@@ -602,7 +599,7 @@ impl<'a> Table<'a> {
                             syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
                         let foreign_table_id_ty = foreign_table_id.ty.id().ok_or_else(|| {
-                            syn::Error::new(foreign_table.rs_name.span(), TABLE_MUST_HAVE_ID)
+                            syn::Error::new(foreign_table.rs_name.span(), TABLE_ID_MUST_BE_INT)
                         })?;
                         let foreign_table_id_rs_ty = &*foreign_table_id.rs_ty;
 

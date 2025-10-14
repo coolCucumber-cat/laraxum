@@ -2,7 +2,7 @@ use super::stage1;
 
 use crate::utils::{collections::TryCollectAll, multiplicity};
 
-use syn::{Attribute, Expr, Ident, Pat, Type, Visibility, ext::IdentExt, spanned::Spanned};
+use syn::{Attribute, Ident, Type, Visibility, ext::IdentExt, spanned::Spanned};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_MUST_NOT_HAVE_ID: &str = "table must not have an ID";
@@ -293,30 +293,34 @@ impl Ty {
 }
 
 pub use stage1::ColumnAttrResponse;
+
+pub use stage1::ColumnAttrRequest;
+
+pub use stage1::Validate;
+
 // pub struct ColumnAttrResponse {
 //     pub name: Option<String>,
 //     pub skip: bool,
 // }
-
-pub enum ValidateRule {
-    MinLen(Expr),
-    MaxLen(usize),
-    Func(Expr),
-    Matches(Pat),
-    NMatches(Pat),
-    Eq(Expr),
-    NEq(Expr),
-    Gt(Expr),
-    Lt(Expr),
-    Gte(Expr),
-    Lte(Expr),
-}
-
-pub struct ColumnAttrRequest {
-    pub name: Option<String>,
-    pub validate: Vec<ValidateRule>,
-    // pub ty: Option<Type>,
-}
+// pub enum ValidateRule {
+//     MinLen(Expr),
+//     MaxLen(usize),
+//     Func(Expr),
+//     Matches(PatRange),
+//     NMatches(PatRange),
+//     Eq(Expr),
+//     NEq(Expr),
+//     Gt(Expr),
+//     Lt(Expr),
+//     Gte(Expr),
+//     Lte(Expr),
+// }
+//
+// pub struct ColumnAttrRequest {
+//     pub name: Option<String>,
+//     pub validate: Vec<ValidateRule>,
+//     // pub ty: Option<Type>,
+// }
 
 pub use stage1::ColumnAttrIndex;
 
@@ -359,7 +363,7 @@ impl TryFrom<stage1::Column> for Column {
                     name,
                     ty: attr_ty,
                     response,
-                    request,
+                    mut request,
                     real_rs_ty,
                     unique,
                     borrow,
@@ -474,31 +478,8 @@ impl TryFrom<stage1::Column> for Column {
             }
         };
 
-        let validate = request.validate.into_iter().map(|validate_rule| {
-            use stage1::ValidateRule as S1VR;
-            match validate_rule {
-                S1VR::MinLen(min_len) => ValidateRule::MinLen(min_len.0),
-                S1VR::Func(func) => ValidateRule::Func(func.0),
-                S1VR::Matches(matches) => ValidateRule::Matches(matches.0.0),
-                S1VR::NMatches(n_matches) => ValidateRule::NMatches(n_matches.0.0),
-                S1VR::Eq(eq) => ValidateRule::Eq(eq.0),
-                S1VR::NEq(n_eq) => ValidateRule::NEq(n_eq.0),
-                S1VR::Gt(gt) => ValidateRule::Gt(gt.0),
-                S1VR::Lt(lt) => ValidateRule::Lt(lt.0),
-                S1VR::Gte(gte) => ValidateRule::Gte(gte.0),
-                S1VR::Lte(lte) => ValidateRule::Lte(lte.0),
-            }
-        });
-        let max_len_validate_rule = ty
-            .max_len()
-            .map(|max_len| ValidateRule::MaxLen(max_len.into()));
-        let validate = validate.chain(max_len_validate_rule);
-        let validate = validate.collect();
-
-        let request = ColumnAttrRequest {
-            name: request.name,
-            validate,
-        };
+        let max_len_validate_rule = ty.max_len().map(usize::from);
+        request.validate.max_len = max_len_validate_rule;
 
         Ok(Self {
             name,
@@ -507,7 +488,6 @@ impl TryFrom<stage1::Column> for Column {
             rs_ty,
             response,
             request,
-            // validate,
             borrow,
             index,
             struct_name,
