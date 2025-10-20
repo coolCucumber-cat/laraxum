@@ -60,6 +60,10 @@ pub trait Model: Collection {
     type UpdateRequest;
     /// Error when updating record.
     type UpdateRequestError;
+    /// Request to patch update a record
+    type PatchRequest;
+    /// Error when patch updating record.
+    type PatchRequestError;
 
     /// Get a record with an id
     async fn get_one(db: &Self::Db, id: Self::Id) -> Result<Self::Response, Error>;
@@ -81,6 +85,22 @@ pub trait Model: Collection {
         id: Self::Id,
     ) -> Result<Self::Response, ModelError<Self::UpdateRequestError>> {
         Self::update_one(db, rq, id).await?;
+        let rs = Self::get_one(db, id).await?;
+        Ok(rs)
+    }
+    /// Patch update a record.
+    async fn patch_one(
+        db: &Self::Db,
+        rq: Self::PatchRequest,
+        id: Self::Id,
+    ) -> Result<(), ModelError<Self::PatchRequestError>>;
+    /// Patch update a record and return it.
+    async fn patch_get_one(
+        db: &Self::Db,
+        rq: Self::PatchRequest,
+        id: Self::Id,
+    ) -> Result<Self::Response, ModelError<Self::PatchRequestError>> {
+        Self::patch_one(db, rq, id).await?;
         let rs = Self::get_one(db, id).await?;
         Ok(rs)
     }

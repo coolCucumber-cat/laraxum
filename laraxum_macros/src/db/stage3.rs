@@ -199,26 +199,25 @@ pub struct RequestColumnField<'a> {
 }
 
 pub enum RequestColumnOne<'a> {
-    Some {
+    Field {
         field: RequestColumnField<'a>,
         setter: RequestColumnSetterOne<'a>,
     },
-    AutoTime {
+    OnUpdate {
         name: &'a str,
         time_ty: stage2::AtomicTyTime,
     },
-    None,
 }
 impl RequestColumnOne<'_> {
     pub const fn request_field(&self) -> Option<&RequestColumnField<'_>> {
         match self {
-            Self::Some { field, setter: _ } => Some(field),
+            Self::Field { field, setter: _ } => Some(field),
             _ => None,
         }
     }
     pub const fn request_setter(&self) -> Option<&RequestColumnSetterOne<'_>> {
         match self {
-            Self::Some { setter, field: _ } => Some(setter),
+            Self::Field { setter, field: _ } => Some(setter),
             _ => None,
         }
     }
@@ -238,7 +237,7 @@ pub use stage2::ColumnAttrIndexLimit;
 pub struct ColumnOne<'a> {
     pub create: CreateColumn<'a>,
     pub response: ResponseColumnOne<'a>,
-    pub request: RequestColumnOne<'a>,
+    pub request: Option<RequestColumnOne<'a>>,
     pub index: &'a [ColumnAttrIndex],
     pub borrow: Option<Option<&'a Type>>,
     pub struct_name: Option<&'a Ident>,
@@ -301,15 +300,18 @@ impl<'a> ColumnRef<'a> {
             }
         }
     }
-    pub const fn request_field(self) -> Option<&'a RequestColumnField<'a>> {
+    pub fn request_field(self) -> Option<&'a RequestColumnField<'a>> {
         match self {
-            Self::One(one) => one.request.request_field(),
+            Self::One(one) => one
+                .request
+                .as_ref()
+                .and_then(|request| request.request_field()),
             Self::Compounds(compounds) => Some(&compounds.request.field),
         }
     }
     pub const fn request_one(self) -> Option<&'a RequestColumnOne<'a>> {
         match self {
-            Self::One(one) => Some(&one.request),
+            Self::One(one) => one.request.as_ref(),
             Self::Compounds(_) => None,
         }
     }
@@ -317,6 +319,21 @@ impl<'a> ColumnRef<'a> {
         match self {
             Self::One(_) => None,
             Self::Compounds(compounds) => Some(&compounds.request),
+        }
+    }
+    pub fn request_one_setter(self) -> Option<&'a RequestColumnSetterOne<'a>> {
+        match self {
+            Self::One(one) => one
+                .request
+                .as_ref()
+                .and_then(|request| request.request_setter()),
+            Self::Compounds(_) => None,
+        }
+    }
+    pub const fn request_compounds_settter(self) -> Option<&'a RequestColumnSetterCompounds<'a>> {
+        match self {
+            Self::One(_) => None,
+            Self::Compounds(compounds) => Some(&compounds.request.setter),
         }
     }
     pub const fn struct_name(self) -> Option<&'a Ident> {
@@ -564,7 +581,7 @@ impl<'a> Table<'a> {
                             },
                         },
                         request: match ty_element {
-                            TyElement::Value(_) => RequestColumnOne::Some {
+                            TyElement::Value(_) => Some(RequestColumnOne::Field {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: DerefEither::Left(rs_ty),
@@ -577,15 +594,15 @@ impl<'a> Table<'a> {
                                     optional: ty_element.optional(),
                                     validate: &attr_request.validate,
                                 },
-                            },
+                            }),
                             TyElement::AutoTime(TyElementAutoTime {
                                 event: AutoTimeEvent::OnUpdate,
                                 ty,
-                            }) => RequestColumnOne::AutoTime {
+                            }) => Some(RequestColumnOne::OnUpdate {
                                 name,
                                 time_ty: ty.clone(),
-                            },
-                            TyElement::AutoTime(_) | TyElement::Id(_) => RequestColumnOne::None,
+                            }),
+                            TyElement::AutoTime(_) | TyElement::Id(_) => None,
                         },
                         index,
                         borrow,
@@ -647,7 +664,7 @@ impl<'a> Table<'a> {
                                 },
                                 getter: ResponseColumnGetterOne::Compound(compound),
                             },
-                            request: RequestColumnOne::Some {
+                            request: Some(RequestColumnOne::Field {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: rs_ty_compound_request(foreign_table_id_rs_ty, optional),
@@ -660,7 +677,7 @@ impl<'a> Table<'a> {
                                     optional,
                                     validate: &attr_request.validate,
                                 },
-                            },
+                            }),
                             index,
                             borrow,
                             struct_name,

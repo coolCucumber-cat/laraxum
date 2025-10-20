@@ -89,6 +89,16 @@ where
         let rs = Self::update_get_one(&*state, rq, id).await?;
         Ok(Json(rs))
     }
+    /// Patch update a record.
+    async fn patch(
+        State(state): State<Arc<Self::State>>,
+        AuthToken(_): AuthToken<Self::Auth>,
+        Path(id): Path<Self::Id>,
+        Json(rq): Json<Self::PatchRequest>,
+    ) -> Result<Json<Self::Response>, ModelError<Self::PatchRequestError>> {
+        let rs = Self::patch_get_one(&*state, rq, id).await?;
+        Ok(Json(rs))
+    }
     /// Delete a record.
     async fn delete(
         State(state): State<Arc<Self::State>>,
