@@ -17,15 +17,18 @@ Or you can just use it as an API and interact with the controller.
 A model manages the data storage and interacts with the database.  
 It implements the `Collection` trait:
 
-- `get_all`
-- `create_one`
+- `get_all` Return all records.
+- `create_one` Create a record.
 
 and the `Model` trait:
 
-- `get_one`
-- `update_one`
-- `patch_one`
-- `delete_one`
+- `get_one` Return a record.
+- `create_get_one` Create a record and return it.
+- `update_one` Update a record.
+- `update_get_one` Update a record and return it.
+- `patch_one` Patch update a record.
+- `patch_get_one` Patch update a record and return it.
+- `delete_one` Delete a record.
 
 ### ManyModel
 
@@ -39,19 +42,21 @@ This can be used to create many-to-many relationships.
 A controller manages the connection between model and view.  
 It implements the `Controller` trait:
 
-- `get_many`
-- `get`
-- `create`
-- `update`
-- `patch`
-- `delete`
+- `get_many` Return records.
+- `get` Return a record.
+- `create` Create a record and return it.
+- `update` Update a record and return it.
+- `patch` Patch update a record and return it.
+- `delete` Delete a record.
 
-The `State` type is the type that will be available as context in the controller,
+- `GetManyRequestQuery` The query parameters that can be used for custom requests using indexes.
+
+- `type State` The stateful context of the controller,
 which contains the database connection.
 
-The `Auth` type is the type that will authenticate the request.
-`AuthToken<()>` doesn't do any authentication.
-You can implement the authenticate trait for custom authentication and use it like `AuthToken<T>`.
+- `type Auth` Request authentication.  
+`AuthToken<()>` doesn't do any authentication.  
+You can implement the authenticate trait for custom authentication and use it like `AuthToken<T>`.  
 
 ## Db
 
@@ -100,8 +105,9 @@ Each struct in the module is a table. Use the `db` attribute on the struct:
 >>
 >>`),`
 >
->>An index for filtering and sorting for the controller of the table.  
->>Includes all indexes for this table that have set `controller`.  
+>>A custom request type for the controller.  
+>>Is used as `type GetManyRequestQuery`
+>>Includes all indexes for this table that have set the `controller` attribute.  
 >>A query with the corresponding keys will select one of the indexes and fetch using that index.  
 >>
 >>`index_name(` `<Ident>` `),`
