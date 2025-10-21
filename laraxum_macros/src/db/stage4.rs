@@ -749,71 +749,6 @@ fn request_setter(request: &proc_macro2::TokenStream, optional: bool) -> proc_ma
     }
 }
 
-impl stage3::Validate {
-    fn to_token_stream(&self, value: &Ident) -> [Option<proc_macro2::TokenStream>; 4] {
-        [
-            self.max_len.map(|max_len| {
-                let err_message = format!("max length is {max_len}");
-                quote! {
-                    if #value.len() <= #max_len {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }),
-            self.min_len.map(|min_len| {
-                let err_message = format!("min length is {min_len}");
-                quote! {
-                    if #value.len() >= #min_len {
-                        ::core::result::Result::Ok(())
-                    } else { ::core::result::Result::Err(#err_message) }
-                }
-            }),
-            self.func.as_ref().map(|func| {
-                quote! {
-                    (#func)(#value)
-                }
-            }),
-            self.matches.as_ref().and_then(|matches| {
-                let end = matches.end.as_deref().map(|end| match matches.limits {
-                    syn::RangeLimits::Closed(_) => {
-                        let lte = end.to_token_stream();
-                        let err_message = format!("must less than or equal to {lte}");
-                        quote! {
-                            if #value <= &#lte {
-                                ::core::result::Result::Ok(())
-                            } else { ::core::result::Result::Err(#err_message) }
-                        }
-                    }
-                    syn::RangeLimits::HalfOpen(_) => {
-                        let lt = end.to_token_stream();
-                        let err_message = format!("must be less than {lt}");
-                        quote! {
-                            if #value < &#lt {
-                                ::core::result::Result::Ok(())
-                            } else { ::core::result::Result::Err(#err_message) }
-                        }
-                    }
-                });
-                let start = matches.start.as_deref().map(|gte| {
-                    let ok = std::cell::LazyCell::new(|| {
-                        quote! { ::core::result::Result::Ok(()) }
-                    });
-                    let end = end.as_ref().unwrap_or_else(|| &*ok);
-
-                    let gte = gte.to_token_stream();
-                    let err_message = format!("must be greater than or equal to {gte}");
-                    quote! {
-                        if #value >= &#gte {
-                            #end
-                        } else { ::core::result::Result::Err(#err_message) }
-                    }
-                });
-                start.or(end)
-            }),
-        ]
-    }
-}
-
 fn impl_deserialize_for_untagged_enum<'a, 'b>(
     enum_ident: &Ident,
     enum_variants: impl Iterator<
@@ -925,7 +860,7 @@ struct Table {
 impl From<stage3::Table<'_>> for Table {
     #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
-        let response_column_fields = table.columns.iter().map(|column| {
+        let response_fields = table.columns.iter().map(|column| {
             let stage3::ResponseColumnField {
                 rs_name,
                 rs_ty,
@@ -942,43 +877,14 @@ impl From<stage3::Table<'_>> for Table {
             }
         });
 
-        let request_column_fields = table
-            .columns
-            .iter()
-            .filter_map(|column| column.request_field())
-            .map(|column| {
-                let stage3::RequestColumnField {
-                    rs_name,
-                    ref rs_ty,
-                    attr,
-                    rs_attrs,
-                    ..
-                } = *column;
-
-                let serde_name = attr.name.as_deref().map(serde_name);
-
-                let token_stream = quote! {
-                    #(#rs_attrs)* #serde_name
-                    pub #rs_name:
-                };
-                let request_column_field = quote! {
-                    #token_stream #rs_ty,
-                };
-                let request_patch_column_field = quote! {
-                    #token_stream ::core::option::Option<#rs_ty>,
-                };
-                [request_column_field, request_patch_column_field]
-            });
-        let [request_column_fields, request_patch_column_fields] =
-            crate::utils::syn::unzip_token_streams(request_column_fields);
-
         let create_table = create_table(&table.name_intern, table.columns.iter());
         let delete_table = delete_table(&table.name_intern);
 
         let table_rs_name = table.rs_name;
-        let table_request_rs_name = &*table.request_rs_name;
-        let table_request_patch_rs_name = &*table.request_patch_rs_name;
-        let table_request_error_rs_name = &*table.request_error_rs_name;
+        let create_request_rs_name = &*table.create_request_rs_name;
+        let update_request_rs_name = &*table.update_request_rs_name;
+        let patch_request_rs_name = &*table.patch_request_rs_name;
+        let request_error_rs_name = &*table.request_error_rs_name;
         // let table_record_rs_name = quote::format_ident!("{table_rs_name}Record");
         let table_rs_attrs = table.rs_attrs;
         let db_rs_name = &table.db_rs_name;
@@ -988,7 +894,7 @@ impl From<stage3::Table<'_>> for Table {
             #[derive(::serde::Serialize)]
             #(#table_rs_attrs)*
             pub struct #table_rs_name {
-                #( #response_column_fields ),*
+                #( #response_fields ),*
             }
 
             impl ::laraxum::model::Decode for #table_rs_name {
@@ -1042,33 +948,141 @@ impl From<stage3::Table<'_>> for Table {
                 response_getter,
             );
 
+            let request_fields = table
+                .columns
+                .iter()
+                .filter_map(|column| column.request_field());
+            let create_request_fields = request_fields.clone();
+            let update_patch_request_fields = request_fields
+                .clone()
+                .filter(|request_field| request_field.is_mut);
+
+            // TODO: use function
+            // TODO: move is_mut to top level struct of column and filter then take data instead of taking data and then filter
+            let create_request_fields = create_request_fields.map(|column| {
+                let stage3::RequestColumnField {
+                    rs_name,
+                    ref rs_ty,
+                    attr,
+                    rs_attrs,
+                    ..
+                } = *column;
+                let serde_name = attr.name.as_deref().map(serde_name);
+                quote! {
+                    #(#rs_attrs)* #serde_name
+                    pub #rs_name: #rs_ty,
+                }
+            });
+            let update_request_fields = update_patch_request_fields.clone().map(|column| {
+                let stage3::RequestColumnField {
+                    rs_name,
+                    ref rs_ty,
+                    attr,
+                    rs_attrs,
+                    ..
+                } = *column;
+                let serde_name = attr.name.as_deref().map(serde_name);
+                quote! {
+                    #(#rs_attrs)* #serde_name
+                    pub #rs_name: #rs_ty,
+                }
+            });
+            let patch_request_fields = update_patch_request_fields.clone().map(|column| {
+                let stage3::RequestColumnField {
+                    rs_name,
+                    ref rs_ty,
+                    attr,
+                    rs_attrs,
+                    ..
+                } = *column;
+                let serde_name = attr.name.as_deref().map(serde_name);
+                quote! {
+                    #(#rs_attrs)* #serde_name
+                    pub #rs_name: ::core::option::Option<#rs_ty>,
+                }
+            });
+
+            //             let request_column_fields = table
+            //                 .columns
+            //                 .iter()
+            //                 .filter_map(|column| column.request_field())
+            //                 .map(|column| {
+            //                     let stage3::RequestColumnField {
+            //                         rs_name,
+            //                         ref rs_ty,
+            //                         attr,
+            //                         rs_attrs,
+            //                         is_mut,
+            //                     } = *column;
+            //
+            //                     let serde_name = attr.name.as_deref().map(serde_name);
+            //
+            //                     let token_stream = quote! {
+            //                         #(#rs_attrs)* #serde_name
+            //                         pub #rs_name:
+            //                     };
+            //                     let request_create_column_field = quote! {
+            //                         #token_stream #rs_ty,
+            //                     };
+            //                     if !is_mut {
+            //                         return [request_create_column_field, quote! {}, quote! {}];
+            //                     }
+            //                     let request_patch_column_field = quote! {
+            //                         #token_stream ::core::option::Option<#rs_ty>,
+            //                     };
+            //                     let request_update_column_field = request_create_column_field.clone();
+            //                     [
+            //                         request_create_column_field,
+            //                         request_update_column_field,
+            //                         request_patch_column_field,
+            //                     ]
+            //                 });
+            //             let [
+            //                 request_create_column_fields,
+            //                 request_update_column_fields,
+            //                 request_patch_column_fields,
+            //             ] = crate::utils::syn::unzip_token_streams(request_column_fields);
+
             let request_setters = table
                 .columns
                 .iter()
                 .filter_map(|column| column.request_one_setter());
-            let request_setter_columns = request_setters.clone().map(|setter| {
+            let create_request_setters = request_setters.clone();
+            let update_patch_request_setters = request_setters
+                .clone()
+                .filter(|request_setter| request_setter.is_mut);
+
+            let create_request_setters_1 = create_request_setters.clone().map(|setter| {
                 let stage3::RequestColumnSetterOne {
                     rs_name, optional, ..
                 } = *setter;
                 request_setter(&quote! { request.#rs_name }, optional)
             });
-            let request_setter_token_stream = quote! {
-                #( #request_setter_columns, )*
-            };
+            let create_request_setters_2 = create_request_setters_1.clone();
+            let update_request_setters = update_patch_request_setters.clone().map(|setter| {
+                let stage3::RequestColumnSetterOne {
+                    rs_name, optional, ..
+                } = *setter;
+                request_setter(&quote! { request.#rs_name }, optional)
+            });
 
             let request_columns = table
                 .columns
                 .iter()
                 .filter_map(|column| column.request_one());
-            let create_one = create_one(&table.name_intern, request_columns.clone());
+            let create_request_columns = request_columns.clone();
+            let update_patch_request_columns =
+                request_columns.filter(|request_column| request_column.is_mut());
 
-            let request_setter_compounds_columns = table
+            let create_one = create_one(&table.name_intern, create_request_columns);
+
+            let compounds_request_setters = table
                 .columns
                 .iter()
                 .filter_map(|column| column.request_compounds_settter());
 
-            let request_setter_compounds_create_many =
-                request_setter_compounds_columns.clone().map(|column| {
+            let create_request_compounds_setters_1 =
+                compounds_request_setters.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
                         index_rs_name,
@@ -1084,12 +1098,9 @@ impl From<stage3::Table<'_>> for Table {
                         ).await?;
                     }}
                 });
-            let request_setter_compounds_create_many = quote! {
-                #( #request_setter_compounds_create_many )*
-            };
-
-            let request_setter_compounds_update_many =
-                request_setter_compounds_columns.clone().map(|column| {
+            let create_request_compounds_setters_2 = create_request_compounds_setters_1.clone();
+            let update_request_compounds_setters =
+                compounds_request_setters.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name,
                         index_rs_name,
@@ -1105,33 +1116,24 @@ impl From<stage3::Table<'_>> for Table {
                         ).await?;
                     }}
                 });
-            let request_setter_compounds_update_many = quote! {
-                #( #request_setter_compounds_update_many )*
-            };
-
-            let request_setter_compounds_patch_many =
-                request_setter_compounds_columns.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
-                        rs_name,
-                        index_rs_name,
-                        many_foreign_table_rs_name,
-                    } = column;
-                    quote! { if let ::core::option::Option::Some(#rs_name) = &request.#rs_name {
-                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #index_rs_name,
-                        >>::update_many(
-                            db,
-                            id,
-                            #rs_name,
-                        ).await?;
-                    };}
-                });
-            let request_setter_compounds_patch_many = quote! {
-                #( #request_setter_compounds_patch_many )*
-            };
-
-            let request_setter_compounds_delete_many =
-                request_setter_compounds_columns.clone().map(|column| {
+            let patch_request_compounds_setters = compounds_request_setters.clone().map(|column| {
+                let stage3::RequestColumnSetterCompounds {
+                    rs_name,
+                    index_rs_name,
+                    many_foreign_table_rs_name,
+                } = column;
+                quote! { if let ::core::option::Option::Some(#rs_name) = &request.#rs_name {
+                    <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                        #index_rs_name,
+                    >>::update_many(
+                        db,
+                        id,
+                        #rs_name,
+                    ).await?;
+                };}
+            });
+            let delete_request_compounds_setters =
+                compounds_request_setters.clone().map(|column| {
                     let stage3::RequestColumnSetterCompounds {
                         rs_name: _,
                         index_rs_name,
@@ -1146,19 +1148,16 @@ impl From<stage3::Table<'_>> for Table {
                         ).await?;
                     }}
                 });
-            let request_setter_compounds_delete_many = quote! {
-                #( #request_setter_compounds_delete_many )*
-            };
 
             let collection_token_stream = quote! {
                 #[derive(::serde::Deserialize)]
-                pub struct #table_request_rs_name {
-                    #request_column_fields
+                pub struct #create_request_rs_name {
+                    #( #create_request_fields )*
                 }
 
                 impl ::laraxum::Collection for #table_rs_name {
-                    type CreateRequest = #table_request_rs_name;
-                    type CreateRequestError = #table_request_error_rs_name;
+                    type CreateRequest = #create_request_rs_name;
+                    type CreateRequestError = #request_error_rs_name;
 
                     /// `get_all`
                     ///
@@ -1186,117 +1185,193 @@ impl From<stage3::Table<'_>> for Table {
                             as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
-                        let response = ::sqlx::query!(#create_one, #request_setter_token_stream);
+                        let response = ::sqlx::query!(#create_one, #(#create_request_setters_1,)*);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
-                        #request_setter_compounds_create_many
+                        #( #create_request_compounds_setters_1 )*
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
                 }
             };
 
-            let request_column_validate = request_setters.filter_map(|column| {
-                let validate = column.validate.to_token_stream(&column.rs_name);
-                let validate = validate.into_iter().flatten();
-                let not_empty = validate.clone().next().is_some();
-                not_empty.then_some((column, validate))
-            });
-            let request_validate = request_column_validate.map(|(column, validate)| {
+            let validates = request_setters
+                .filter_map(|column| {
+                    let rs_name = column.rs_name;
+                    let validates = [
+                        column.validate.max_len.map(|max_len| {
+                            let err_message = format!("max length is {max_len}");
+                            quote! {
+                                if #rs_name.len() <= #max_len {
+                                    ::core::result::Result::Ok(())
+                                } else { ::core::result::Result::Err(#err_message) }
+                            }
+                        }),
+                        column.validate.min_len.map(|min_len| {
+                            let err_message = format!("min length is {min_len}");
+                            quote! {
+                                if #rs_name.len() >= #min_len {
+                                    ::core::result::Result::Ok(())
+                                } else { ::core::result::Result::Err(#err_message) }
+                            }
+                        }),
+                        column.validate.func.as_ref().map(|func| {
+                            quote! {
+                                (#func)(#rs_name)
+                            }
+                        }),
+                        column.validate.matches.as_ref().and_then(|matches| {
+                            let end = matches.end.as_deref().map(|end| match matches.limits {
+                                syn::RangeLimits::Closed(_) => {
+                                    let lte = end.to_token_stream();
+                                    let err_message = format!("must less than or equal to {lte}");
+                                    quote! {
+                                        if #rs_name <= &#lte {
+                                            ::core::result::Result::Ok(())
+                                        } else { ::core::result::Result::Err(#err_message) }
+                                    }
+                                }
+                                syn::RangeLimits::HalfOpen(_) => {
+                                    let lt = end.to_token_stream();
+                                    let err_message = format!("must be less than {lt}");
+                                    quote! {
+                                        if #rs_name < &#lt {
+                                            ::core::result::Result::Ok(())
+                                        } else { ::core::result::Result::Err(#err_message) }
+                                    }
+                                }
+                            });
+                            let start = matches.start.as_deref().map(|gte| {
+                                let ok = std::cell::LazyCell::new(|| {
+                                    quote! { ::core::result::Result::Ok(()) }
+                                });
+                                let end = end.as_ref().unwrap_or_else(|| &*ok);
+
+                                let gte = gte.to_token_stream();
+                                let err_message = format!("must be greater than or equal to {gte}");
+                                quote! {
+                                    if #rs_name >= &#gte {
+                                        #end
+                                    } else { ::core::result::Result::Err(#err_message) }
+                                }
+                            });
+                            start.or(end)
+                        }),
+                    ];
+                    let validates = validates.into_iter().flatten();
+                    let not_empty = validates.clone().next().is_some();
+                    not_empty.then(|| {
+                        let value = quote! {
+                            &self.#rs_name
+                        };
+                        let validates = validates.map(|validate| {
+                            quote! {
+                                if let ::core::result::Result::Err(err) = #validate {
+                                    ::laraxum::request::error_builder::<
+                                        (),
+                                        Self::Error,
+                                    >(
+                                        &mut e,
+                                        |e| e.#rs_name.push(err),
+                                    );
+                                }
+                            }
+                        });
+                        let validates = quote! { #( #validates )* };
+                        (column, value, validates)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let request_error_fields = validates.iter().map(|(column, _, _)| {
                 let rs_name = column.rs_name;
-                let error_field = quote! {
+                quote! {
                     #[serde(skip_serializing_if = "<[&str]>::is_empty")]
                     pub #rs_name: ::std::vec::Vec::<&'static str>,
-                };
-                let value = quote! {
-                    &self.#rs_name
-                };
-                let validate_results = validate.map(|validate_result| {
-                    quote! {
-                        if let ::core::result::Result::Err(err) = #validate_result {
-                            ::laraxum::request::error_builder::<
-                                (),
-                                #table_request_error_rs_name,
-                            >(
-                                &mut e,
-                                |e| e.#rs_name.push(err),
-                            );
+                }
+            });
+
+            let create_request_validates = validates.iter();
+            let update_patch_request_validates =
+                validates.iter().filter(|(column, _, _)| column.is_mut);
+
+            let create_request_validates =
+                create_request_validates.map(|(column, value, validate)| {
+                    let rs_name = column.rs_name;
+                    if column.optional {
+                        quote! {
+                            if let ::core::option::Option::Some(#rs_name) = #value {
+                                #validate
+                            }
+                        }
+                    } else {
+                        quote! {
+                            let #rs_name = #value;
+                            #validate
                         }
                     }
                 });
-                let validate_results = quote! { #( #validate_results )* };
-                let validate_result_update_create = if column.optional {
-                    quote! {
-                        if let ::core::option::Option::Some(#rs_name) = #value {
-                            #validate_results
+            let update_request_validates =
+                update_patch_request_validates
+                    .clone()
+                    .map(|(column, value, validate)| {
+                        let rs_name = column.rs_name;
+                        if column.optional {
+                            quote! {
+                                if let ::core::option::Option::Some(#rs_name) = #value {
+                                    #validate
+                                }
+                            }
+                        } else {
+                            quote! {
+                                let #rs_name = #value;
+                                #validate
+                            }
+                        }
+                    });
+            let patch_request_validates =
+                update_patch_request_validates.map(|(column, value, validate)| {
+                    let rs_name = column.rs_name;
+                    if column.optional {
+                        quote! {
+                            if let ::core::option::Option::Some(
+                                ::core::option::Option::Some(#rs_name)
+                            ) = #value {
+                                #validate
+                            }
+                        }
+                    } else {
+                        quote! {
+                            if let ::core::option::Option::Some(#rs_name) = #value {
+                                #validate
+                            }
                         }
                     }
-                } else {
-                    quote! {
-                        let #rs_name = #value;
-                        #validate_results
-                    }
-                };
-                let validate_result_patch = if column.optional {
-                    quote! {
-                        if let ::core::option::Option::Some(
-                            ::core::option::Option::Some(#rs_name)
-                        ) = #value {
-                            #validate_results
-                        }
-                    }
-                } else {
-                    quote! {
-                        if let ::core::option::Option::Some(#rs_name) = #value {
-                            #validate_results
-                        }
-                    }
-                };
-                [
-                    error_field,
-                    validate_result_update_create,
-                    validate_result_patch,
-                ]
-            });
-            let [
-                request_error_fields,
-                request_validate_results_update_create,
-                request_validate_results_patch,
-            ] = crate::utils::syn::unzip_token_streams(request_validate);
+                });
 
             let collection_token_stream = quote! {
                 #collection_token_stream
 
                 #[derive(Default, ::serde::Serialize)]
-                pub struct #table_request_error_rs_name {
-                    #request_error_fields
+                pub struct #request_error_rs_name {
+                    #( #request_error_fields )*
                 }
-                impl ::core::convert::From<#table_request_error_rs_name>
-                    for ::laraxum::ModelError<#table_request_error_rs_name>
+                impl ::core::convert::From<#request_error_rs_name>
+                    for ::laraxum::ModelError<#request_error_rs_name>
                 {
-                    fn from(value: #table_request_error_rs_name) -> Self {
+                    fn from(value: #request_error_rs_name) -> Self {
                         Self::UnprocessableEntity(value)
                     }
                 }
 
                 impl ::laraxum::Request::<::laraxum::request::method::Create>
-                    for #table_request_rs_name
+                    for #create_request_rs_name
                 {
-                    type Error = #table_request_error_rs_name;
+                    type Error = #request_error_rs_name;
                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
                         let mut e = ::core::result::Result::Ok(());
-                        #request_validate_results_update_create
+                        #( #create_request_validates )*
                         e
-                    }
-                }
-                impl ::laraxum::Request::<::laraxum::request::method::Update>
-                    for #table_request_rs_name
-                {
-                    type Error = #table_request_error_rs_name;
-                    fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
-                        <
-                            Self as ::laraxum::Request::<::laraxum::request::method::Create>
-                        >::validate(self)
                     }
                 }
             };
@@ -1701,7 +1776,7 @@ impl From<stage3::Table<'_>> for Table {
                 },
                 response_getter,
             );
-            let patch_one_request = request_columns.clone().map(|request| {
+            let patch_one_request = update_patch_request_columns.clone().map(|request| {
                 let patch_one =
                     update_one(&table.name_intern, table_id_name, core::iter::once(request));
                 if let Some(setter) = request.request_setter() {
@@ -1722,37 +1797,52 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 }
             });
-            let patch_one_request = quote! {
-                #( #patch_one_request )*
-            };
-            let update_one = update_one(&table.name_intern, table_id_name, request_columns);
+            let update_one = update_one(
+                &table.name_intern,
+                table_id_name,
+                update_patch_request_columns,
+            );
             let delete_one = delete_one(&table.name_intern, table_id_name);
 
             quote! {
                 #collection_token_stream
 
                 #[derive(::serde::Deserialize)]
-                pub struct #table_request_patch_rs_name {
-                    #request_patch_column_fields
+                pub struct #update_request_rs_name {
+                    #( #update_request_fields )*
+                }
+                #[derive(::serde::Deserialize)]
+                pub struct #patch_request_rs_name {
+                    #( #patch_request_fields )*
                 }
 
-                impl ::laraxum::Request::<::laraxum::request::method::Patch>
-                    for #table_request_patch_rs_name
+                impl ::laraxum::Request::<::laraxum::request::method::Update>
+                    for #update_request_rs_name
                 {
-                    type Error = #table_request_error_rs_name;
+                    type Error = #request_error_rs_name;
                     fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
                         let mut e = ::core::result::Result::Ok(());
-                        #request_validate_results_patch
+                        #( #update_request_validates )*
+                        e
+                    }
+                }
+                impl ::laraxum::Request::<::laraxum::request::method::Patch>
+                    for #patch_request_rs_name
+                {
+                    type Error = #request_error_rs_name;
+                    fn validate(&self) -> ::core::result::Result::<(), Self::Error> {
+                        let mut e = ::core::result::Result::Ok(());
+                        #( #patch_request_validates )*
                         e
                     }
                 }
 
                 impl ::laraxum::Model for #table_rs_name {
                     type Id = #table_id_rs_ty;
-                    type UpdateRequest = #table_request_rs_name;
-                    type UpdateRequestError = #table_request_error_rs_name;
-                    type PatchRequest = #table_request_patch_rs_name;
-                    type PatchRequestError = #table_request_error_rs_name;
+                    type UpdateRequest = #update_request_rs_name;
+                    type UpdateRequestError = #request_error_rs_name;
+                    type PatchRequest = #patch_request_rs_name;
+                    type PatchRequestError = #request_error_rs_name;
 
                     /// `get_one`
                     ///
@@ -1784,10 +1874,10 @@ impl From<stage3::Table<'_>> for Table {
                             as ::laraxum::Request::<::laraxum::request::method::Create>
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
-                        let response = ::sqlx::query!(#create_one, #request_setter_token_stream);
+                        let response = ::sqlx::query!(#create_one, #(#create_request_setters_2,)*);
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
-                        #request_setter_compounds_create_many
+                        #( #create_request_compounds_setters_2 )*
                         transaction.commit().await?;
                         let response = Self::get_one(db, id).await?;
                         ::core::result::Result::Ok(response)
@@ -1808,9 +1898,9 @@ impl From<stage3::Table<'_>> for Table {
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
                         let response =
-                            ::sqlx::query!(#update_one, #request_setter_token_stream id);
+                            ::sqlx::query!(#update_one, #(#update_request_setters,)* id);
                         response.execute(&db.pool).await?;
-                        #request_setter_compounds_update_many
+                        #( #update_request_compounds_setters )*
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
@@ -1829,25 +1919,11 @@ impl From<stage3::Table<'_>> for Table {
                             as ::laraxum::Request::<::laraxum::request::method::Patch>
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
-                        #patch_one_request
-                        #request_setter_compounds_patch_many
+                        #( #patch_one_request )*
+                        #( #patch_request_compounds_setters )*
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
-                    // async fn update_get_one(
-                    //     db: &Self::Db,
-                    //     request: Self::UpdateRequest,
-                    //     id: Self::Id,
-                    // )
-                    //     -> ::core::result::Result<
-                    //         Self::Response,
-                    //         ::laraxum::ModelError<Self::UpdateRequestError>,
-                    //     >
-                    // {
-                    //     Self::update_one(db, request, id).await?;
-                    //     let response = Self::get_one(db, id).await?;
-                    //     ::core::result::Result::Ok(response)
-                    // }
                     async fn delete_one(
                         db: &Self::Db,
                         id: Self::Id,
@@ -1860,7 +1936,7 @@ impl From<stage3::Table<'_>> for Table {
                         let response = ::sqlx::query!(#delete_one, id);
                         let transaction = db.pool.begin().await?;
                         response.execute(&db.pool).await?;
-                        #request_setter_compounds_delete_many
+                        #( #delete_request_compounds_setters )*
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }

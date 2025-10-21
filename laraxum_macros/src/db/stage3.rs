@@ -183,6 +183,7 @@ pub struct RequestColumnSetterOne<'a> {
     pub name: &'a str,
     pub optional: bool,
     pub validate: &'a Validate,
+    pub is_mut: bool,
 }
 
 pub struct RequestColumnSetterCompounds<'a> {
@@ -194,6 +195,7 @@ pub struct RequestColumnSetterCompounds<'a> {
 pub struct RequestColumnField<'a> {
     pub rs_name: &'a Ident,
     pub rs_ty: DerefEither<Type, &'a Type, Box<Type>>,
+    pub is_mut: bool,
     pub attr: &'a stage2::ColumnAttrRequest,
     pub rs_attrs: &'a [Attribute],
 }
@@ -219,6 +221,12 @@ impl RequestColumnOne<'_> {
         match self {
             Self::Field { setter, field: _ } => Some(setter),
             _ => None,
+        }
+    }
+    pub const fn is_mut(&self) -> bool {
+        match self {
+            Self::Field { field, .. } => field.is_mut,
+            Self::OnUpdate { .. } => true,
         }
     }
 }
@@ -342,6 +350,11 @@ impl<'a> ColumnRef<'a> {
             Self::Compounds(compounds) => compounds.struct_name,
         }
     }
+    // pub const fn is_mut(&self)->bool{
+    //     match self {
+    //         Self::One(one)=>one.is
+    //     }
+    // }
 }
 impl<'a> From<&'a Column<'a>> for ColumnRef<'a> {
     fn from(column: &'a Column<'a>) -> Self {
@@ -418,8 +431,9 @@ pub struct Table<'a> {
     pub name_intern: String,
     pub name_extern: String,
     pub rs_name: &'a Ident,
-    pub request_rs_name: Cow<'a, Ident>,
-    pub request_patch_rs_name: Cow<'a, Ident>,
+    pub create_request_rs_name: Cow<'a, Ident>,
+    pub update_request_rs_name: Cow<'a, Ident>,
+    pub patch_request_rs_name: Cow<'a, Ident>,
     pub request_error_rs_name: Cow<'a, Ident>,
     pub index_rs_name: Option<&'a Ident>,
     pub db_rs_name: &'a Ident,
@@ -543,17 +557,18 @@ impl<'a> Table<'a> {
         let columns = table.columns.map_try_collect_all_default(
             |column: &stage2::Column| -> Result<Column, syn::Error> {
                 let stage2::Column {
-                    name,
-                    rs_name,
-                    ty,
-                    rs_ty,
-                    response: attr_response,
-                    request: attr_request,
-                    borrow,
-                    index,
-                    struct_name,
-                    rs_attrs,
-                } = column;
+                    ref name,
+                    ref rs_name,
+                    ref ty,
+                    ref rs_ty,
+                    ref response,
+                    ref request,
+                    is_mut,
+                    ref borrow,
+                    ref index,
+                    ref struct_name,
+                    ref rs_attrs,
+                } = *column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
                 let index = &**index;
@@ -576,7 +591,7 @@ impl<'a> Table<'a> {
                             field: ResponseColumnField {
                                 rs_name,
                                 rs_ty,
-                                attr: attr_response,
+                                attr: response,
                                 rs_attrs,
                             },
                         },
@@ -585,14 +600,16 @@ impl<'a> Table<'a> {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: DerefEither::Left(rs_ty),
-                                    attr: attr_request,
+                                    attr: request,
                                     rs_attrs,
+                                    is_mut,
                                 },
                                 setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
                                     optional: ty_element.optional(),
-                                    validate: &attr_request.validate,
+                                    validate: &request.validate,
+                                    is_mut,
                                 },
                             }),
                             TyElement::AutoTime(TyElementAutoTime {
@@ -659,7 +676,7 @@ impl<'a> Table<'a> {
                                 field: ResponseColumnField {
                                     rs_name,
                                     rs_ty,
-                                    attr: attr_response,
+                                    attr: response,
                                     rs_attrs,
                                 },
                                 getter: ResponseColumnGetterOne::Compound(compound),
@@ -668,14 +685,16 @@ impl<'a> Table<'a> {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: rs_ty_compound_request(foreign_table_id_rs_ty, optional),
-                                    attr: attr_request,
+                                    attr: request,
                                     rs_attrs,
+                                    is_mut,
                                 },
                                 setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
                                     optional,
-                                    validate: &attr_request.validate,
+                                    validate: &request.validate,
+                                    is_mut,
                                 },
                             }),
                             index,
@@ -715,7 +734,7 @@ impl<'a> Table<'a> {
                                 field: ResponseColumnField {
                                     rs_name,
                                     rs_ty,
-                                    attr: attr_response,
+                                    attr: response,
                                     rs_attrs,
                                 },
                                 getter: compounds_getter,
@@ -727,8 +746,9 @@ impl<'a> Table<'a> {
                                         many_foreign_table_rs_name,
                                         index_rs_name,
                                     ))),
-                                    attr: attr_request,
+                                    attr: request,
                                     rs_attrs,
+                                    is_mut,
                                 },
                                 setter: compounds_setter,
                             },
@@ -741,22 +761,21 @@ impl<'a> Table<'a> {
         );
         let columns = columns?;
 
-        let table_request_rs_name = quote::format_ident!("{}Request", table.rs_name);
-        let table_request_patch_rs_name = quote::format_ident!("{}PatchRequest", table.rs_name);
-        let table_request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
-        let table_rs_attrs = &*table.rs_attrs;
-        let table_index_rs_name = table.index_rs_name.as_ref();
-
+        let create_request_rs_name = quote::format_ident!("{}CreateRequest", table.rs_name);
+        let update_request_rs_name = quote::format_ident!("{}UpdateRequest", table.rs_name);
+        let patch_request_rs_name = quote::format_ident!("{}PatchRequest", table.rs_name);
+        let request_error_rs_name = quote::format_ident!("{}RequestError", table.rs_name);
         Ok(Self {
             name_intern: table_name_intern,
             name_extern: table_name_extern,
             rs_name: &table.rs_name,
-            request_rs_name: Cow::Owned(table_request_rs_name),
-            request_patch_rs_name: Cow::Owned(table_request_patch_rs_name),
-            request_error_rs_name: Cow::Owned(table_request_error_rs_name),
-            index_rs_name: table_index_rs_name,
+            create_request_rs_name: Cow::Owned(create_request_rs_name),
+            update_request_rs_name: Cow::Owned(update_request_rs_name),
+            patch_request_rs_name: Cow::Owned(patch_request_rs_name),
+            request_error_rs_name: Cow::Owned(request_error_rs_name),
+            index_rs_name: table.index_rs_name.as_ref(),
             db_rs_name: &db.rs_name,
-            rs_attrs: table_rs_attrs,
+            rs_attrs: &*table.rs_attrs,
             columns,
         })
     }

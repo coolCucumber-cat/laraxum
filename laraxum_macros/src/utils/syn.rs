@@ -217,17 +217,17 @@ pub fn parse_type_single_arg_from_path_segments(
     Some((ident, ty2))
 }
 
-pub fn unzip_token_streams<const N: usize>(
-    token_streams: impl IntoIterator<Item = [proc_macro2::TokenStream; N]>,
-) -> [proc_macro2::TokenStream; N]
-where
-    [proc_macro2::TokenStream; N]: Default,
-{
-    let mut token_streams_2: [proc_macro2::TokenStream; N] = Default::default();
-    for token_streams_3 in token_streams {
-        for (token_stream_2, token_stream_3) in token_streams_2.iter_mut().zip(token_streams_3) {
-            token_stream_2.extend(token_stream_3);
-        }
-    }
-    token_streams_2
-}
+// pub fn unzip_token_streams<const N: usize>(
+//     token_streams: impl IntoIterator<Item = [proc_macro2::TokenStream; N]>,
+// ) -> [proc_macro2::TokenStream; N]
+// where
+//     [proc_macro2::TokenStream; N]: Default,
+// {
+//     let mut token_streams_2: [proc_macro2::TokenStream; N] = Default::default();
+//     for token_streams_3 in token_streams {
+//         for (token_stream_2, token_stream_3) in token_streams_2.iter_mut().zip(token_streams_3) {
+//             token_stream_2.extend(token_stream_3);
+//         }
+//     }
+//     token_streams_2
+// }

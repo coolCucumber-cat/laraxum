@@ -1,7 +1,7 @@
 # Laraxum
 
 Create API database servers easily using Axum and SQLX.
-It is inspired by Laravel and uses the MVC paradigm:
+It uses the MVC paradigm:
 
 - Model: manages the data storage and interacts with the database.
 - View: manages the data input/output and interacts with the end user.
@@ -24,6 +24,7 @@ and the `Model` trait:
 
 - `get_one`
 - `update_one`
+- `patch_one`
 - `delete_one`
 
 ### ManyModel
@@ -42,6 +43,7 @@ It implements the `Controller` trait:
 - `get`
 - `create`
 - `update`
+- `patch`
 - `delete`
 
 The `State` type is the type that will be available as context in the controller,
@@ -123,7 +125,7 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>
 >> 1. >Primary Key.  
 >>    >Set automatically once when the record is created.  
->>    >Field type must be `u64` (todo: add more possible data types and custom values).  
+>>    >Field type must be an integer.  
 >>    >
 >>    >`id`
 >>
@@ -226,7 +228,7 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>>
 >>>>Must be minimum length.
 >>>>
->>>>`min_len(` `<Expr>` `),`
+>>>>`min_len =` `<int>` `,`
 >>>
 >>>>Custom function to validate.  
 >>>>The type of the function is `fn(&T) -> Result<(), &'static str>`.
@@ -234,37 +236,14 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>>>
 >>>>`func(` `<Expr>` `),`
 >>>
->>>>Must match pattern.  
+>>>>Must match range pattern.  
+>>>>Example:
 >>>>
->>>>`matches(` `<Pat>` `),`
->>>
->>>>Must not match pattern.  
+>>>> - `..6` less than 6  
+>>>> - `..=6` less than or equal to 6  
+>>>> - `10..` greater or equal to 10  
 >>>>
->>>>`n_matches(` `<Pat>` `),`
->>>
->>>>Must equal.  
->>>>
->>>>`eq(` `<Expr>` `),`
->>>
->>>>Must not equal.  
->>>>
->>>>`n_eq(` `<Expr>` `),`
->>>
->>>>Must be greater than.  
->>>>
->>>>`gt(` `<Expr>` `),`
->>>
->>>>Must be less than.  
->>>>
->>>>`lt(` `<Expr>` `),`
->>>
->>>>Must be greater or equal.  
->>>>
->>>>`gte(` `<Expr>` `),`
->>>
->>>>Must be less or equal.  
->>>>
->>>>`lte(` `<Expr>` `),`
+>>>>`matches(` `<PatRange>` `),`
 >>>
 >>>`),`
 >>
@@ -281,6 +260,11 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>Default: `false`.  
 >>
 >>`unique =` `<bool>` `,`
+>
+>>This column cannot be updated.  
+>>Default: `false`.  
+>>
+>>`is_mut =` `<bool>` `,`
 >
 >>Create an index that can query this column.  
 >>This attribute can be set multiple times to create multiple indexes.  

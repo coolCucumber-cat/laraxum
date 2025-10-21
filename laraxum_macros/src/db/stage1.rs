@@ -284,6 +284,8 @@ pub struct ColumnAttr {
     )]
     pub real_rs_ty: Option<Box<Type>>,
     pub unique: bool,
+    #[darling(default = "Self::is_mut_default")]
+    pub is_mut: bool,
     #[darling(and_then = "crate::utils::syn::TokenStreamAttrOption::transform_option")]
     pub borrow: Option<Option<Box<Type>>>,
     #[darling(multiple)]
@@ -291,6 +293,11 @@ pub struct ColumnAttr {
     #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
     pub struct_name: Option<Ident>,
     pub attrs: Vec<Attribute>,
+}
+impl ColumnAttr {
+    fn is_mut_default() -> bool {
+        true
+    }
 }
 
 pub struct Column {

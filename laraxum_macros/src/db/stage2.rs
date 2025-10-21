@@ -343,6 +343,7 @@ pub struct Column {
     pub request: ColumnAttrRequest,
     // /// validation rules
     // pub validate: Vec<ValidateRule>,
+    pub is_mut: bool,
     /// borrowing behaviour
     pub borrow: Option<Option<Box<Type>>>,
     /// index
@@ -366,6 +367,7 @@ impl TryFrom<stage1::Column> for Column {
                     mut request,
                     real_rs_ty,
                     unique,
+                    is_mut,
                     borrow,
                     index,
                     struct_name,
@@ -488,6 +490,7 @@ impl TryFrom<stage1::Column> for Column {
             rs_ty,
             response,
             request,
+            is_mut,
             borrow,
             index,
             struct_name,
