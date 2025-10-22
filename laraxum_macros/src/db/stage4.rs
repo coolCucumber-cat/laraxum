@@ -551,12 +551,12 @@ fn flatten<'columns>(
     )
 }
 
-fn serde_skip() -> proc_macro2::TokenStream {
+fn serde_skip_rs_attr() -> proc_macro2::TokenStream {
     quote! {
         #[serde(skip)]
     }
 }
-fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
+fn serde_rename_rs_attr(serde_name: &str) -> proc_macro2::TokenStream {
     quote! {
         #[serde(rename = #serde_name)]
     }
@@ -732,6 +732,19 @@ fn transform_response(
     }
 }
 
+fn request_field(
+    rs_name: &Ident,
+    rs_ty: &impl quote::ToTokens,
+    request_name: Option<&str>,
+    rs_attrs: &[syn::Attribute],
+) -> proc_macro2::TokenStream {
+    let serde_rename_rs_attr = request_name.map(serde_rename_rs_attr);
+    quote! {
+        #(#rs_attrs)* #serde_rename_rs_attr
+        pub #rs_name: #rs_ty,
+    }
+}
+
 fn request_setter(
     request: &proc_macro2::TokenStream,
     is_optional: bool,
@@ -869,8 +882,8 @@ impl From<stage3::Table<'_>> for Table {
                 rs_attrs,
             } = column.response_field();
 
-            let serde_skip = attr.skip.then(serde_skip);
-            let serde_name = attr.name.as_deref().map(serde_name);
+            let serde_skip = attr.skip.then(serde_skip_rs_attr);
+            let serde_name = attr.name.as_deref().map(serde_rename_rs_attr);
 
             quote! {
                 #(#rs_attrs)* #serde_skip #serde_name
@@ -958,91 +971,35 @@ impl From<stage3::Table<'_>> for Table {
                 .clone()
                 .filter(|request_field| request_field.is_mut);
 
-            // TODO: use function
             // TODO: move is_mut to top level struct of column and filter then take data instead of taking data and then filter
             let create_request_fields = create_request_fields.map(|column| {
-                let stage3::RequestColumnField {
-                    rs_name,
-                    ref rs_ty,
-                    attr,
-                    rs_attrs,
-                    ..
-                } = *column;
-                let serde_name = attr.name.as_deref().map(serde_name);
-                quote! {
-                    #(#rs_attrs)* #serde_name
-                    pub #rs_name: #rs_ty,
-                }
+                request_field(
+                    column.rs_name,
+                    &*column.rs_ty,
+                    column.attr.name.as_deref(),
+                    column.rs_attrs,
+                )
             });
             let update_request_fields = update_patch_request_fields.clone().map(|column| {
-                let stage3::RequestColumnField {
-                    rs_name,
-                    ref rs_ty,
-                    attr,
-                    rs_attrs,
-                    ..
-                } = *column;
-                let serde_name = attr.name.as_deref().map(serde_name);
-                quote! {
-                    #(#rs_attrs)* #serde_name
-                    pub #rs_name: #rs_ty,
-                }
+                request_field(
+                    column.rs_name,
+                    &*column.rs_ty,
+                    column.attr.name.as_deref(),
+                    column.rs_attrs,
+                )
             });
             let patch_request_fields = update_patch_request_fields.clone().map(|column| {
-                let stage3::RequestColumnField {
-                    rs_name,
-                    ref rs_ty,
-                    attr,
-                    rs_attrs,
-                    ..
-                } = *column;
-                let serde_name = attr.name.as_deref().map(serde_name);
-                quote! {
-                    #(#rs_attrs)* #serde_name
-                    pub #rs_name: ::core::option::Option<#rs_ty>,
-                }
+                let rs_ty = &*column.rs_ty;
+                let rs_ty = quote! {
+                    ::core::option::Option<#rs_ty>
+                };
+                request_field(
+                    column.rs_name,
+                    &rs_ty,
+                    column.attr.name.as_deref(),
+                    column.rs_attrs,
+                )
             });
-
-            //             let request_column_fields = table
-            //                 .columns
-            //                 .iter()
-            //                 .filter_map(|column| column.request_field())
-            //                 .map(|column| {
-            //                     let stage3::RequestColumnField {
-            //                         rs_name,
-            //                         ref rs_ty,
-            //                         attr,
-            //                         rs_attrs,
-            //                         is_mut,
-            //                     } = *column;
-            //
-            //                     let serde_name = attr.name.as_deref().map(serde_name);
-            //
-            //                     let token_stream = quote! {
-            //                         #(#rs_attrs)* #serde_name
-            //                         pub #rs_name:
-            //                     };
-            //                     let request_create_column_field = quote! {
-            //                         #token_stream #rs_ty,
-            //                     };
-            //                     if !is_mut {
-            //                         return [request_create_column_field, quote! {}, quote! {}];
-            //                     }
-            //                     let request_patch_column_field = quote! {
-            //                         #token_stream ::core::option::Option<#rs_ty>,
-            //                     };
-            //                     let request_update_column_field = request_create_column_field.clone();
-            //                     [
-            //                         request_create_column_field,
-            //                         request_update_column_field,
-            //                         request_patch_column_field,
-            //                     ]
-            //                 });
-            //             let [
-            //                 request_create_column_fields,
-            //                 request_update_column_fields,
-            //                 request_patch_column_fields,
-            //             ] = crate::utils::syn::unzip_token_streams(request_column_fields);
 
             let request_setters = table
                 .columns
@@ -1957,10 +1914,9 @@ impl From<stage3::Table<'_>> for Table {
                 .as_deref()
                 .map_or_else(|| quote! { () }, quote::ToTokens::to_token_stream);
 
-            let get_many_request_query = table.index_rs_name.map_or_else(
-                || quote! { () },
-                |index_rs_name| index_rs_name.to_token_stream(),
-            );
+            let get_many_request_query = table
+                .index_rs_name
+                .map_or_else(|| quote! { () }, quote::ToTokens::to_token_stream);
 
             let get_many = table.index_rs_name.map(|index_rs_name| {
                 quote! {
