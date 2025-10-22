@@ -5,7 +5,7 @@ pub use stage2::{
     DefaultValue, TyElementAutoTime,
 };
 
-use crate::utils::{borrow::DerefEither, collections::TryCollectAll};
+use crate::utils::{borrow::CowBoxDeref, collections::TryCollectAll};
 
 use std::borrow::Cow;
 
@@ -194,7 +194,7 @@ pub struct RequestColumnSetterCompounds<'a> {
 
 pub struct RequestColumnField<'a> {
     pub rs_name: &'a Ident,
-    pub rs_ty: DerefEither<Type, &'a Type, Box<Type>>,
+    pub rs_ty: CowBoxDeref<'a, Type>,
     pub is_mut: bool,
     pub attr: &'a stage2::ColumnAttrRequest,
     pub rs_attrs: &'a [Attribute],
@@ -444,14 +444,11 @@ pub struct Table<'a> {
 impl<'a> Table<'a> {
     #[expect(clippy::too_many_lines)]
     fn try_new(table: &'a stage2::Table, db: &'a stage2::Db) -> syn::Result<Self> {
-        fn rs_ty_compound_request(
-            rs_ty: &Type,
-            is_optional: bool,
-        ) -> DerefEither<Type, &Type, Box<Type>> {
+        fn rs_ty_compound_request(rs_ty: &Type, is_optional: bool) -> CowBoxDeref<Type> {
             if is_optional {
-                DerefEither::Right(Box::new(syn::parse_quote!(Option<#rs_ty>)))
+                CowBoxDeref::Owned(Box::new(syn::parse_quote!(Option<#rs_ty>)))
             } else {
-                DerefEither::Left(rs_ty)
+                CowBoxDeref::Borrowed(rs_ty)
             }
         }
         fn rs_ty_compounds_request(
@@ -599,7 +596,7 @@ impl<'a> Table<'a> {
                             TyElement::Value(_) => Some(RequestColumnOne::Field {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: DerefEither::Left(rs_ty),
+                                    rs_ty: CowBoxDeref::Borrowed(rs_ty),
                                     attr: request,
                                     rs_attrs,
                                     is_mut,
@@ -749,7 +746,7 @@ impl<'a> Table<'a> {
                             request: RequestColumnCompounds {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: DerefEither::Right(Box::new(rs_ty_compounds_request(
+                                    rs_ty: CowBoxDeref::Owned(Box::new(rs_ty_compounds_request(
                                         many_foreign_table_rs_name,
                                         index_rs_name,
                                     ))),

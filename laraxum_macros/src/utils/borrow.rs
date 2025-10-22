@@ -1,33 +1,25 @@
 use core::ops::Deref;
 
-pub enum DerefEither<T, Left, Right>
-where
-    Left: Deref<Target = T>,
-    Right: Deref<Target = T>,
-{
-    Left(Left),
-    Right(Right),
+/// Like [Cow<T>][std::borrow::Cow<T>] but only for reading from, not writing into.
+/// Uses [Box] to own instead of bare type.
+pub enum CowBoxDeref<'a, T> {
+    Borrowed(&'a T),
+    Owned(Box<T>),
 }
 
-impl<T, Left, Right> Deref for DerefEither<T, Left, Right>
-where
-    Left: Deref<Target = T>,
-    Right: Deref<Target = T>,
-{
+impl<'a, T> Deref for CowBoxDeref<'a, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Left(left) => left,
-            Self::Right(right) => right,
+        match *self {
+            Self::Borrowed(borrowed) => borrowed,
+            Self::Owned(ref owned) => &**owned,
         }
     }
 }
 
-impl<T, Left, Right> quote::ToTokens for DerefEither<T, Left, Right>
+impl<'a, T> quote::ToTokens for CowBoxDeref<'a, T>
 where
     T: quote::ToTokens,
-    Left: Deref<Target = T>,
-    Right: Deref<Target = T>,
 {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         self.deref().to_tokens(tokens);
