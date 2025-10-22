@@ -188,10 +188,10 @@ impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
         W: fmt2::write::Write + ?Sized,
     {
         fmt2::fmt! { (? w) => {self.ty()} }?;
-        if self.optional() {
+        if self.is_optional() {
             fmt2::fmt! { (? w) => " NOT NULL" }?;
         }
-        if self.unique() && !self.is_id() {
+        if self.is_unique() && !self.is_id() {
             fmt2::fmt! { (? w) => " UNIQUE" }?;
         }
         if let Some(default_value) = self.default_value() {
@@ -238,7 +238,7 @@ impl fmt2::write_to::WriteTo for ResponseColumnGetterElement<'_> {
     where
         W: fmt2::write::Write + ?Sized,
     {
-        if self.parent_optional || self.element.optional {
+        if self.parent_optional || self.element.is_optional {
             fmt2::fmt! { (? w) =>
                 {self.element.name_intern}
                 " AS "
@@ -514,7 +514,7 @@ fn flatten_internal<'columns>(
             stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
                 compound,
             )) => {
-                let parent_optional = parent_optional || compound.optional;
+                let parent_optional = parent_optional || compound.is_optional;
                 let compound_columns = compound
                     .columns
                     .iter()
@@ -564,13 +564,13 @@ fn serde_name(serde_name: &str) -> proc_macro2::TokenStream {
 
 fn response_getter_column(
     name_extern: &Ident,
-    optional: bool,
-    parent_optional: bool,
+    is_optional: bool,
+    is_parent_optional: bool,
 ) -> proc_macro2::TokenStream {
     let field_access = quote! {
         response.#name_extern
     };
-    if optional {
+    if is_optional {
         quote! {
             if let ::core::option::Option::Some(v) = #field_access {
                 ::core::option::Option::Some(::laraxum::model::Decode::decode(v))
@@ -578,7 +578,7 @@ fn response_getter_column(
                 ::core::option::Option::None
             }
         }
-    } else if parent_optional {
+    } else if is_parent_optional {
         quote! {
             if let ::core::option::Option::Some(v) = #field_access {
                 ::laraxum::model::Decode::decode(v)
@@ -613,37 +613,35 @@ fn response_getter_compound<'columns>(
 
 fn response_getter(
     column: stage3::ResponseColumnGetterRef<'_>,
-    parent_optional: bool,
+    is_parent_optional: bool,
 ) -> proc_macro2::TokenStream {
     match column {
         stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(element)) => {
             let stage3::ResponseColumnGetterElement {
-                name_extern,
-                optional,
+                ref name_extern,
+                is_optional,
                 ..
-            } = element;
-            let optional = *optional;
+            } = *element;
             let name_extern = from_str_to_rs_ident(name_extern);
-            response_getter_column(&name_extern, optional, parent_optional)
+            response_getter_column(&name_extern, is_optional, is_parent_optional)
         }
         stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
             compound,
         )) => {
             let stage3::ResponseColumnGetterCompound {
-                optional,
+                is_optional,
                 foreign_table_rs_name: rs_ty_name,
-                columns,
+                ref columns,
                 ..
-            } = compound;
-            let optional = *optional;
-            let parent_optional = parent_optional || optional;
+            } = *compound;
+            let is_parent_optional = is_parent_optional || is_optional;
 
             let getter = response_getter_compound(
                 rs_ty_name,
                 columns.iter().map(stage3::ResponseColumnGetterRef::from),
-                parent_optional,
+                is_parent_optional,
             );
-            if optional {
+            if is_optional {
                 // catch any returns in the closure, else return `Ok(Some(T))`
                 quote! {
                     (async || {
@@ -660,12 +658,12 @@ fn response_getter(
             let stage3::ResponseColumnGetterCompounds {
                 rs_name: _,
                 index_rs_name: table_rs_name,
-                table_id_name_extern,
+                ref table_id_name_extern,
                 many_foreign_table_rs_name,
-            } = compounds;
+            } = *compounds;
             let one_id = {
                 let table_id_name_extern = from_str_to_rs_ident(table_id_name_extern);
-                response_getter_column(&table_id_name_extern, false, parent_optional)
+                response_getter_column(&table_id_name_extern, false, is_parent_optional)
             };
             quote! {
                 ::core::result::Result::map_err(
@@ -725,17 +723,20 @@ fn transform_response_many(
 fn transform_response(
     response: &proc_macro2::TokenStream,
     response_getter: &proc_macro2::TokenStream,
-    one: bool,
+    is_one: bool,
 ) -> proc_macro2::TokenStream {
-    if one {
+    if is_one {
         transform_response_one(response, response_getter)
     } else {
         transform_response_many(response, response_getter)
     }
 }
 
-fn request_setter(request: &proc_macro2::TokenStream, optional: bool) -> proc_macro2::TokenStream {
-    if optional {
+fn request_setter(
+    request: &proc_macro2::TokenStream,
+    is_optional: bool,
+) -> proc_macro2::TokenStream {
+    if is_optional {
         quote! {
             ::core::option::Option::map(
                 #request,
@@ -1054,16 +1055,20 @@ impl From<stage3::Table<'_>> for Table {
 
             let create_request_setters_1 = create_request_setters.clone().map(|setter| {
                 let stage3::RequestColumnSetterOne {
-                    rs_name, optional, ..
+                    rs_name,
+                    is_optional,
+                    ..
                 } = *setter;
-                request_setter(&quote! { request.#rs_name }, optional)
+                request_setter(&quote! { request.#rs_name }, is_optional)
             });
             let create_request_setters_2 = create_request_setters_1.clone();
             let update_request_setters = update_patch_request_setters.clone().map(|setter| {
                 let stage3::RequestColumnSetterOne {
-                    rs_name, optional, ..
+                    rs_name,
+                    is_optional,
+                    ..
                 } = *setter;
-                request_setter(&quote! { request.#rs_name }, optional)
+                request_setter(&quote! { request.#rs_name }, is_optional)
             });
 
             let request_columns = table
@@ -1298,7 +1303,7 @@ impl From<stage3::Table<'_>> for Table {
             let create_request_validates =
                 create_request_validates.map(|(column, value, validate)| {
                     let rs_name = column.rs_name;
-                    if column.optional {
+                    if column.is_optional {
                         quote! {
                             if let ::core::option::Option::Some(#rs_name) = #value {
                                 #validate
@@ -1316,7 +1321,7 @@ impl From<stage3::Table<'_>> for Table {
                     .clone()
                     .map(|(column, value, validate)| {
                         let rs_name = column.rs_name;
-                        if column.optional {
+                        if column.is_optional {
                             quote! {
                                 if let ::core::option::Option::Some(#rs_name) = #value {
                                     #validate
@@ -1332,7 +1337,7 @@ impl From<stage3::Table<'_>> for Table {
             let patch_request_validates =
                 update_patch_request_validates.map(|(column, value, validate)| {
                     let rs_name = column.rs_name;
-                    if column.optional {
+                    if column.is_optional {
                         quote! {
                             if let ::core::option::Option::Some(
                                 ::core::option::Option::Some(#rs_name)
@@ -1398,7 +1403,7 @@ impl From<stage3::Table<'_>> for Table {
                         filter_rs_ty_owned.clone()
                     };
                     let name_intern = column.name_intern();
-                    let is_unique = column.create.ty.unique();
+                    let is_unique = column.create.ty.is_unique();
 
                     let table_name_intern = &*table.name_intern;
                     let table_name_extern = &*table.name_extern;
@@ -1432,7 +1437,7 @@ impl From<stage3::Table<'_>> for Table {
                                         },
                                     )
                                 });
-                        let sort = index.sort.then(|| -> (Ident, Ident, Type) {
+                        let sort = index.is_sort.then(|| -> (Ident, Ident, Type) {
                             (
                                 quote::format_ident!("sort"),
                                 quote::format_ident!("sort_{}", column_response_name),
@@ -1482,7 +1487,7 @@ impl From<stage3::Table<'_>> for Table {
                             }
                         });
 
-                        let response = if index.sort {
+                        let response = if index.is_sort {
                             let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
                                 table_name_intern,
                                 table_name_extern,
@@ -1781,9 +1786,11 @@ impl From<stage3::Table<'_>> for Table {
                     update_one(&table.name_intern, table_id_name, core::iter::once(request));
                 if let Some(setter) = request.request_setter() {
                     let stage3::RequestColumnSetterOne {
-                        rs_name, optional, ..
+                        rs_name,
+                        is_optional,
+                        ..
                     } = *setter;
-                    let setter = request_setter(&rs_name.to_token_stream(), optional);
+                    let setter = request_setter(&rs_name.to_token_stream(), is_optional);
                     quote! {
                         if let ::core::option::Option::Some(#rs_name) = request.#rs_name {
                             let response = ::sqlx::query!(#patch_one, #setter, id);

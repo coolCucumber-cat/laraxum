@@ -6,7 +6,7 @@ pub enum Multiplicity {
     Many,
 }
 impl Multiplicity {
-    pub const fn optional(&self) -> bool {
+    pub const fn is_optional(&self) -> bool {
         match self {
             Self::OneOrZero => true,
             Self::One | Self::Many => false,
@@ -29,8 +29,8 @@ pub fn multiplicity(ty: &Type) -> (&Type, Multiplicity) {
         .unwrap_or((ty, Multiplicity::One))
 }
 
-pub fn optional(ty: &Type) -> (&Type, bool) {
+pub fn is_optional(ty: &Type) -> (&Type, bool) {
     let (ty_inner, multiplicity) = multiplicity(ty);
-    let optional = multiplicity.optional();
-    (if optional { ty_inner } else { ty }, optional)
+    let is_optional = multiplicity.is_optional();
+    (if is_optional { ty_inner } else { ty }, is_optional)
 }

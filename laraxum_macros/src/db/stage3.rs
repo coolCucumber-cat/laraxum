@@ -35,15 +35,15 @@ pub struct TyCompound<'a> {
     pub foreign_table_name: &'a str,
     pub foreign_table_id_name: &'a str,
     pub ty: &'a AtomicTyInt,
-    pub optional: bool,
-    pub unique: bool,
+    pub is_optional: bool,
+    pub is_unique: bool,
 }
 impl TyCompound<'_> {
-    pub const fn optional(&self) -> bool {
-        self.optional
+    pub const fn is_optional(&self) -> bool {
+        self.is_optional
     }
-    pub const fn unique(&self) -> bool {
-        self.unique
+    pub const fn is_unique(&self) -> bool {
+        self.is_unique
     }
 }
 
@@ -52,16 +52,16 @@ pub enum Ty<'a> {
     Compound(TyCompound<'a>),
 }
 impl Ty<'_> {
-    pub const fn optional(&self) -> bool {
+    pub const fn is_optional(&self) -> bool {
         match self {
-            Self::Compound(compound) => compound.optional(),
-            Self::Element(element) => element.optional(),
+            Self::Compound(compound) => compound.is_optional(),
+            Self::Element(element) => element.is_optional(),
         }
     }
-    pub const fn unique(&self) -> bool {
+    pub const fn is_unique(&self) -> bool {
         match self {
-            Self::Compound(compound) => compound.unique(),
-            Self::Element(element) => element.unique(),
+            Self::Compound(compound) => compound.is_unique(),
+            Self::Element(element) => element.is_unique(),
         }
     }
     pub const fn default_value(&self) -> Option<DefaultValue<'_>> {
@@ -83,7 +83,7 @@ pub struct CreateColumn<'a> {
 pub struct ResponseColumnGetterElement<'a> {
     pub name_intern: String,
     pub name_extern: String,
-    pub optional: bool,
+    pub is_optional: bool,
     pub rs_name: &'a Ident,
     // pub rs_ty: &'a Type,
 }
@@ -93,7 +93,7 @@ pub struct ResponseColumnGetterCompound<'a> {
     pub foreign_table_id_name_intern: String,
     pub foreign_table_name_intern: String,
     pub foreign_table_name_extern: String,
-    pub optional: bool,
+    pub is_optional: bool,
     pub rs_name: &'a Ident,
     // pub rs_ty: &'a Type,
     pub foreign_table_rs_name: &'a Ident,
@@ -117,10 +117,10 @@ impl ResponseColumnGetterOne<'_> {
             Self::Compound(compound) => compound.rs_name,
         }
     }
-    pub const fn optional(&self) -> bool {
+    pub const fn is_optional(&self) -> bool {
         match self {
-            Self::Element(element) => element.optional,
-            Self::Compound(compound) => compound.optional,
+            Self::Element(element) => element.is_optional,
+            Self::Compound(compound) => compound.is_optional,
         }
     }
 }
@@ -181,7 +181,7 @@ pub use stage2::Validate;
 pub struct RequestColumnSetterOne<'a> {
     pub rs_name: &'a Ident,
     pub name: &'a str,
-    pub optional: bool,
+    pub is_optional: bool,
     pub validate: &'a Validate,
     pub is_mut: bool,
 }
@@ -446,9 +446,9 @@ impl<'a> Table<'a> {
     fn try_new(table: &'a stage2::Table, db: &'a stage2::Db) -> syn::Result<Self> {
         fn rs_ty_compound_request(
             rs_ty: &Type,
-            optional: bool,
+            is_optional: bool,
         ) -> DerefEither<Type, &Type, Box<Type>> {
-            if optional {
+            if is_optional {
                 DerefEither::Right(Box::new(syn::parse_quote!(Option<#rs_ty>)))
             } else {
                 DerefEither::Left(rs_ty)
@@ -486,7 +486,7 @@ impl<'a> Table<'a> {
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
                             rs_name,
-                            optional: ty_element.optional(),
+                            is_optional: ty_element.is_optional(),
                         };
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
                     }
@@ -494,8 +494,8 @@ impl<'a> Table<'a> {
                         rs_ty_name: ref foreign_table_rs_name,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::One {
-                                optional,
-                                unique: _,
+                                is_optional,
+                                is_unique: _,
                             },
                     }) => {
                         let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
@@ -522,7 +522,7 @@ impl<'a> Table<'a> {
                             foreign_table_name_extern,
                             rs_name,
                             foreign_table_rs_name: &foreign_table.rs_name,
-                            optional,
+                            is_optional,
                             columns,
                         };
                         ResponseColumnGetter::One(ResponseColumnGetterOne::Compound(compound))
@@ -585,7 +585,7 @@ impl<'a> Table<'a> {
                             getter: ResponseColumnGetterOne::Element(ResponseColumnGetterElement {
                                 name_intern: column_name_intern,
                                 name_extern: column_name_extern,
-                                optional: ty_element.optional(),
+                                is_optional: ty_element.is_optional(),
                                 rs_name,
                             }),
                             field: ResponseColumnField {
@@ -607,7 +607,7 @@ impl<'a> Table<'a> {
                                 setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
-                                    optional: ty_element.optional(),
+                                    is_optional: ty_element.is_optional(),
                                     validate: &request.validate,
                                     is_mut,
                                 },
@@ -627,7 +627,11 @@ impl<'a> Table<'a> {
                     }),
                     stage2::Ty::Compound(stage2::TyCompound {
                         rs_ty_name: ref foreign_table_rs_name,
-                        multiplicity: stage2::TyCompoundMultiplicity::One { optional, unique },
+                        multiplicity:
+                            stage2::TyCompoundMultiplicity::One {
+                                is_optional,
+                                is_unique,
+                            },
                     }) => {
                         let foreign_table = stage2::find_table(&db.tables, foreign_table_rs_name)?;
                         let foreign_table_id = foreign_table.columns.model().ok_or_else(|| {
@@ -657,7 +661,7 @@ impl<'a> Table<'a> {
                             foreign_table_name_extern,
                             rs_name,
                             foreign_table_rs_name: &foreign_table.rs_name,
-                            optional,
+                            is_optional,
                             columns,
                         };
 
@@ -668,8 +672,8 @@ impl<'a> Table<'a> {
                                     foreign_table_name: &foreign_table.name,
                                     foreign_table_id_name: &foreign_table_id.name,
                                     ty: foreign_table_id_ty,
-                                    optional,
-                                    unique,
+                                    is_optional,
+                                    is_unique,
                                 }),
                             },
                             response: ResponseColumnOne {
@@ -684,7 +688,10 @@ impl<'a> Table<'a> {
                             request: Some(RequestColumnOne::Field {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: rs_ty_compound_request(foreign_table_id_rs_ty, optional),
+                                    rs_ty: rs_ty_compound_request(
+                                        foreign_table_id_rs_ty,
+                                        is_optional,
+                                    ),
                                     attr: request,
                                     rs_attrs,
                                     is_mut,
@@ -692,7 +699,7 @@ impl<'a> Table<'a> {
                                 setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
-                                    optional,
+                                    is_optional,
                                     validate: &request.validate,
                                     is_mut,
                                 },

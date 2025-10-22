@@ -11,8 +11,7 @@ const TABLE_MUST_IMPLEMENT_MODEL: &str = "table must implement model to implemen
 const TABLE_MUST_HAVE_TWO_COLUMNS: &str = "table must have two columns";
 const TABLE_DOES_NOT_EXIST: &str = "table does not exist";
 const TABLE_MUST_NOT_IMPLEMENT_CONTROLLER: &str = "table must not implement controller";
-// const MODEL_AND_MANY_MODEL_CONFLICT: &str = "model and many_model conflict";
-const ID_MUST_BE_INT: &str = "id must be int";
+const ID_MUST_BE_INT: &str = "ID must be int";
 const COLUMN_MUST_BE_STRING: &str = "column must be string";
 const COLUMN_MUST_BE_TIME: &str = "column must be time";
 const COLUMN_MUST_NOT_BE_OPTIONAL: &str = "column must not be optional";
@@ -110,15 +109,15 @@ impl From<stage1::AtomicTy> for AtomicTy {
 #[derive(Clone)]
 pub struct TyElementValue {
     pub ty: AtomicTy,
-    pub optional: bool,
-    pub unique: bool,
+    pub is_optional: bool,
+    pub is_unique: bool,
 }
 impl TyElementValue {
-    fn new(ty_element_value: stage1::TyElementValue, unique: bool) -> Self {
+    fn new(ty_element_value: stage1::TyElementValue, is_unique: bool) -> Self {
         Self {
             ty: AtomicTy::from(ty_element_value.ty),
-            optional: ty_element_value.optional,
-            unique,
+            is_optional: ty_element_value.is_optional,
+            is_unique,
         }
     }
 }
@@ -190,13 +189,13 @@ pub enum TyElement {
     AutoTime(TyElementAutoTime),
 }
 impl TyElement {
-    pub const fn optional(&self) -> bool {
-        matches!(self, Self::Value(value) if value.optional)
+    pub const fn is_optional(&self) -> bool {
+        matches!(self, Self::Value(value) if value.is_optional)
     }
-    pub const fn unique(&self) -> bool {
+    pub const fn is_unique(&self) -> bool {
         match self {
             Self::Id(_) => true,
-            Self::Value(value) => value.unique,
+            Self::Value(value) => value.is_unique,
             Self::AutoTime(_) => false,
         }
     }
@@ -230,15 +229,15 @@ impl TyElement {
 }
 
 pub enum TyCompoundMultiplicity {
-    One { optional: bool, unique: bool },
+    One { is_optional: bool, is_unique: bool },
     Many(ColumnAttrTyCompounds),
 }
 impl TyCompoundMultiplicity {
-    pub const fn optional(&self) -> bool {
-        matches!(*self, Self::One { optional, .. } if optional)
+    pub const fn is_optional(&self) -> bool {
+        matches!(*self, Self::One { is_optional, .. } if is_optional)
     }
-    pub const fn unique(&self) -> bool {
-        matches!(*self, Self::One { unique, .. } if unique)
+    pub const fn is_unique(&self) -> bool {
+        matches!(*self, Self::One { is_unique, .. } if is_unique)
     }
 }
 
@@ -247,11 +246,11 @@ pub struct TyCompound {
     pub multiplicity: TyCompoundMultiplicity,
 }
 impl TyCompound {
-    pub const fn optional(&self) -> bool {
-        self.multiplicity.optional()
+    pub const fn is_optional(&self) -> bool {
+        self.multiplicity.is_optional()
     }
-    pub const fn unique(&self) -> bool {
-        self.multiplicity.unique()
+    pub const fn is_unique(&self) -> bool {
+        self.multiplicity.is_unique()
     }
 }
 
@@ -260,16 +259,16 @@ pub enum Ty {
     Element(TyElement),
 }
 impl Ty {
-    pub const fn optional(&self) -> bool {
+    pub const fn is_optional(&self) -> bool {
         match self {
-            Self::Compound(compound) => compound.optional(),
-            Self::Element(element) => element.optional(),
+            Self::Compound(compound) => compound.is_optional(),
+            Self::Element(element) => element.is_optional(),
         }
     }
-    pub const fn unique(&self) -> bool {
+    pub const fn is_unique(&self) -> bool {
         match self {
-            Self::Compound(compound) => compound.unique(),
-            Self::Element(element) => element.unique(),
+            Self::Compound(compound) => compound.is_unique(),
+            Self::Element(element) => element.is_unique(),
         }
     }
     pub const fn id(&self) -> Option<&AtomicTyInt> {
@@ -292,41 +291,12 @@ impl Ty {
     }
 }
 
-pub use stage1::ColumnAttrResponse;
-
-pub use stage1::ColumnAttrRequest;
-
-pub use stage1::Validate;
-
-// pub struct ColumnAttrResponse {
-//     pub name: Option<String>,
-//     pub skip: bool,
-// }
-// pub enum ValidateRule {
-//     MinLen(Expr),
-//     MaxLen(usize),
-//     Func(Expr),
-//     Matches(PatRange),
-//     NMatches(PatRange),
-//     Eq(Expr),
-//     NEq(Expr),
-//     Gt(Expr),
-//     Lt(Expr),
-//     Gte(Expr),
-//     Lte(Expr),
-// }
-//
-// pub struct ColumnAttrRequest {
-//     pub name: Option<String>,
-//     pub validate: Vec<ValidateRule>,
-//     // pub ty: Option<Type>,
-// }
-
 pub use stage1::ColumnAttrIndex;
-
 pub use stage1::ColumnAttrIndexFilter;
-
 pub use stage1::ColumnAttrIndexLimit;
+pub use stage1::ColumnAttrRequest;
+pub use stage1::ColumnAttrResponse;
+pub use stage1::Validate;
 
 pub struct Column {
     /// the name of the column in the database
@@ -341,8 +311,7 @@ pub struct Column {
     pub response: ColumnAttrResponse,
     /// the request attribute of the column
     pub request: ColumnAttrRequest,
-    // /// validation rules
-    // pub validate: Vec<ValidateRule>,
+    /// if column can be updated
     pub is_mut: bool,
     /// borrowing behaviour
     pub borrow: Option<Option<Box<Type>>>,
@@ -366,12 +335,12 @@ impl TryFrom<stage1::Column> for Column {
                     response,
                     mut request,
                     real_rs_ty,
-                    unique,
+                    is_unique,
                     is_mut,
                     borrow,
                     index,
                     struct_name,
-                    attrs: rs_attrs,
+                    attrs,
                 },
         } = column;
 
@@ -393,12 +362,12 @@ impl TryFrom<stage1::Column> for Column {
                 } = stage1::TyCompound::try_from(real_rs_ty)?;
                 let ty_compound_multiplicity = match (attr_ty_compound, ty_compound_multiplicity) {
                     (CATC::One, M::One) => TCM::One {
-                        optional: false,
-                        unique,
+                        is_optional: false,
+                        is_unique,
                     },
                     (CATC::One, M::OneOrZero) => TCM::One {
-                        optional: true,
-                        unique,
+                        is_optional: true,
+                        is_unique,
                     },
                     (CATC::One, M::Many) => {
                         return Err(syn::Error::new(
@@ -419,22 +388,22 @@ impl TryFrom<stage1::Column> for Column {
             ColumnAttrTy::Element(attr_ty_element) => {
                 use ColumnAttrTyElement as CATE;
                 let ty_element_value = stage1::TyElementValue::try_from(real_rs_ty)?;
-                let ty_element_value = TyElementValue::new(ty_element_value, unique);
+                let ty_element_value = TyElementValue::new(ty_element_value, is_unique);
                 match attr_ty_element {
                     CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
                         let TyElementValue {
                             ty,
-                            optional,
-                            unique,
+                            is_optional,
+                            is_unique,
                         } = ty_element_value;
-                        if unique {
+                        if is_unique {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_UNIQUE));
                         }
                         let AtomicTy::Int(ty) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), ID_MUST_BE_INT));
                         };
-                        if optional {
+                        if is_optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         }
                         Ty::Element(TyElement::Id(ty))
@@ -442,8 +411,8 @@ impl TryFrom<stage1::Column> for Column {
                     CATE::String(atomic_ty_string) => {
                         let TyElementValue {
                             ty,
-                            optional,
-                            unique,
+                            is_optional,
+                            is_unique,
                         } = ty_element_value;
                         let AtomicTy::String(_) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
@@ -451,23 +420,23 @@ impl TryFrom<stage1::Column> for Column {
 
                         Ty::Element(TyElement::Value(TyElementValue {
                             ty: AtomicTy::String(atomic_ty_string),
-                            optional,
-                            unique,
+                            is_optional,
+                            is_unique,
                         }))
                     }
                     CATE::AutoTime(auto_time_event) => {
                         let TyElementValue {
                             ty,
-                            optional,
-                            unique,
+                            is_optional,
+                            is_unique,
                         } = ty_element_value;
-                        if unique {
+                        if is_unique {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_UNIQUE));
                         }
                         let AtomicTy::Time(ty) = ty else {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_TIME));
                         };
-                        if optional {
+                        if is_optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         }
 
@@ -494,7 +463,7 @@ impl TryFrom<stage1::Column> for Column {
             borrow,
             index,
             struct_name,
-            rs_attrs,
+            rs_attrs: attrs,
         })
     }
 }
@@ -556,6 +525,7 @@ pub struct Table {
     pub rs_name: Ident,
     /// the columns in the database
     pub columns: Columns<Column, Column, TableAttrController>,
+    /// the name of the index
     pub index_rs_name: Option<Ident>,
     /// visibility
     pub rs_vis: Visibility,

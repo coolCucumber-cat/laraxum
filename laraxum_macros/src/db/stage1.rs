@@ -21,17 +21,29 @@ pub type StringLen = u16;
 #[expect(non_camel_case_types)]
 #[derive(PartialEq, Eq)]
 pub enum AtomicTy {
+    /// VARCHAR or CHAR or TEXT
     String,
+    /// BOOLEAN
     bool,
+    /// TINYINT UNSIGNED
     u8,
+    /// TINYINT
     i8,
+    /// SMALLINT UNSIGNED
     u16,
+    /// SMALLINT
     i16,
+    /// INT UNSIGNED
     u32,
+    /// INT
     i32,
+    /// BIGINT UNSIGNED
     u64,
+    /// BIGINT
     i64,
+    /// FLOAT
     f32,
+    /// DOUBLE
     f64,
 
     /// TIMESTAMP
@@ -115,14 +127,14 @@ impl TryFrom<&Type> for AtomicTy {
 
 pub struct TyElementValue {
     pub ty: AtomicTy,
-    pub optional: bool,
+    pub is_optional: bool,
 }
 impl TryFrom<&Type> for TyElementValue {
     type Error = syn::Error;
     fn try_from(rs_ty: &Type) -> Result<Self, Self::Error> {
-        let (rs_ty, optional) = multiplicity::optional(rs_ty);
+        let (rs_ty, is_optional) = multiplicity::is_optional(rs_ty);
         let ty = AtomicTy::try_from(rs_ty)?;
-        Ok(Self { ty, optional })
+        Ok(Self { ty, is_optional })
     }
 }
 
@@ -263,8 +275,8 @@ pub struct ColumnAttrIndex {
     pub rs_name: Ident,
     #[darling(default)]
     pub filter: ColumnAttrIndexFilter,
-    #[darling(default)]
-    pub sort: bool,
+    #[darling(rename = "sort", default)]
+    pub is_sort: bool,
     #[darling(default)]
     pub limit: ColumnAttrIndexLimit,
     #[darling(default)]
@@ -279,12 +291,12 @@ pub struct ColumnAttr {
     pub response: ColumnAttrResponse,
     pub request: ColumnAttrRequest,
     #[darling(
-        and_then = "crate::utils::syn::TokenStreamAttr::transform_option",
-        rename = "real_ty"
+        rename = "real_ty",
+        and_then = "crate::utils::syn::TokenStreamAttr::transform_option"
     )]
     pub real_rs_ty: Option<Box<Type>>,
-    pub unique: bool,
-    #[darling(default = "Self::is_mut_default")]
+    pub is_unique: bool,
+    #[darling(rename = "mut", default = "Self::is_mut_default")]
     pub is_mut: bool,
     #[darling(and_then = "crate::utils::syn::TokenStreamAttrOption::transform_option")]
     pub borrow: Option<Option<Box<Type>>>,
