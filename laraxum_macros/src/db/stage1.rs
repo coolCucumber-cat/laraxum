@@ -295,6 +295,7 @@ pub struct ColumnAttr {
         and_then = "crate::utils::syn::TokenStreamAttr::transform_option"
     )]
     pub real_rs_ty: Option<Box<Type>>,
+    #[darling(rename = "unique")]
     pub is_unique: bool,
     #[darling(rename = "mut", default = "Self::is_mut_default")]
     pub is_mut: bool,

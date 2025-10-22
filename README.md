@@ -270,7 +270,7 @@ Each field in the struct is a column. Use the `db` attribute on the field:
 >>This column cannot be updated.  
 >>Default: `false`.  
 >>
->>`is_mut =` `<bool>` `,`
+>>`mut =` `<bool>` `,`
 >
 >>Create an index that can query this column.  
 >>This attribute can be set multiple times to create multiple indexes.  

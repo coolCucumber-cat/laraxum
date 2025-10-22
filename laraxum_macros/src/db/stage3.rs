@@ -182,8 +182,8 @@ pub struct RequestColumnSetterOne<'a> {
     pub rs_name: &'a Ident,
     pub name: &'a str,
     pub is_optional: bool,
-    pub validate: &'a Validate,
     pub is_mut: bool,
+    pub validate: &'a Validate,
 }
 
 pub struct RequestColumnSetterCompounds<'a> {
@@ -195,38 +195,49 @@ pub struct RequestColumnSetterCompounds<'a> {
 pub struct RequestColumnField<'a> {
     pub rs_name: &'a Ident,
     pub rs_ty: CowBoxDeref<'a, Type>,
-    pub is_mut: bool,
     pub attr: &'a stage2::ColumnAttrRequest,
     pub rs_attrs: &'a [Attribute],
 }
 
+pub struct RequestColumnOneValue<'a> {
+    pub field: RequestColumnField<'a>,
+    pub setter: RequestColumnSetterOne<'a>,
+    // pub is_mut: bool,
+}
+
+pub struct RequestColumnOneOnUpdate<'a> {
+    pub name: &'a str,
+    pub time_ty: stage2::AtomicTyTime,
+}
+
 pub enum RequestColumnOne<'a> {
-    Field {
-        field: RequestColumnField<'a>,
-        setter: RequestColumnSetterOne<'a>,
-    },
-    OnUpdate {
-        name: &'a str,
-        time_ty: stage2::AtomicTyTime,
-    },
+    Value(RequestColumnOneValue<'a>),
+    OnUpdate(RequestColumnOneOnUpdate<'a>),
 }
 impl RequestColumnOne<'_> {
-    pub const fn request_field(&self) -> Option<&RequestColumnField<'_>> {
+    pub const fn value(&self) -> Option<&RequestColumnOneValue<'_>> {
         match self {
-            Self::Field { field, setter: _ } => Some(field),
-            _ => None,
+            Self::Value(value) => Some(value),
+            Self::OnUpdate(_) => None,
         }
     }
-    pub const fn request_setter(&self) -> Option<&RequestColumnSetterOne<'_>> {
+    pub const fn field(&self) -> Option<&RequestColumnField<'_>> {
         match self {
-            Self::Field { setter, field: _ } => Some(setter),
-            _ => None,
+            Self::Value(value) => Some(&value.field),
+            Self::OnUpdate(_) => None,
+        }
+    }
+    pub const fn setter(&self) -> Option<&RequestColumnSetterOne<'_>> {
+        match self {
+            Self::Value(value) => Some(&value.setter),
+            Self::OnUpdate(_) => None,
         }
     }
     pub const fn is_mut(&self) -> bool {
         match self {
-            Self::Field { field, .. } => field.is_mut,
-            Self::OnUpdate { .. } => true,
+            Self::Value(value) => value.setter.is_mut,
+            // Self::Value(value) => value.is_mut,
+            Self::OnUpdate(_) => true,
         }
     }
 }
@@ -237,9 +248,7 @@ pub struct RequestColumnCompounds<'a> {
 }
 
 pub use stage2::ColumnAttrIndex;
-
 pub use stage2::ColumnAttrIndexFilter;
-
 pub use stage2::ColumnAttrIndexLimit;
 
 pub struct ColumnOne<'a> {
@@ -310,10 +319,7 @@ impl<'a> ColumnRef<'a> {
     }
     pub fn request_field(self) -> Option<&'a RequestColumnField<'a>> {
         match self {
-            Self::One(one) => one
-                .request
-                .as_ref()
-                .and_then(|request| request.request_field()),
+            Self::One(one) => one.request.as_ref().and_then(|request| request.field()),
             Self::Compounds(compounds) => Some(&compounds.request.field),
         }
     }
@@ -331,10 +337,7 @@ impl<'a> ColumnRef<'a> {
     }
     pub fn request_one_setter(self) -> Option<&'a RequestColumnSetterOne<'a>> {
         match self {
-            Self::One(one) => one
-                .request
-                .as_ref()
-                .and_then(|request| request.request_setter()),
+            Self::One(one) => one.request.as_ref().and_then(|request| request.setter()),
             Self::Compounds(_) => None,
         }
     }
@@ -350,11 +353,12 @@ impl<'a> ColumnRef<'a> {
             Self::Compounds(compounds) => compounds.struct_name,
         }
     }
-    // pub const fn is_mut(&self)->bool{
-    //     match self {
-    //         Self::One(one)=>one.is
-    //     }
-    // }
+    pub fn is_mut(self) -> bool {
+        match self {
+            Self::One(one) => one.request.as_ref().is_some_and(|request| request.is_mut()),
+            ColumnRef::Compounds(_) => true,
+        }
+    }
 }
 impl<'a> From<&'a Column<'a>> for ColumnRef<'a> {
     fn from(column: &'a Column<'a>) -> Self {
@@ -593,29 +597,31 @@ impl<'a> Table<'a> {
                             },
                         },
                         request: match ty_element {
-                            TyElement::Value(_) => Some(RequestColumnOne::Field {
-                                field: RequestColumnField {
-                                    rs_name,
-                                    rs_ty: CowBoxDeref::Borrowed(rs_ty),
-                                    attr: request,
-                                    rs_attrs,
-                                    is_mut,
-                                },
-                                setter: RequestColumnSetterOne {
-                                    rs_name,
-                                    name,
-                                    is_optional: ty_element.is_optional(),
-                                    validate: &request.validate,
-                                    is_mut,
-                                },
-                            }),
+                            TyElement::Value(_) => {
+                                Some(RequestColumnOne::Value(RequestColumnOneValue {
+                                    field: RequestColumnField {
+                                        rs_name,
+                                        rs_ty: CowBoxDeref::Borrowed(rs_ty),
+                                        attr: request,
+                                        rs_attrs,
+                                    },
+                                    setter: RequestColumnSetterOne {
+                                        rs_name,
+                                        name,
+                                        is_optional: ty_element.is_optional(),
+                                        is_mut,
+                                        validate: &request.validate,
+                                    },
+                                    // is_mut,
+                                }))
+                            }
                             TyElement::AutoTime(TyElementAutoTime {
                                 event: AutoTimeEvent::OnUpdate,
                                 ty,
-                            }) => Some(RequestColumnOne::OnUpdate {
+                            }) => Some(RequestColumnOne::OnUpdate(RequestColumnOneOnUpdate {
                                 name,
                                 time_ty: ty.clone(),
-                            }),
+                            })),
                             TyElement::AutoTime(_) | TyElement::Id(_) => None,
                         },
                         index,
@@ -682,7 +688,7 @@ impl<'a> Table<'a> {
                                 },
                                 getter: ResponseColumnGetterOne::Compound(compound),
                             },
-                            request: Some(RequestColumnOne::Field {
+                            request: Some(RequestColumnOne::Value(RequestColumnOneValue {
                                 field: RequestColumnField {
                                     rs_name,
                                     rs_ty: rs_ty_compound_request(
@@ -691,16 +697,16 @@ impl<'a> Table<'a> {
                                     ),
                                     attr: request,
                                     rs_attrs,
-                                    is_mut,
                                 },
                                 setter: RequestColumnSetterOne {
                                     rs_name,
                                     name,
                                     is_optional,
-                                    validate: &request.validate,
                                     is_mut,
+                                    validate: &request.validate,
                                 },
-                            }),
+                                // is_mut,
+                            })),
                             index,
                             borrow,
                             struct_name,
@@ -752,7 +758,6 @@ impl<'a> Table<'a> {
                                     ))),
                                     attr: request,
                                     rs_attrs,
-                                    is_mut,
                                 },
                                 setter: compounds_setter,
                             },
