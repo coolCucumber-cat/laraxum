@@ -14,7 +14,7 @@
 //! Implement [AuthenticateToken] for credentials
 //! to encode them into and decode them from a JSON Web Token.
 //!
-//! [AuthToken<T>] is an Axum [Extractor](axum::extract)
+//! [`AuthToken<T>`] is an Axum [Extractor](axum::extract)
 //! which extracts and decodes the credentials from a JSON Web Token,
 //! then authenticates and authorizes them.
 //! When a user logs in or registers, encode their credentials into a JSON Web Token and

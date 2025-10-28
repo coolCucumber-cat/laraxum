@@ -105,7 +105,7 @@ pub trait Model: Collection {
 /// A table with a value column and an identifier column to identify multiple values.
 ///
 /// It can be implemented for each column.
-/// The [`AggregateBy`] type generic is a marker type for the identifier column.  
+/// The `AggregateBy` type generic is a marker type for the identifier column.  
 ///
 /// This can be used to create many-to-many relationships.
 pub trait ManyModel<AggregateBy>: Table {
