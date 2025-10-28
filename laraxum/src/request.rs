@@ -19,11 +19,13 @@ pub trait Request<RequestType> {
     /// Validate a request.
     ///
     /// # Errors
-    /// - validation fails.
+    /// - Validation fails.
     fn validate(&self) -> Result<(), Self::Error>;
 }
 
-/// Build an error. For internal use.
+/// Build an error.
+///
+/// For advanced error logic.
 pub fn error_builder<T, E>(result: &mut Result<T, E>, f: impl FnOnce(&mut E))
 where
     E: Default,

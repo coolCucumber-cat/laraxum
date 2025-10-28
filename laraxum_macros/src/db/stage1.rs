@@ -152,7 +152,7 @@ impl TryFrom<&Type> for TyCompound {
 }
 
 #[derive(darling::FromMeta)]
-pub struct ColumnAttrTyCompounds {
+pub struct ColumnAttrTyCollection {
     #[darling(
         and_then = "crate::utils::syn::TokenStreamAttr::transform",
         rename = "model"
@@ -160,15 +160,15 @@ pub struct ColumnAttrTyCompounds {
     pub model_rs_name: Ident,
     #[darling(
         and_then = "crate::utils::syn::TokenStreamAttr::transform_option",
-        rename = "index"
+        rename = "aggregate"
     )]
-    pub index_rs_ty: Option<Ident>,
+    pub aggregate_rs_ty: Option<Ident>,
 }
 
 #[derive(darling::FromMeta, Default)]
 #[darling(default)]
 pub struct ColumnAttrTyCompound {
-    pub many: Option<ColumnAttrTyCompounds>,
+    pub many: Option<ColumnAttrTyCollection>,
 }
 
 #[derive(darling::FromMeta)]
@@ -216,7 +216,7 @@ pub struct ColumnAttrRequest {
 
 #[derive(darling::FromMeta, Default, Clone, Copy)]
 #[darling(rename_all = "snake_case")]
-pub enum ColumnAttrIndexFilter {
+pub enum ColumnAttrAggregateFilter {
     #[default]
     None,
     Eq,
@@ -226,7 +226,7 @@ pub enum ColumnAttrIndexFilter {
     Gte,
     Lte,
 }
-impl ColumnAttrIndexFilter {
+impl ColumnAttrAggregateFilter {
     pub fn parameter(&self) -> Option<&'static str> {
         match self {
             Self::None => None,
@@ -248,7 +248,7 @@ impl ColumnAttrIndexFilter {
 
 #[derive(darling::FromMeta, Default, Clone, Copy)]
 #[darling(rename_all = "snake_case")]
-pub enum ColumnAttrIndexLimit {
+pub enum ColumnAttrAggregateLimit {
     #[default]
     None,
     Limit,
@@ -256,7 +256,7 @@ pub enum ColumnAttrIndexLimit {
         per_page: u64,
     },
 }
-impl ColumnAttrIndexLimit {
+impl ColumnAttrAggregateLimit {
     pub fn parameter(&self) -> Option<&'static str> {
         match self {
             Self::None => None,
@@ -267,20 +267,20 @@ impl ColumnAttrIndexLimit {
 }
 
 #[derive(darling::FromMeta)]
-pub struct ColumnAttrIndex {
+pub struct ColumnAttrAggregate {
     #[darling(
         rename = "name",
         and_then = "crate::utils::syn::TokenStreamAttr::transform"
     )]
     pub rs_name: Ident,
     #[darling(default)]
-    pub filter: ColumnAttrIndexFilter,
+    pub filter: ColumnAttrAggregateFilter,
     #[darling(rename = "sort", default)]
     pub is_sort: bool,
     #[darling(default)]
-    pub limit: ColumnAttrIndexLimit,
-    #[darling(default)]
-    pub controller: bool,
+    pub limit: ColumnAttrAggregateLimit,
+    #[darling(rename = "pub", default)]
+    pub is_pub: bool,
 }
 
 #[derive(darling::FromAttributes, Default)]
@@ -301,8 +301,8 @@ pub struct ColumnAttr {
     pub is_mut: bool,
     #[darling(and_then = "crate::utils::syn::TokenStreamAttrOption::transform_option")]
     pub borrow: Option<Option<Box<Type>>>,
-    #[darling(multiple)]
-    pub index: Vec<ColumnAttrIndex>,
+    #[darling(rename = "aggregate", multiple)]
+    pub aggregates: Vec<ColumnAttrAggregate>,
     #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
     pub struct_name: Option<Ident>,
     pub attrs: Vec<Attribute>,
@@ -367,11 +367,14 @@ pub struct TableAttrController {
 #[derive(darling::FromAttributes)]
 #[darling(attributes(db), forward_attrs(allow, doc))]
 pub struct TableAttr {
+    pub name: Option<String>,
     pub model: Option<TableAttrModel>,
     pub controller: Option<TableAttrController>,
-    pub name: Option<String>,
-    #[darling(and_then = "crate::utils::syn::TokenStreamAttr::transform_option")]
-    pub index_name: Option<Ident>,
+    #[darling(
+        rename = "aggregate_name",
+        and_then = "crate::utils::syn::TokenStreamAttr::transform_option"
+    )]
+    pub aggregate_rs_name: Option<Ident>,
 
     pub attrs: Vec<Attribute>,
     // TODO: this was removed for simplicity, add it back

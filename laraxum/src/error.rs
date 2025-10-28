@@ -1,4 +1,4 @@
-use crate::controller::Json;
+use crate::controller::extract::Json;
 
 use axum::{
     http::StatusCode,
@@ -59,11 +59,11 @@ impl IntoResponse for Error {
 pub enum AuthError {
     /// [401 Unauthorized](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.2)
     ///
-    /// Although the status code is called Unauthorized, it means the identity of the user is unknown and therefore unauthenticated
+    /// Although the status code is called Unauthorized, it means the identity of the user is unknown and therefore unauthenticated.
     Unauthenticated,
     /// [403 Forbidden](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.4)
     ///
-    /// Although this has the name of the name of the `401` status code, it means the identity of the user is known and unauthorized
+    /// Although this has the name of the name of the `401` status code, it means the identity of the user is known and unauthorized.
     Unauthorized,
 }
 impl AuthError {
@@ -80,11 +80,14 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// An error in the controller with an unprocessable entity.
+/// An error in the controller with the possibility of an unprocessable entity.
 #[derive(Debug)]
 pub enum ModelError<UnprocessableEntity> {
     /// [422 Unprocessable Entity](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.21)
     UnprocessableEntity(UnprocessableEntity),
+    /// Other error.
+    ///
+    /// See [Error].  
     Other(Error),
 }
 impl<UnprocessableEntity, E> From<E> for ModelError<UnprocessableEntity>

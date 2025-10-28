@@ -13,7 +13,7 @@ use syn::{Attribute, Ident, Type, Visibility};
 
 const TABLE_MUST_HAVE_ID: &str = "table must have an ID";
 const TABLE_ID_MUST_BE_INT: &str = "table ID must be int";
-const COLUMN_MUST_NOT_BE_COMPOUNDS: &str = "column must not be many-to-many relationship";
+const COLUMN_MUST_NOT_BE_COLLECTION: &str = "column must not be many-to-many relationship";
 // const COLUMN_MUST_HAVE_STRUCT_NAME: &str = "column must have struct name";
 
 fn name_extern((parent, child): (&str, &str)) -> String {
@@ -47,11 +47,11 @@ impl TyCompound<'_> {
     }
 }
 
-pub enum Ty<'a> {
+pub enum TyMolecule<'a> {
     Element(TyElement),
     Compound(TyCompound<'a>),
 }
-impl Ty<'_> {
+impl TyMolecule<'_> {
     pub const fn is_optional(&self) -> bool {
         match self {
             Self::Compound(compound) => compound.is_optional(),
@@ -77,7 +77,7 @@ impl Ty<'_> {
 
 pub struct CreateColumn<'a> {
     pub name: &'a str,
-    pub ty: Ty<'a>,
+    pub ty: TyMolecule<'a>,
 }
 
 pub struct ResponseColumnGetterElement<'a> {
@@ -100,11 +100,11 @@ pub struct ResponseColumnGetterCompound<'a> {
     pub columns: Vec<ResponseColumnGetter<'a>>,
 }
 
-pub enum ResponseColumnGetterOne<'a> {
+pub enum ResponseColumnGetterMolecule<'a> {
     Element(ResponseColumnGetterElement<'a>),
     Compound(ResponseColumnGetterCompound<'a>),
 }
-impl ResponseColumnGetterOne<'_> {
+impl ResponseColumnGetterMolecule<'_> {
     pub fn name_intern(&self) -> &str {
         match self {
             Self::Element(element) => &element.name_intern,
@@ -125,36 +125,36 @@ impl ResponseColumnGetterOne<'_> {
     }
 }
 
-pub struct ResponseColumnGetterCompounds<'a> {
+pub struct ResponseColumnGetterCollection<'a> {
     pub rs_name: &'a Ident,
-    pub index_rs_name: &'a Ident,
+    pub aggregate_rs_name: &'a Ident,
     pub table_id_name_extern: String,
     pub many_foreign_table_rs_name: &'a Ident,
 }
 
 pub enum ResponseColumnGetter<'a> {
-    One(ResponseColumnGetterOne<'a>),
-    Compounds(ResponseColumnGetterCompounds<'a>),
+    Molecule(ResponseColumnGetterMolecule<'a>),
+    Collection(ResponseColumnGetterCollection<'a>),
 }
 
 #[derive(Clone, Copy)]
 pub enum ResponseColumnGetterRef<'a> {
-    One(&'a ResponseColumnGetterOne<'a>),
-    Compounds(&'a ResponseColumnGetterCompounds<'a>),
+    Molecule(&'a ResponseColumnGetterMolecule<'a>),
+    Collection(&'a ResponseColumnGetterCollection<'a>),
 }
 impl ResponseColumnGetterRef<'_> {
     pub const fn rs_name(&self) -> &Ident {
         match self {
-            Self::One(one) => one.rs_name(),
-            Self::Compounds(compounds) => compounds.rs_name,
+            Self::Molecule(molecule) => molecule.rs_name(),
+            Self::Collection(collection) => collection.rs_name,
         }
     }
 }
 impl<'a> From<&'a ResponseColumnGetter<'a>> for ResponseColumnGetterRef<'a> {
     fn from(column: &'a ResponseColumnGetter<'a>) -> Self {
         match *column {
-            ResponseColumnGetter::One(ref one) => Self::One(one),
-            ResponseColumnGetter::Compounds(ref compounds) => Self::Compounds(compounds),
+            ResponseColumnGetter::Molecule(ref molecule) => Self::Molecule(molecule),
+            ResponseColumnGetter::Collection(ref collection) => Self::Collection(collection),
         }
     }
 }
@@ -166,19 +166,19 @@ pub struct ResponseColumnField<'a> {
     pub rs_attrs: &'a [Attribute],
 }
 
-pub struct ResponseColumnOne<'a> {
+pub struct ResponseColumnMolecule<'a> {
     pub field: ResponseColumnField<'a>,
-    pub getter: ResponseColumnGetterOne<'a>,
+    pub getter: ResponseColumnGetterMolecule<'a>,
 }
 
-pub struct ResponseColumnCompounds<'a> {
+pub struct ResponseColumnCollection<'a> {
     pub field: ResponseColumnField<'a>,
-    pub getter: ResponseColumnGetterCompounds<'a>,
+    pub getter: ResponseColumnGetterCollection<'a>,
 }
 
 pub use stage2::Validate;
 
-pub struct RequestColumnSetterOne<'a> {
+pub struct RequestColumnSetterMolecule<'a> {
     pub rs_name: &'a Ident,
     pub name: &'a str,
     pub is_optional: bool,
@@ -186,9 +186,9 @@ pub struct RequestColumnSetterOne<'a> {
     pub validate: &'a Validate,
 }
 
-pub struct RequestColumnSetterCompounds<'a> {
+pub struct RequestColumnSetterCollection<'a> {
     pub rs_name: &'a Ident,
-    pub index_rs_name: &'a Ident,
+    pub aggregate_rs_name: &'a Ident,
     pub many_foreign_table_rs_name: &'a Ident,
 }
 
@@ -199,67 +199,67 @@ pub struct RequestColumnField<'a> {
     pub rs_attrs: &'a [Attribute],
 }
 
-pub struct RequestColumnOneValue<'a> {
+pub struct RequestColumnMoleculeMutable<'a> {
     pub field: RequestColumnField<'a>,
-    pub setter: RequestColumnSetterOne<'a>,
+    pub setter: RequestColumnSetterMolecule<'a>,
     // pub is_mut: bool,
 }
 
-pub struct RequestColumnOneOnUpdate<'a> {
+pub struct RequestColumnMoleculeOnUpdate<'a> {
     pub name: &'a str,
     pub time_ty: stage2::AtomicTyTime,
 }
 
-pub enum RequestColumnOne<'a> {
-    Value(RequestColumnOneValue<'a>),
-    OnUpdate(RequestColumnOneOnUpdate<'a>),
+pub enum RequestColumnMolecule<'a> {
+    Mutable(RequestColumnMoleculeMutable<'a>),
+    OnUpdate(RequestColumnMoleculeOnUpdate<'a>),
 }
-impl RequestColumnOne<'_> {
-    pub const fn value(&self) -> Option<&RequestColumnOneValue<'_>> {
+impl RequestColumnMolecule<'_> {
+    pub const fn mutable(&self) -> Option<&RequestColumnMoleculeMutable<'_>> {
         match self {
-            Self::Value(value) => Some(value),
+            Self::Mutable(mutable) => Some(mutable),
             Self::OnUpdate(_) => None,
         }
     }
     pub const fn field(&self) -> Option<&RequestColumnField<'_>> {
         match self {
-            Self::Value(value) => Some(&value.field),
+            Self::Mutable(mutable) => Some(&mutable.field),
             Self::OnUpdate(_) => None,
         }
     }
-    pub const fn setter(&self) -> Option<&RequestColumnSetterOne<'_>> {
+    pub const fn setter(&self) -> Option<&RequestColumnSetterMolecule<'_>> {
         match self {
-            Self::Value(value) => Some(&value.setter),
+            Self::Mutable(mutable) => Some(&mutable.setter),
             Self::OnUpdate(_) => None,
         }
     }
     pub const fn is_mut(&self) -> bool {
         match self {
-            Self::Value(value) => value.setter.is_mut,
-            // Self::Value(value) => value.is_mut,
+            Self::Mutable(mutable) => mutable.setter.is_mut,
+            // Self::Mutable(mutable) => mutable.is_mut,
             Self::OnUpdate(_) => true,
         }
     }
 }
 
-pub struct RequestColumnCompounds<'a> {
+pub struct RequestColumnCollection<'a> {
     pub field: RequestColumnField<'a>,
-    pub setter: RequestColumnSetterCompounds<'a>,
+    pub setter: RequestColumnSetterCollection<'a>,
 }
 
-pub use stage2::ColumnAttrIndex;
-pub use stage2::ColumnAttrIndexFilter;
-pub use stage2::ColumnAttrIndexLimit;
+pub use stage2::ColumnAttrAggregate;
+pub use stage2::ColumnAttrAggregateFilter;
+pub use stage2::ColumnAttrAggregateLimit;
 
-pub struct ColumnOne<'a> {
+pub struct ColumnMolecule<'a> {
     pub create: CreateColumn<'a>,
-    pub response: ResponseColumnOne<'a>,
-    pub request: Option<RequestColumnOne<'a>>,
-    pub index: &'a [ColumnAttrIndex],
+    pub response: ResponseColumnMolecule<'a>,
+    pub request: Option<RequestColumnMolecule<'a>>,
+    pub aggregates: &'a [ColumnAttrAggregate],
     pub borrow: Option<Option<&'a Type>>,
     pub struct_name: Option<&'a Ident>,
 }
-impl ColumnOne<'_> {
+impl ColumnMolecule<'_> {
     pub const fn name(&self) -> &str {
         self.create.name
     }
@@ -267,104 +267,115 @@ impl ColumnOne<'_> {
         self.response.getter.name_intern()
     }
 }
-impl<'a> TryFrom<Column<'a>> for ColumnOne<'a> {
+
+pub struct ColumnCollection<'a> {
+    pub response: ResponseColumnCollection<'a>,
+    pub request: RequestColumnCollection<'a>,
+    pub struct_name: Option<&'a Ident>,
+}
+
+pub enum Column<'a> {
+    Molecule(ColumnMolecule<'a>),
+    Collection(ColumnCollection<'a>),
+}
+impl<'a> TryFrom<Column<'a>> for ColumnMolecule<'a> {
     type Error = syn::Error;
     fn try_from(column: Column<'a>) -> Result<Self, Self::Error> {
         match column {
-            Column::One(one) => Ok(one),
-            Column::Compounds(compounds) => Err(syn::Error::new(
-                compounds.response.field.rs_name.span(),
-                COLUMN_MUST_NOT_BE_COMPOUNDS,
+            Column::Molecule(molecule) => Ok(molecule),
+            Column::Collection(collection) => Err(syn::Error::new(
+                collection.response.field.rs_name.span(),
+                COLUMN_MUST_NOT_BE_COLLECTION,
             )),
         }
     }
 }
 
-pub struct ColumnCompounds<'a> {
-    pub response: ResponseColumnCompounds<'a>,
-    pub request: RequestColumnCompounds<'a>,
-    pub struct_name: Option<&'a Ident>,
-}
-
-pub enum Column<'a> {
-    One(ColumnOne<'a>),
-    Compounds(ColumnCompounds<'a>),
-}
-
 #[derive(Clone, Copy)]
 pub enum ColumnRef<'a> {
-    One(&'a ColumnOne<'a>),
-    Compounds(&'a ColumnCompounds<'a>),
+    Molecule(&'a ColumnMolecule<'a>),
+    Collection(&'a ColumnCollection<'a>),
 }
 impl<'a> ColumnRef<'a> {
     pub const fn create(self) -> Option<&'a CreateColumn<'a>> {
         match self {
-            Self::One(one) => Some(&one.create),
-            Self::Compounds(_) => None,
+            Self::Molecule(molecule) => Some(&molecule.create),
+            Self::Collection(_) => None,
         }
     }
     pub const fn response_field(self) -> &'a ResponseColumnField<'a> {
         match self {
-            Self::One(one) => &one.response.field,
-            Self::Compounds(compounds) => &compounds.response.field,
+            Self::Molecule(molecule) => &molecule.response.field,
+            Self::Collection(collection) => &collection.response.field,
         }
     }
     pub const fn response_getter(self) -> ResponseColumnGetterRef<'a> {
         match self {
-            Self::One(one) => ResponseColumnGetterRef::One(&one.response.getter),
-            Self::Compounds(compounds) => {
-                ResponseColumnGetterRef::Compounds(&compounds.response.getter)
+            Self::Molecule(molecule) => {
+                ResponseColumnGetterRef::Molecule(&molecule.response.getter)
+            }
+            Self::Collection(collection) => {
+                ResponseColumnGetterRef::Collection(&collection.response.getter)
             }
         }
     }
     pub fn request_field(self) -> Option<&'a RequestColumnField<'a>> {
         match self {
-            Self::One(one) => one.request.as_ref().and_then(|request| request.field()),
-            Self::Compounds(compounds) => Some(&compounds.request.field),
+            Self::Molecule(molecule) => molecule
+                .request
+                .as_ref()
+                .and_then(|request| request.field()),
+            Self::Collection(collection) => Some(&collection.request.field),
         }
     }
-    pub const fn request_one(self) -> Option<&'a RequestColumnOne<'a>> {
+    pub const fn request_molecule(self) -> Option<&'a RequestColumnMolecule<'a>> {
         match self {
-            Self::One(one) => one.request.as_ref(),
-            Self::Compounds(_) => None,
+            Self::Molecule(molecule) => molecule.request.as_ref(),
+            Self::Collection(_) => None,
         }
     }
-    pub const fn request_compounds(self) -> Option<&'a RequestColumnCompounds<'a>> {
+    pub const fn request_collection(self) -> Option<&'a RequestColumnCollection<'a>> {
         match self {
-            Self::One(_) => None,
-            Self::Compounds(compounds) => Some(&compounds.request),
+            Self::Molecule(_) => None,
+            Self::Collection(collection) => Some(&collection.request),
         }
     }
-    pub fn request_one_setter(self) -> Option<&'a RequestColumnSetterOne<'a>> {
+    pub fn request_setter_molecule(self) -> Option<&'a RequestColumnSetterMolecule<'a>> {
         match self {
-            Self::One(one) => one.request.as_ref().and_then(|request| request.setter()),
-            Self::Compounds(_) => None,
+            Self::Molecule(molecule) => molecule
+                .request
+                .as_ref()
+                .and_then(|request| request.setter()),
+            Self::Collection(_) => None,
         }
     }
-    pub const fn request_compounds_settter(self) -> Option<&'a RequestColumnSetterCompounds<'a>> {
+    pub const fn request_setter_collection(self) -> Option<&'a RequestColumnSetterCollection<'a>> {
         match self {
-            Self::One(_) => None,
-            Self::Compounds(compounds) => Some(&compounds.request.setter),
+            Self::Molecule(_) => None,
+            Self::Collection(collection) => Some(&collection.request.setter),
         }
     }
     pub const fn struct_name(self) -> Option<&'a Ident> {
         match self {
-            Self::One(one) => one.struct_name,
-            Self::Compounds(compounds) => compounds.struct_name,
+            Self::Molecule(molecule) => molecule.struct_name,
+            Self::Collection(collection) => collection.struct_name,
         }
     }
     pub fn is_mut(self) -> bool {
         match self {
-            Self::One(one) => one.request.as_ref().is_some_and(|request| request.is_mut()),
-            ColumnRef::Compounds(_) => true,
+            Self::Molecule(molecule) => molecule
+                .request
+                .as_ref()
+                .is_some_and(|request| request.is_mut()),
+            Self::Collection(_) => true,
         }
     }
 }
 impl<'a> From<&'a Column<'a>> for ColumnRef<'a> {
     fn from(column: &'a Column<'a>) -> Self {
-        match *column {
-            Column::One(ref one) => ColumnRef::One(one),
-            Column::Compounds(ref compounds) => ColumnRef::Compounds(compounds),
+        match column {
+            Column::Molecule(molecule) => ColumnRef::Molecule(molecule),
+            Column::Collection(collection) => ColumnRef::Collection(collection),
         }
     }
 }
@@ -373,15 +384,14 @@ impl<T, C> Columns<T, T, C> {
     pub fn map_try_collect_all_default<'a, F>(
         &'a self,
         mut f: F,
-    ) -> Result<Columns<Column<'a>, ColumnOne<'a>, &'a C>, syn::Error>
+    ) -> Result<Columns<Column<'a>, ColumnMolecule<'a>, &'a C>, syn::Error>
     where
         F: FnMut(&'a T) -> Result<Column<'a>, syn::Error>,
     {
         match self {
             Self::CollectionOnly { columns } => {
                 let columns = columns.iter().map(|c| f(c));
-                let columns: Result<Vec<Column<'a>>, syn::Error> =
-                    columns.try_collect_all_default();
+                let columns: Result<Vec<Column<'a>>, syn::Error> = columns.try_collect_all();
                 let columns = columns?;
                 Ok(Columns::CollectionOnly { columns })
             }
@@ -391,10 +401,9 @@ impl<T, C> Columns<T, T, C> {
                 controller,
             } => {
                 let id = f(id)?;
-                let id = ColumnOne::try_from(id)?;
+                let id = ColumnMolecule::try_from(id)?;
                 let columns = columns.iter().map(f);
-                let columns: Result<Vec<Column<'a>>, syn::Error> =
-                    columns.try_collect_all_default();
+                let columns: Result<Vec<Column<'a>>, syn::Error> = columns.try_collect_all();
                 let columns = columns?;
                 Ok(Columns::Model {
                     id,
@@ -404,26 +413,26 @@ impl<T, C> Columns<T, T, C> {
             }
             Self::ManyModel { a, b } => {
                 let a = f(a)?;
-                let a = ColumnOne::try_from(a)?;
+                let a = ColumnMolecule::try_from(a)?;
                 let b = f(b)?;
-                let b = ColumnOne::try_from(b)?;
+                let b = ColumnMolecule::try_from(b)?;
                 Ok(Columns::ManyModel { a, b })
             }
         }
     }
 }
-impl<'a, C> Columns<Column<'a>, ColumnOne<'a>, C> {
+impl<'a, C> Columns<Column<'a>, ColumnMolecule<'a>, C> {
     pub fn iter(&'a self) -> impl Iterator<Item = ColumnRef<'a>> + Clone {
         let (a, b, c) = match self {
             Self::CollectionOnly { columns } => (None, None, columns.iter().map(ColumnRef::from)),
             Self::Model { id, columns, .. } => (
-                Some(ColumnRef::One(id)),
+                Some(ColumnRef::Molecule(id)),
                 None,
                 columns.iter().map(ColumnRef::from),
             ),
             Self::ManyModel { a, b } => (
-                Some(ColumnRef::One(a)),
-                Some(ColumnRef::One(b)),
+                Some(ColumnRef::Molecule(a)),
+                Some(ColumnRef::Molecule(b)),
                 [].iter().map(ColumnRef::from),
             ),
         };
@@ -439,30 +448,30 @@ pub struct Table<'a> {
     pub update_request_rs_name: Cow<'a, Ident>,
     pub patch_request_rs_name: Cow<'a, Ident>,
     pub request_error_rs_name: Cow<'a, Ident>,
-    pub index_rs_name: Option<&'a Ident>,
+    pub aggregate_rs_name: Option<&'a Ident>,
     pub db_rs_name: &'a Ident,
     pub rs_attrs: &'a [syn::Attribute],
-    pub columns: Columns<Column<'a>, ColumnOne<'a>, &'a stage2::TableAttrController>,
+    pub columns: Columns<Column<'a>, ColumnMolecule<'a>, &'a stage2::TableAttrController>,
 }
 
 impl<'a> Table<'a> {
     #[expect(clippy::too_many_lines)]
     fn try_new(table: &'a stage2::Table, db: &'a stage2::Db) -> syn::Result<Self> {
-        fn rs_ty_compound_request(rs_ty: &Type, is_optional: bool) -> CowBoxDeref<Type> {
+        fn rs_ty_compound_request(rs_ty: &Type, is_optional: bool) -> CowBoxDeref<'_, Type> {
             if is_optional {
                 CowBoxDeref::Owned(Box::new(syn::parse_quote!(Option<#rs_ty>)))
             } else {
                 CowBoxDeref::Borrowed(rs_ty)
             }
         }
-        fn rs_ty_compounds_request(
+        fn rs_ty_collection_request(
             many_foreign_table_rs_name: &Ident,
-            index_rs_name: &Ident,
+            aggregate_rs_name: &Ident,
         ) -> Type {
             syn::parse_quote!(
                 Vec<
                     <
-                        #many_foreign_table_rs_name as ::laraxum::ManyModel<#index_rs_name>
+                        #many_foreign_table_rs_name as ::laraxum::ManyModel<#aggregate_rs_name>
                     >::ManyRequest
                 >
             )
@@ -482,16 +491,15 @@ impl<'a> Table<'a> {
                     name_intern_extern((table_name_extern, name));
 
                 let response_getter_column = match *ty {
-                    stage2::Ty::Element(ref ty_element) => {
-                        let element = ResponseColumnGetterElement {
+                    stage2::TyMolecule::Element(ref ty_element) => ResponseColumnGetter::Molecule(
+                        ResponseColumnGetterMolecule::Element(ResponseColumnGetterElement {
                             name_intern: column_name_intern,
                             name_extern: column_name_extern,
                             rs_name,
                             is_optional: ty_element.is_optional(),
-                        };
-                        ResponseColumnGetter::One(ResponseColumnGetterOne::Element(element))
-                    }
-                    stage2::Ty::Compound(stage2::TyCompound {
+                        }),
+                    ),
+                    stage2::TyMolecule::Compound(stage2::TyCompound {
                         rs_ty_name: ref foreign_table_rs_name,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::One {
@@ -513,7 +521,7 @@ impl<'a> Table<'a> {
 
                         let columns = traverse(&foreign_table_name_extern, foreign_table, db);
                         let columns: Result<Vec<ResponseColumnGetter>, syn::Error> =
-                            columns.try_collect_all_default();
+                            columns.try_collect_all();
                         let columns = columns?;
 
                         let compound = ResponseColumnGetterCompound {
@@ -526,25 +534,27 @@ impl<'a> Table<'a> {
                             is_optional,
                             columns,
                         };
-                        ResponseColumnGetter::One(ResponseColumnGetterOne::Compound(compound))
+                        ResponseColumnGetter::Molecule(ResponseColumnGetterMolecule::Compound(
+                            compound,
+                        ))
                     }
-                    stage2::Ty::Compound(stage2::TyCompound {
+                    stage2::TyMolecule::Compound(stage2::TyCompound {
                         rs_ty_name: _,
                         multiplicity:
-                            stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
+                            stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCollection {
                                 model_rs_name: ref many_foreign_table_rs_name,
-                                index_rs_ty: ref index,
+                                ref aggregate_rs_ty,
                             }),
                     }) => {
                         let table_rs_name = &table.rs_name;
-                        let index_rs_name = index.as_ref().unwrap_or(table_rs_name);
+                        let aggregate_rs_name = aggregate_rs_ty.as_ref().unwrap_or(table_rs_name);
                         let table_id = table.columns.model().ok_or_else(|| {
                             syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
                         let table_id_name_extern = name_extern((table_name_extern, &table_id.name));
-                        ResponseColumnGetter::Compounds(ResponseColumnGetterCompounds {
+                        ResponseColumnGetter::Collection(ResponseColumnGetterCollection {
                             rs_name,
-                            index_rs_name,
+                            aggregate_rs_name,
                             table_id_name_extern,
                             many_foreign_table_rs_name,
                         })
@@ -557,7 +567,7 @@ impl<'a> Table<'a> {
         let (table_name_intern, table_name_extern) = name_intern_extern((&*db.name, &*table.name));
         let columns = table.columns.map_try_collect_all_default(
             |column: &stage2::Column| -> Result<Column, syn::Error> {
-                let stage2::Column {
+                let &stage2::Column {
                     ref name,
                     ref rs_name,
                     ref ty,
@@ -566,69 +576,77 @@ impl<'a> Table<'a> {
                     ref request,
                     is_mut,
                     ref borrow,
-                    ref index,
+                    ref aggregates,
                     ref struct_name,
                     ref rs_attrs,
-                } = *column;
+                } = column;
                 let (column_name_intern, column_name_extern) =
                     name_intern_extern((&*table_name_extern, name));
-                let index = &**index;
+                let aggregates = &**aggregates;
                 let borrow = borrow.as_ref().map(Option::as_deref);
                 let struct_name = struct_name.as_ref();
 
                 let column0 = match *ty {
-                    stage2::Ty::Element(ref ty_element) => Column::One(ColumnOne {
-                        create: CreateColumn {
-                            name,
-                            ty: Ty::Element(ty_element.clone()),
-                        },
-                        response: ResponseColumnOne {
-                            getter: ResponseColumnGetterOne::Element(ResponseColumnGetterElement {
-                                name_intern: column_name_intern,
-                                name_extern: column_name_extern,
-                                is_optional: ty_element.is_optional(),
-                                rs_name,
-                            }),
-                            field: ResponseColumnField {
-                                rs_name,
-                                rs_ty,
-                                attr: response,
-                                rs_attrs,
-                            },
-                        },
-                        request: match ty_element {
-                            TyElement::Value(_) => {
-                                Some(RequestColumnOne::Value(RequestColumnOneValue {
-                                    field: RequestColumnField {
-                                        rs_name,
-                                        rs_ty: CowBoxDeref::Borrowed(rs_ty),
-                                        attr: request,
-                                        rs_attrs,
-                                    },
-                                    setter: RequestColumnSetterOne {
-                                        rs_name,
-                                        name,
-                                        is_optional: ty_element.is_optional(),
-                                        is_mut,
-                                        validate: &request.validate,
-                                    },
-                                    // is_mut,
-                                }))
-                            }
-                            TyElement::AutoTime(TyElementAutoTime {
-                                event: AutoTimeEvent::OnUpdate,
-                                ty,
-                            }) => Some(RequestColumnOne::OnUpdate(RequestColumnOneOnUpdate {
+                    stage2::TyMolecule::Element(ref ty_element) => {
+                        Column::Molecule(ColumnMolecule {
+                            create: CreateColumn {
                                 name,
-                                time_ty: ty.clone(),
-                            })),
-                            TyElement::AutoTime(_) | TyElement::Id(_) => None,
-                        },
-                        index,
-                        borrow,
-                        struct_name,
-                    }),
-                    stage2::Ty::Compound(stage2::TyCompound {
+                                ty: TyMolecule::Element(ty_element.clone()),
+                            },
+                            response: ResponseColumnMolecule {
+                                getter: ResponseColumnGetterMolecule::Element(
+                                    ResponseColumnGetterElement {
+                                        name_intern: column_name_intern,
+                                        name_extern: column_name_extern,
+                                        is_optional: ty_element.is_optional(),
+                                        rs_name,
+                                    },
+                                ),
+                                field: ResponseColumnField {
+                                    rs_name,
+                                    rs_ty,
+                                    attr: response,
+                                    rs_attrs,
+                                },
+                            },
+                            request: match ty_element {
+                                TyElement::Value(_) => {
+                                    Some(RequestColumnMolecule::Mutable(
+                                        RequestColumnMoleculeMutable {
+                                            field: RequestColumnField {
+                                                rs_name,
+                                                rs_ty: CowBoxDeref::Borrowed(rs_ty),
+                                                attr: request,
+                                                rs_attrs,
+                                            },
+                                            setter: RequestColumnSetterMolecule {
+                                                rs_name,
+                                                name,
+                                                is_optional: ty_element.is_optional(),
+                                                is_mut,
+                                                validate: &request.validate,
+                                            },
+                                            // is_mut,
+                                        },
+                                    ))
+                                }
+                                TyElement::AutoTime(TyElementAutoTime {
+                                    event: AutoTimeEvent::OnUpdate,
+                                    ty,
+                                }) => Some(RequestColumnMolecule::OnUpdate(
+                                    RequestColumnMoleculeOnUpdate {
+                                        name,
+                                        time_ty: ty.clone(),
+                                    },
+                                )),
+                                TyElement::AutoTime(_) | TyElement::Id(_) => None,
+                            },
+                            aggregates,
+                            borrow,
+                            struct_name,
+                        })
+                    }
+                    stage2::TyMolecule::Compound(stage2::TyCompound {
                         rs_ty_name: ref foreign_table_rs_name,
                         multiplicity:
                             stage2::TyCompoundMultiplicity::One {
@@ -654,7 +672,7 @@ impl<'a> Table<'a> {
 
                         let columns = traverse(&foreign_table_name_extern, foreign_table, db);
                         let columns: Result<Vec<ResponseColumnGetter>, syn::Error> =
-                            columns.try_collect_all_default();
+                            columns.try_collect_all();
                         let columns = columns?;
 
                         let compound = ResponseColumnGetterCompound {
@@ -668,10 +686,10 @@ impl<'a> Table<'a> {
                             columns,
                         };
 
-                        Column::One(ColumnOne {
+                        Column::Molecule(ColumnMolecule {
                             create: CreateColumn {
                                 name,
-                                ty: Ty::Compound(TyCompound {
+                                ty: TyMolecule::Compound(TyCompound {
                                     foreign_table_name: &foreign_table.name,
                                     foreign_table_id_name: &foreign_table_id.name,
                                     ty: foreign_table_id_ty,
@@ -679,87 +697,86 @@ impl<'a> Table<'a> {
                                     is_unique,
                                 }),
                             },
-                            response: ResponseColumnOne {
+                            response: ResponseColumnMolecule {
                                 field: ResponseColumnField {
                                     rs_name,
                                     rs_ty,
                                     attr: response,
                                     rs_attrs,
                                 },
-                                getter: ResponseColumnGetterOne::Compound(compound),
+                                getter: ResponseColumnGetterMolecule::Compound(compound),
                             },
-                            request: Some(RequestColumnOne::Value(RequestColumnOneValue {
-                                field: RequestColumnField {
-                                    rs_name,
-                                    rs_ty: rs_ty_compound_request(
-                                        foreign_table_id_rs_ty,
+                            request: Some(RequestColumnMolecule::Mutable(
+                                RequestColumnMoleculeMutable {
+                                    field: RequestColumnField {
+                                        rs_name,
+                                        rs_ty: rs_ty_compound_request(
+                                            foreign_table_id_rs_ty,
+                                            is_optional,
+                                        ),
+                                        attr: request,
+                                        rs_attrs,
+                                    },
+                                    setter: RequestColumnSetterMolecule {
+                                        rs_name,
+                                        name,
                                         is_optional,
-                                    ),
-                                    attr: request,
-                                    rs_attrs,
+                                        is_mut,
+                                        validate: &request.validate,
+                                    },
+                                    // is_mut,
                                 },
-                                setter: RequestColumnSetterOne {
-                                    rs_name,
-                                    name,
-                                    is_optional,
-                                    is_mut,
-                                    validate: &request.validate,
-                                },
-                                // is_mut,
-                            })),
-                            index,
+                            )),
+                            aggregates,
                             borrow,
                             struct_name,
                         })
                     }
-                    stage2::Ty::Compound(stage2::TyCompound {
+                    stage2::TyMolecule::Compound(stage2::TyCompound {
                         rs_ty_name: _,
                         multiplicity:
-                            stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCompounds {
+                            stage2::TyCompoundMultiplicity::Many(stage2::ColumnAttrTyCollection {
                                 model_rs_name: ref many_foreign_table_rs_name,
-                                index_rs_ty: ref index,
+                                ref aggregate_rs_ty,
                             }),
                     }) => {
                         let table_rs_name = &table.rs_name;
-                        let index_rs_name = index.as_ref().unwrap_or(table_rs_name);
+                        let aggregate_rs_name = aggregate_rs_ty.as_ref().unwrap_or(table_rs_name);
                         let table_id = table.columns.model().ok_or_else(|| {
                             syn::Error::new(table_rs_name.span(), TABLE_MUST_HAVE_ID)
                         })?;
                         let table_id_name_extern =
                             name_extern((&table_name_extern, &table_id.name));
-                        let compounds_getter = ResponseColumnGetterCompounds {
-                            rs_name,
-                            index_rs_name,
-                            table_id_name_extern,
-                            many_foreign_table_rs_name,
-                        };
-                        let compounds_setter = RequestColumnSetterCompounds {
-                            rs_name,
-                            index_rs_name,
-                            many_foreign_table_rs_name,
-                        };
-
-                        Column::Compounds(ColumnCompounds {
-                            response: ResponseColumnCompounds {
+                        Column::Collection(ColumnCollection {
+                            response: ResponseColumnCollection {
                                 field: ResponseColumnField {
                                     rs_name,
                                     rs_ty,
                                     attr: response,
                                     rs_attrs,
                                 },
-                                getter: compounds_getter,
+                                getter: ResponseColumnGetterCollection {
+                                    rs_name,
+                                    aggregate_rs_name,
+                                    table_id_name_extern,
+                                    many_foreign_table_rs_name,
+                                },
                             },
-                            request: RequestColumnCompounds {
+                            request: RequestColumnCollection {
                                 field: RequestColumnField {
                                     rs_name,
-                                    rs_ty: CowBoxDeref::Owned(Box::new(rs_ty_compounds_request(
+                                    rs_ty: CowBoxDeref::Owned(Box::new(rs_ty_collection_request(
                                         many_foreign_table_rs_name,
-                                        index_rs_name,
+                                        aggregate_rs_name,
                                     ))),
                                     attr: request,
                                     rs_attrs,
                                 },
-                                setter: compounds_setter,
+                                setter: RequestColumnSetterCollection {
+                                    rs_name,
+                                    aggregate_rs_name,
+                                    many_foreign_table_rs_name,
+                                },
                             },
                             struct_name,
                         })
@@ -782,7 +799,7 @@ impl<'a> Table<'a> {
             update_request_rs_name: Cow::Owned(update_request_rs_name),
             patch_request_rs_name: Cow::Owned(patch_request_rs_name),
             request_error_rs_name: Cow::Owned(request_error_rs_name),
-            index_rs_name: table.index_rs_name.as_ref(),
+            aggregate_rs_name: table.aggregate_rs_name.as_ref(),
             db_rs_name: &db.rs_name,
             rs_attrs: &*table.rs_attrs,
             columns,
@@ -808,7 +825,7 @@ impl<'a> TryFrom<&'a stage2::Db> for Db<'a> {
             .tables
             .iter()
             .map(|table| Table::try_new(table, db))
-            .try_collect_all_default();
+            .try_collect_all();
         let tables = tables?;
 
         Ok(Self {

@@ -141,11 +141,11 @@ enum ColumnAttrTyElement {
     AutoTime(AutoTimeEvent),
 }
 
-pub use stage1::ColumnAttrTyCompounds;
+pub use stage1::ColumnAttrTyCollection;
 
 enum ColumnAttrTyCompound {
     One,
-    Many(ColumnAttrTyCompounds),
+    Many(ColumnAttrTyCollection),
 }
 
 enum ColumnAttrTy {
@@ -230,7 +230,7 @@ impl TyElement {
 
 pub enum TyCompoundMultiplicity {
     One { is_optional: bool, is_unique: bool },
-    Many(ColumnAttrTyCompounds),
+    Many(ColumnAttrTyCollection),
 }
 impl TyCompoundMultiplicity {
     pub const fn is_optional(&self) -> bool {
@@ -254,11 +254,11 @@ impl TyCompound {
     }
 }
 
-pub enum Ty {
+pub enum TyMolecule {
     Compound(TyCompound),
     Element(TyElement),
 }
-impl Ty {
+impl TyMolecule {
     pub const fn is_optional(&self) -> bool {
         match self {
             Self::Compound(compound) => compound.is_optional(),
@@ -291,9 +291,9 @@ impl Ty {
     }
 }
 
-pub use stage1::ColumnAttrIndex;
-pub use stage1::ColumnAttrIndexFilter;
-pub use stage1::ColumnAttrIndexLimit;
+pub use stage1::ColumnAttrAggregate;
+pub use stage1::ColumnAttrAggregateFilter;
+pub use stage1::ColumnAttrAggregateLimit;
 pub use stage1::ColumnAttrRequest;
 pub use stage1::ColumnAttrResponse;
 pub use stage1::Validate;
@@ -304,7 +304,7 @@ pub struct Column {
     /// the name of the column in the rust struct
     pub rs_name: Ident,
     /// the type of the column
-    pub ty: Ty,
+    pub ty: TyMolecule,
     /// the type of the column in the rust struct
     pub rs_ty: Box<Type>,
     /// the response attribute of the column
@@ -315,8 +315,8 @@ pub struct Column {
     pub is_mut: bool,
     /// borrowing behaviour
     pub borrow: Option<Option<Box<Type>>>,
-    /// index
-    pub index: Vec<ColumnAttrIndex>,
+    /// aggregate
+    pub aggregates: Vec<ColumnAttrAggregate>,
     /// struct name
     pub struct_name: Option<Ident>,
 
@@ -338,9 +338,9 @@ impl TryFrom<stage1::Column> for Column {
                     is_unique,
                     is_mut,
                     borrow,
-                    index,
+                    aggregates,
                     struct_name,
-                    attrs,
+                    attrs: rs_attrs,
                 },
         } = column;
 
@@ -380,7 +380,7 @@ impl TryFrom<stage1::Column> for Column {
                         return Err(syn::Error::new(real_rs_ty.span(), COLUMN_MUST_BE_VEC));
                     }
                 };
-                Ty::Compound(TyCompound {
+                TyMolecule::Compound(TyCompound {
                     rs_ty_name: ty,
                     multiplicity: ty_compound_multiplicity,
                 })
@@ -390,7 +390,7 @@ impl TryFrom<stage1::Column> for Column {
                 let ty_element_value = stage1::TyElementValue::try_from(real_rs_ty)?;
                 let ty_element_value = TyElementValue::new(ty_element_value, is_unique);
                 match attr_ty_element {
-                    CATE::None => Ty::Element(TyElement::Value(ty_element_value)),
+                    CATE::None => TyMolecule::Element(TyElement::Value(ty_element_value)),
                     CATE::Id => {
                         let TyElementValue {
                             ty,
@@ -406,7 +406,7 @@ impl TryFrom<stage1::Column> for Column {
                         if is_optional {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         }
-                        Ty::Element(TyElement::Id(ty))
+                        TyMolecule::Element(TyElement::Id(ty))
                     }
                     CATE::String(atomic_ty_string) => {
                         let TyElementValue {
@@ -418,7 +418,7 @@ impl TryFrom<stage1::Column> for Column {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_BE_STRING));
                         };
 
-                        Ty::Element(TyElement::Value(TyElementValue {
+                        TyMolecule::Element(TyElement::Value(TyElementValue {
                             ty: AtomicTy::String(atomic_ty_string),
                             is_optional,
                             is_unique,
@@ -440,7 +440,7 @@ impl TryFrom<stage1::Column> for Column {
                             return Err(syn::Error::new(rs_ty.span(), COLUMN_MUST_NOT_BE_OPTIONAL));
                         }
 
-                        Ty::Element(TyElement::AutoTime(TyElementAutoTime {
+                        TyMolecule::Element(TyElement::AutoTime(TyElementAutoTime {
                             ty,
                             event: auto_time_event,
                         }))
@@ -461,9 +461,9 @@ impl TryFrom<stage1::Column> for Column {
             request,
             is_mut,
             borrow,
-            index,
+            aggregates,
             struct_name,
-            rs_attrs: attrs,
+            rs_attrs,
         })
     }
 }
@@ -525,8 +525,8 @@ pub struct Table {
     pub rs_name: Ident,
     /// the columns in the database
     pub columns: Columns<Column, Column, TableAttrController>,
-    /// the name of the index
-    pub index_rs_name: Option<Ident>,
+    /// the name of the aggregation
+    pub aggregate_rs_name: Option<Ident>,
     /// visibility
     pub rs_vis: Visibility,
     /// attributes
@@ -543,7 +543,7 @@ impl TryFrom<stage1::Table> for Table {
                     model,
                     controller,
                     name,
-                    index_name: index_rs_name,
+                    aggregate_rs_name,
                     attrs: rs_attrs,
                 },
             rs_vis,
@@ -556,7 +556,7 @@ impl TryFrom<stage1::Table> for Table {
             .into_iter()
             .map(|column| {
                 let column = Column::try_from(column)?;
-                if matches!(column.ty, Ty::Element(TyElement::Id(_))) {
+                if matches!(column.ty, TyMolecule::Element(TyElement::Id(_))) {
                     if id.is_some() {
                         return Err(syn::Error::new(
                             column.rs_name.span(),
@@ -570,7 +570,7 @@ impl TryFrom<stage1::Table> for Table {
                 }
             })
             .filter_map(Result::transpose);
-        let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all_default();
+        let columns: Result<Vec<Column>, syn::Error> = columns.try_collect_all();
         let columns = columns?;
 
         let model = model.map(|model| model.many);
@@ -627,7 +627,7 @@ impl TryFrom<stage1::Table> for Table {
             name,
             rs_name,
             columns,
-            index_rs_name,
+            aggregate_rs_name,
             rs_vis,
             rs_attrs,
         })
@@ -656,7 +656,7 @@ impl Db {
         let name = name.unwrap_or_else(|| rs_name.unraw().to_string());
 
         let tables = tables.into_iter().map(Table::try_from);
-        let tables: Result<Vec<Table>, syn::Error> = tables.try_collect_all_default();
+        let tables: Result<Vec<Table>, syn::Error> = tables.try_collect_all();
         let tables = tables?;
 
         Ok(Self {

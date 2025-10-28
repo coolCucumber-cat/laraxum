@@ -174,7 +174,7 @@ impl stage3::TyCompound<'_> {
     }
 }
 
-impl stage3::Ty<'_> {
+impl stage3::TyMolecule<'_> {
     fn ty(&self) -> Cow<'static, str> {
         match self {
             Self::Compound(compound) => Cow::Borrowed(compound.ty()),
@@ -182,7 +182,7 @@ impl stage3::Ty<'_> {
         }
     }
 }
-impl fmt2::write_to::WriteTo for stage3::Ty<'_> {
+impl fmt2::write_to::WriteTo for stage3::TyMolecule<'_> {
     fn write_to<W>(&self, w: &mut W) -> Result<(), W::Error>
     where
         W: fmt2::write::Write + ?Sized,
@@ -294,9 +294,9 @@ fn get(
         &[ResponseColumnGetterElement],
         &[&stage3::ResponseColumnGetterCompound],
     ),
-    index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
-    index_sort: Option<(Sort, &str)>,
-    index_limit: Option<stage3::ColumnAttrIndexLimit>,
+    aggregate_filter: Option<(stage3::ColumnAttrAggregateFilter, &str)>,
+    aggregate_sort: Option<(Sort, &str)>,
+    aggregate_limit: Option<stage3::ColumnAttrAggregateLimit>,
     is_one: bool,
 ) -> String {
     let mut get = fmt2::fmt! { { str } =>
@@ -312,31 +312,31 @@ fn get(
             {compound.name_intern} "=" {compound.foreign_table_id_name_intern}
         )
     };
-    if let Some((index_filter, filter_column_name_intern)) = index_filter {
-        match index_filter {
-            stage3::ColumnAttrIndexFilter::None => {}
-            stage3::ColumnAttrIndexFilter::Eq => {
+    if let Some((aggregate_filter, filter_column_name_intern)) = aggregate_filter {
+        match aggregate_filter {
+            stage3::ColumnAttrAggregateFilter::None => {}
+            stage3::ColumnAttrAggregateFilter::Eq => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "=?" };
             }
-            stage3::ColumnAttrIndexFilter::Like => {
+            stage3::ColumnAttrAggregateFilter::Like => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} " LIKE CONCAT('%', ?, '%')" };
             }
-            stage3::ColumnAttrIndexFilter::Gt => {
+            stage3::ColumnAttrAggregateFilter::Gt => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} ">?" };
             }
-            stage3::ColumnAttrIndexFilter::Lt => {
+            stage3::ColumnAttrAggregateFilter::Lt => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "<?" };
             }
-            stage3::ColumnAttrIndexFilter::Gte => {
+            stage3::ColumnAttrAggregateFilter::Gte => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} ">=?" };
             }
-            stage3::ColumnAttrIndexFilter::Lte => {
+            stage3::ColumnAttrAggregateFilter::Lte => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "<=?" };
             }
         }
     }
-    if let Some((index_sort, sort_column_name_intern)) = index_sort {
-        match index_sort {
+    if let Some((aggregate_sort, sort_column_name_intern)) = aggregate_sort {
+        match aggregate_sort {
             Sort::Ascending => {
                 fmt2::fmt! { (get) => " ORDER BY " {sort_column_name_intern} " ASC" };
             }
@@ -347,13 +347,13 @@ fn get(
     }
     if is_one {
         fmt2::fmt! { (get) => " LIMIT 1" };
-    } else if let Some(index_limit) = index_limit {
-        match index_limit {
-            stage3::ColumnAttrIndexLimit::None => {}
-            stage3::ColumnAttrIndexLimit::Limit => {
+    } else if let Some(aggregate_limit) = aggregate_limit {
+        match aggregate_limit {
+            stage3::ColumnAttrAggregateLimit::None => {}
+            stage3::ColumnAttrAggregateLimit::Limit => {
                 fmt2::fmt! { (get) => " LIMIT ?" };
             }
-            stage3::ColumnAttrIndexLimit::Page { per_page } => {
+            stage3::ColumnAttrAggregateLimit::Page { per_page } => {
                 // the `OFFSET` is set in the parameter as `OFFSET * per_page`
                 fmt2::fmt! { (get) => " LIMIT " {per_page} " OFFSET ? " };
             }
@@ -386,13 +386,13 @@ fn get_one(
         &[ResponseColumnGetterElement],
         &[&stage3::ResponseColumnGetterCompound],
     ),
-    index_filter: (stage3::ColumnAttrIndexFilter, &str),
+    aggregate_filter: (stage3::ColumnAttrAggregateFilter, &str),
 ) -> String {
     get(
         table_name_intern,
         table_name_extern,
         response_getters,
-        Some(index_filter),
+        Some(aggregate_filter),
         None,
         None,
         true,
@@ -405,13 +405,13 @@ fn get_many(
         &[ResponseColumnGetterElement],
         &[&stage3::ResponseColumnGetterCompound],
     ),
-    index_filter: (stage3::ColumnAttrIndexFilter, &str),
+    aggregate_filter: (stage3::ColumnAttrAggregateFilter, &str),
 ) -> String {
     get(
         table_name_intern,
         table_name_extern,
         response_getters,
-        Some(index_filter),
+        Some(aggregate_filter),
         None,
         None,
         false,
@@ -424,9 +424,9 @@ fn get_sort_asc_desc(
         &[ResponseColumnGetterElement],
         &[&stage3::ResponseColumnGetterCompound],
     ),
-    index_filter: Option<(stage3::ColumnAttrIndexFilter, &str)>,
+    aggregate_filter: Option<(stage3::ColumnAttrAggregateFilter, &str)>,
     sort_column_name_intern: &str,
-    index_limit: Option<stage3::ColumnAttrIndexLimit>,
+    aggregate_limit: Option<stage3::ColumnAttrAggregateLimit>,
     is_one: bool,
 ) -> (String, String) {
     (
@@ -434,35 +434,35 @@ fn get_sort_asc_desc(
             table_name_intern,
             table_name_extern,
             response_getters,
-            index_filter,
+            aggregate_filter,
             Some((Sort::Ascending, sort_column_name_intern)),
-            index_limit,
+            aggregate_limit,
             is_one,
         ),
         get(
             table_name_intern,
             table_name_extern,
             response_getters,
-            index_filter,
+            aggregate_filter,
             Some((Sort::Descending, sort_column_name_intern)),
-            index_limit,
+            aggregate_limit,
             is_one,
         ),
     )
 }
 pub const fn request_setter_column<'a>(
-    column: &'a stage3::RequestColumnOne<'a>,
+    column: &'a stage3::RequestColumnMolecule<'a>,
 ) -> (&'a str, &'a str) {
     match column {
-        stage3::RequestColumnOne::Value(value) => (value.setter.name, "?"),
-        stage3::RequestColumnOne::OnUpdate(on_update) => {
+        stage3::RequestColumnMolecule::Mutable(value) => (value.setter.name, "?"),
+        stage3::RequestColumnMolecule::OnUpdate(on_update) => {
             (on_update.name, on_update.time_ty.current_time_func())
         }
     }
 }
 fn create_one<'columns, I>(table_name_intern: &str, columns: I) -> String
 where
-    I: IntoIterator<Item = &'columns stage3::RequestColumnOne<'columns>>,
+    I: IntoIterator<Item = &'columns stage3::RequestColumnMolecule<'columns>>,
     I::IntoIter: Iterator<Item = I::Item> + Clone,
 {
     let request_columns = columns.into_iter().map(request_setter_column);
@@ -476,7 +476,7 @@ where
 }
 fn update_one<'columns, I>(table_name_intern: &str, id_name: &str, columns: I) -> String
 where
-    I: IntoIterator<Item = &'columns stage3::RequestColumnOne<'columns>>,
+    I: IntoIterator<Item = &'columns stage3::RequestColumnMolecule<'columns>>,
 {
     let request_columns = columns.into_iter().map(request_setter_column);
     fmt2::fmt! { { str } =>
@@ -485,7 +485,11 @@ where
         " WHERE " {id_name} "=?"
     }
 }
-fn patch_one(table_name_intern: &str, id_name: &str, column: &stage3::RequestColumnOne) -> String {
+fn patch_one(
+    table_name_intern: &str,
+    id_name: &str,
+    column: &stage3::RequestColumnMolecule,
+) -> String {
     update_one(table_name_intern, id_name, core::iter::once(column))
 }
 fn delete_one(table_name_intern: &str, id_name: &str) -> String {
@@ -505,17 +509,17 @@ fn flatten_internal<'columns>(
 ) {
     for response_getter_column in response_getter_columns {
         match response_getter_column {
-            stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(
-                element,
-            )) => {
+            stage3::ResponseColumnGetterRef::Molecule(
+                stage3::ResponseColumnGetterMolecule::Element(element),
+            ) => {
                 response_getter_column_elements.push(ResponseColumnGetterElement {
                     element,
                     parent_optional,
                 });
             }
-            stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
-                compound,
-            )) => {
+            stage3::ResponseColumnGetterRef::Molecule(
+                stage3::ResponseColumnGetterMolecule::Compound(compound),
+            ) => {
                 let parent_optional = parent_optional || compound.is_optional;
                 let compound_columns = compound
                     .columns
@@ -529,7 +533,7 @@ fn flatten_internal<'columns>(
                     response_getter_column_compounds,
                 );
             }
-            stage3::ResponseColumnGetterRef::Compounds(_) => {}
+            stage3::ResponseColumnGetterRef::Collection(_) => {}
         }
     }
 }
@@ -618,24 +622,26 @@ fn response_getter(
     is_parent_optional: bool,
 ) -> proc_macro2::TokenStream {
     match column {
-        stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Element(element)) => {
-            let stage3::ResponseColumnGetterElement {
+        stage3::ResponseColumnGetterRef::Molecule(
+            stage3::ResponseColumnGetterMolecule::Element(element),
+        ) => {
+            let &stage3::ResponseColumnGetterElement {
                 ref name_extern,
                 is_optional,
                 ..
-            } = *element;
+            } = element;
             let name_extern = from_str_to_rs_ident(name_extern);
             response_getter_column(&name_extern, is_optional, is_parent_optional)
         }
-        stage3::ResponseColumnGetterRef::One(stage3::ResponseColumnGetterOne::Compound(
-            compound,
-        )) => {
-            let stage3::ResponseColumnGetterCompound {
+        stage3::ResponseColumnGetterRef::Molecule(
+            stage3::ResponseColumnGetterMolecule::Compound(compound),
+        ) => {
+            let &stage3::ResponseColumnGetterCompound {
                 is_optional,
                 foreign_table_rs_name: rs_ty_name,
                 ref columns,
                 ..
-            } = *compound;
+            } = compound;
             let is_parent_optional = is_parent_optional || is_optional;
 
             let getter = response_getter_compound(
@@ -656,13 +662,13 @@ fn response_getter(
                 getter
             }
         }
-        stage3::ResponseColumnGetterRef::Compounds(compounds) => {
-            let stage3::ResponseColumnGetterCompounds {
+        stage3::ResponseColumnGetterRef::Collection(collection) => {
+            let &stage3::ResponseColumnGetterCollection {
                 rs_name: _,
-                index_rs_name: table_rs_name,
+                aggregate_rs_name: table_rs_name,
                 ref table_id_name_extern,
                 many_foreign_table_rs_name,
-            } = *compounds;
+            } = collection;
             let one_id = {
                 let table_id_name_extern = from_str_to_rs_ident(table_id_name_extern);
                 response_getter_column(&table_id_name_extern, false, is_parent_optional)
@@ -755,7 +761,7 @@ fn request_setter(
         quote! {
             ::core::option::Option::map(
                 #request,
-                ::laraxum::model::Encode::encode
+                ::laraxum::model::Encode::encode,
             )
         }
     } else {
@@ -861,8 +867,6 @@ fn impl_deserialize_for_untagged_enum<'a, 'b>(
                         ::serde::de::Error::custom("Unknown combination of fields")
                     )
                 }
-                // #( #index_variant_deserialize_token_streams )*
-                // ::core::result::Result::Ok(#table_index_rs_name::#table_index_rs_name)
             }
         }
     }
@@ -877,7 +881,7 @@ impl From<stage3::Table<'_>> for Table {
     #[allow(clippy::too_many_lines)]
     fn from(table: stage3::Table) -> Self {
         let response_fields = table.columns.iter().map(|column| {
-            let stage3::ResponseColumnField {
+            let &stage3::ResponseColumnField {
                 rs_name,
                 rs_ty,
                 attr,
@@ -888,7 +892,7 @@ impl From<stage3::Table<'_>> for Table {
             let serde_name = attr.name.as_deref().map(serde_rename_rs_attr);
 
             quote! {
-                #(#rs_attrs)* #serde_skip #serde_name
+                #( #rs_attrs )* #serde_skip #serde_name
                 pub #rs_name: #rs_ty
             }
         });
@@ -972,11 +976,11 @@ impl From<stage3::Table<'_>> for Table {
 
             let request_setters = create_columns
                 .clone()
-                .filter_map(|column| column.request_one_setter());
+                .filter_map(|column| column.request_setter_molecule());
 
             let create_request_setters = create_columns
                 .clone()
-                .filter_map(|column| column.request_one_setter())
+                .filter_map(|column| column.request_setter_molecule())
                 .map(|setter| {
                     let rs_name = setter.rs_name;
                     request_setter(&quote! { request.#rs_name }, setter.is_optional)
@@ -984,28 +988,28 @@ impl From<stage3::Table<'_>> for Table {
 
             let create_request_columns = create_columns
                 .clone()
-                .filter_map(|column| column.request_one());
+                .filter_map(|column| column.request_molecule());
 
             let create_one = create_one(&table.name_intern, create_request_columns);
             let create_one = quote! {
                 ::sqlx::query!(#create_one, #(#create_request_setters,)*)
             };
 
-            let compounds_request_setters = table
+            let request_setter_collections = table
                 .columns
                 .iter()
-                .filter_map(|column| column.request_compounds_settter());
+                .filter_map(|column| column.request_setter_collection());
 
-            let create_request_compounds_setters =
-                compounds_request_setters.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
+            let create_request_setter_collections =
+                request_setter_collections.clone().map(|column| {
+                    let &stage3::RequestColumnSetterCollection {
                         rs_name,
-                        index_rs_name,
+                        aggregate_rs_name,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
                         <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #index_rs_name,
+                            #aggregate_rs_name,
                         >>::create_many(
                             db,
                             id,
@@ -1013,8 +1017,8 @@ impl From<stage3::Table<'_>> for Table {
                         ).await?;
                     }}
                 });
-            let create_request_compounds_setters =
-                quote! { #( #create_request_compounds_setters )*};
+            let create_request_setter_collections =
+                quote! { #( #create_request_setter_collections )*};
 
             let collection_token_stream = quote! {
                 #[derive(::serde::Deserialize)]
@@ -1050,7 +1054,7 @@ impl From<stage3::Table<'_>> for Table {
                         let response = #create_one;
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
-                        #create_request_compounds_setters
+                        #create_request_setter_collections
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
@@ -1199,12 +1203,12 @@ impl From<stage3::Table<'_>> for Table {
                 }
             };
 
-            let indexes = table
+            let aggregates = table
                 .columns
                 .iter()
                 .filter_map(|column| match column {
-                    stage3::ColumnRef::One(one) => Some(one),
-                    stage3::ColumnRef::Compounds(_) => None,
+                    stage3::ColumnRef::Molecule(molecule) => Some(molecule),
+                    stage3::ColumnRef::Collection(_) => None,
                 })
                 .flat_map(|column| {
                     let filter_rs_ty_owned = column.response.field.rs_ty;
@@ -1226,11 +1230,11 @@ impl From<stage3::Table<'_>> for Table {
                     let table_name_intern = &*table.name_intern;
                     let table_name_extern = &*table.name_extern;
                     let column_response_name = column.response.field.rs_name.to_string();
-                    column.index.iter().map(move |index| {
-                        let is_one = is_unique && index.filter.is_eq();
-                        let index_rs_name = &index.rs_name;
+                    column.aggregates.iter().map(move |aggregate| {
+                        let is_one = is_unique && aggregate.filter.is_eq();
+                        let aggregate_rs_name = &aggregate.rs_name;
 
-                        let filter = index.filter.parameter().map(|parameter_name| {
+                        let filter = aggregate.filter.parameter().map(|parameter_name| {
                             (
                                 quote::format_ident!("filter"),
                                 quote::format_ident!(
@@ -1243,7 +1247,7 @@ impl From<stage3::Table<'_>> for Table {
                             )
                         });
                         let limit =
-                            index
+                            aggregate
                                 .limit
                                 .parameter()
                                 .filter(|_| !is_one)
@@ -1255,7 +1259,7 @@ impl From<stage3::Table<'_>> for Table {
                                         },
                                     )
                                 });
-                        let sort = index.is_sort.then(|| -> (Ident, Ident, Type) {
+                        let sort = aggregate.is_sort.then(|| -> (Ident, Ident, Type) {
                             (
                                 quote::format_ident!("sort"),
                                 quote::format_ident!("sort_{}", column_response_name),
@@ -1285,9 +1289,9 @@ impl From<stage3::Table<'_>> for Table {
                             }
                         });
 
-                        let index_struct_token_stream = quote! {
+                        let aggregate_struct_token_stream = quote! {
                             #[derive(::serde::Deserialize)]
-                            pub struct #index_rs_name<#lifetime> {
+                            pub struct #aggregate_rs_name<#lifetime> {
                                 #filter_field
                                 #limit_field
                                 #sort_field
@@ -1296,23 +1300,24 @@ impl From<stage3::Table<'_>> for Table {
                         let filter_parameter = filter.as_ref().map(|(short_name, _, _, _)| {
                             quote! { request.#short_name, }
                         });
-                        let limit_parameter = limit.as_ref().map(|(name, _)| match index.limit {
-                            stage3::ColumnAttrIndexLimit::Page { per_page } => {
-                                quote! { request.#name * #per_page, }
-                            }
-                            _ => {
-                                quote! { request.#name, }
-                            }
-                        });
+                        let limit_parameter =
+                            limit.as_ref().map(|(name, _)| match aggregate.limit {
+                                stage3::ColumnAttrAggregateLimit::Page { per_page } => {
+                                    quote! { request.#name * #per_page, }
+                                }
+                                _ => {
+                                    quote! { request.#name, }
+                                }
+                            });
 
-                        let response = if index.is_sort {
+                        let response = if aggregate.is_sort {
                             let (get_sort_asc, get_sort_desc) = get_sort_asc_desc(
                                 table_name_intern,
                                 table_name_extern,
                                 response_getters,
-                                Some((index.filter, name_intern)),
+                                Some((aggregate.filter, name_intern)),
                                 name_intern,
-                                Some(index.limit),
+                                Some(aggregate.limit),
                                 is_one,
                             );
 
@@ -1338,9 +1343,9 @@ impl From<stage3::Table<'_>> for Table {
                                 table_name_intern,
                                 table_name_extern,
                                 response_getters,
-                                Some((index.filter, name_intern)),
+                                Some((aggregate.filter, name_intern)),
                                 None,
-                                Some(index.limit),
+                                Some(aggregate.limit),
                                 is_one,
                             );
                             let response = quote! {
@@ -1349,15 +1354,15 @@ impl From<stage3::Table<'_>> for Table {
                             transform_response(&response, response_getter, is_one)
                         };
 
-                        let index_impl_token_stream = if is_one {
+                        let aggregate_impl_token_stream = if is_one {
                             quote! {
                                 impl
-                                    ::laraxum::CollectionIndexOne<#index_rs_name<#auto_lifetime>>
+                                    ::laraxum::AggregateOne<#aggregate_rs_name<#auto_lifetime>>
                                     for #table_rs_name
                                 {
-                                    type OneRequest<'b> = #index_rs_name<#lifetime>;
+                                    type OneRequest<'b> = #aggregate_rs_name<#lifetime>;
                                     type OneResponse = Self;
-                                    async fn get_index_one<'a>(
+                                    async fn aggregate_one<'a>(
                                         db: &Self::Db,
                                         request: Self::OneRequest<'a>,
                                     )
@@ -1373,12 +1378,12 @@ impl From<stage3::Table<'_>> for Table {
                         } else {
                             quote! {
                                 impl
-                                    ::laraxum::CollectionIndexMany<#index_rs_name<#auto_lifetime>>
+                                    ::laraxum::AggregateMany<#aggregate_rs_name<#auto_lifetime>>
                                     for #table_rs_name
                                 {
-                                    type OneRequest<'b> = #index_rs_name<#lifetime>;
+                                    type OneRequest<'b> = #aggregate_rs_name<#lifetime>;
                                     type ManyResponse = Self;
-                                    async fn get_index_many<'a>(
+                                    async fn aggregate_many<'a>(
                                         db: &Self::Db,
                                         request: Self::OneRequest<'a>,
                                     )
@@ -1392,16 +1397,16 @@ impl From<stage3::Table<'_>> for Table {
                                 }
                             }
                         };
-                        let index_struct_token_stream = quote! {
-                            #index_struct_token_stream
-                            #index_impl_token_stream
+                        let aggregate_struct_token_stream = quote! {
+                            #aggregate_struct_token_stream
+                            #aggregate_impl_token_stream
                         };
 
                         // only include variant in enum if:
-                        // - there is a controller index query
-                        // - this variant is in the controller query index
-                        let index_enum = table.index_rs_name.filter(|_| index.controller);
-                        let index_enum = index_enum.map(|table_index_rs_name| {
+                        // - there is a controller aggregate query
+                        // - this variant is in the controller query aggregate
+                        let aggregate_enum = table.aggregate_rs_name.filter(|_| aggregate.is_pub);
+                        let aggregate_enum = aggregate_enum.map(|table_aggregate_rs_name| {
                             let filter_field = filter.as_ref().map(|(_, name, _, rs_ty_owned)| {
                                 quote! {
                                     #name: #rs_ty_owned,
@@ -1418,8 +1423,8 @@ impl From<stage3::Table<'_>> for Table {
                                 }
                             });
 
-                            let index_variant_def_token_stream = quote! {
-                                #index_rs_name {
+                            let aggregate_variant_def_token_stream = quote! {
+                                #aggregate_rs_name {
                                     #filter_field
                                     #limit_field
                                     #sort_field
@@ -1464,120 +1469,124 @@ impl From<stage3::Table<'_>> for Table {
                                 }
                             });
 
-                            let index_get = quote! {
-                                #table_index_rs_name::#index_rs_name {
+                            let aggregate_get = quote! {
+                                #table_aggregate_rs_name::#aggregate_rs_name {
                                     #filter_get
                                     #limit_get
                                     #sort_get
                                 }
                             };
-                            let index_set = quote! {
-                                #index_rs_name {
+                            let aggregate_set = quote! {
+                                #aggregate_rs_name {
                                     #filter_set
                                     #limit_set
                                     #sort_set
                                 }
                             };
-                            let index_variant_match_token_stream = if is_one {
+                            let aggregate_variant_match_token_stream = if is_one {
                                 quote! {
-                                    #index_get => {
+                                    #aggregate_get => {
                                         <#table_rs_name as
-                                            ::laraxum::CollectionIndexOne<
-                                                #index_rs_name<#auto_lifetime>
+                                            ::laraxum::AggregateOne<
+                                                #aggregate_rs_name<#auto_lifetime>
                                             >
-                                        >::get_index_one_vec(db, #index_set).await
+                                        >::aggregate_one_vec(db, #aggregate_set).await
                                     }
                                 }
                             } else {
                                 quote! {
-                                    #index_get => {
+                                    #aggregate_get => {
                                         <#table_rs_name as
-                                            ::laraxum::CollectionIndexMany<
-                                                #index_rs_name<#auto_lifetime>
+                                            ::laraxum::AggregateMany<
+                                                #aggregate_rs_name<#auto_lifetime>
                                             >
-                                        >::get_index_many(db, #index_set).await
+                                        >::aggregate_many(db, #aggregate_set).await
                                     }
                                 }
                             };
-                            let index_variants = [
+                            let aggregate_variants = [
                                 filter.map(|(_, name, _, rs_ty_owned)| (name, rs_ty_owned.clone())),
                                 limit.map(|(name, rs_ty)| (name, rs_ty)),
                                 sort.map(|(_, name, rs_ty)| (name, rs_ty)),
                             ];
-                            let index_variant_type_signature = (index_rs_name, index_variants);
+                            let aggregate_variant_type_signature =
+                                (aggregate_rs_name, aggregate_variants);
                             (
-                                index_variant_def_token_stream,
-                                index_variant_match_token_stream,
-                                index_variant_type_signature,
+                                aggregate_variant_def_token_stream,
+                                aggregate_variant_match_token_stream,
+                                aggregate_variant_type_signature,
                             )
                         });
 
-                        (index_struct_token_stream, index_enum)
+                        (aggregate_struct_token_stream, aggregate_enum)
                     })
                 });
 
-            let collection_token_stream = if let Some(table_index_rs_name) = table.index_rs_name {
-                let indexes = indexes.collect::<Vec<_>>();
-                let index_token_streams = indexes.iter().map(|(i, _)| i);
-                let index_variants = indexes
-                    .iter()
-                    .filter_map(|(_, index_variant)| index_variant.as_ref());
-                let index_variant_def_token_streams = index_variants.clone().map(|(i, _, _)| i);
-                let index_variant_match_token_streams = index_variants.clone().map(|(_, i, _)| i);
-                let index_variant_type_signatures =
-                    index_variants.map(|(_, _, (index_rs_name, fields))| {
-                        (
-                            *index_rs_name,
-                            fields.iter().flat_map(|field| {
-                                field.as_ref().map(|(rs_name, rs_ty)| (rs_name, rs_ty))
-                            }),
-                        )
-                    });
+            let collection_token_stream =
+                if let Some(table_aggregate_rs_name) = table.aggregate_rs_name {
+                    let aggregates = aggregates.collect::<Vec<_>>();
+                    let aggregate_token_streams = aggregates.iter().map(|(i, _)| i);
+                    let aggregate_variants = aggregates
+                        .iter()
+                        .filter_map(|(_, aggregate_variant)| aggregate_variant.as_ref());
+                    let aggregate_variant_def_token_streams =
+                        aggregate_variants.clone().map(|(i, _, _)| i);
+                    let aggregate_variant_match_token_streams =
+                        aggregate_variants.clone().map(|(_, i, _)| i);
+                    let aggregate_variant_type_signatures =
+                        aggregate_variants.map(|(_, _, (aggregate_rs_name, fields))| {
+                            (
+                                *aggregate_rs_name,
+                                fields.iter().flat_map(|field| {
+                                    field.as_ref().map(|(rs_name, rs_ty)| (rs_name, rs_ty))
+                                }),
+                            )
+                        });
 
-                let impl_deserialize_for_table_index = impl_deserialize_for_untagged_enum(
-                    table_index_rs_name,
-                    index_variant_type_signatures,
-                    Some(table_index_rs_name),
-                );
+                    let impl_deserialize_for_table_aggregate = impl_deserialize_for_untagged_enum(
+                        table_aggregate_rs_name,
+                        aggregate_variant_type_signatures,
+                        Some(table_aggregate_rs_name),
+                    );
 
-                quote! {
-                    #collection_token_stream
-                    #( #index_token_streams )*
+                    quote! {
+                        #collection_token_stream
+                        #( #aggregate_token_streams )*
 
-                    pub enum #table_index_rs_name {
-                        #( #index_variant_def_token_streams, )*
-                        #table_index_rs_name,
-                    }
-                    #impl_deserialize_for_table_index
-                    impl ::laraxum::CollectionIndexMany<#table_index_rs_name> for #table_rs_name {
-                        type OneRequest<'b> = #table_index_rs_name;
-                        type ManyResponse = Self;
-                        async fn get_index_many<'a>(
-                            db: &Self::Db,
-                            request: Self::OneRequest<'a>,
-                        )
-                            -> ::core::result::Result<
-                                ::std::vec::Vec<Self::ManyResponse>,
-                                ::laraxum::Error,
-                            >
-                        {
-                            match request {
-                                #( #index_variant_match_token_streams, )*
-                                #table_index_rs_name::#table_index_rs_name => {
-                                    <#table_rs_name as ::laraxum::Collection>::get_all(db).await
+                        pub enum #table_aggregate_rs_name {
+                            #( #aggregate_variant_def_token_streams, )*
+                            #table_aggregate_rs_name,
+                        }
+                        #impl_deserialize_for_table_aggregate
+                        impl ::laraxum::AggregateMany<#table_aggregate_rs_name> for #table_rs_name {
+                            type OneRequest<'b> = #table_aggregate_rs_name;
+                            type ManyResponse = Self;
+                            async fn aggregate_many<'a>(
+                                db: &Self::Db,
+                                request: Self::OneRequest<'a>,
+                            )
+                                -> ::core::result::Result<
+                                    ::std::vec::Vec<Self::ManyResponse>,
+                                    ::laraxum::Error,
+                                >
+                            {
+                                match request {
+                                    #( #aggregate_variant_match_token_streams, )*
+                                    #table_aggregate_rs_name::#table_aggregate_rs_name => {
+                                        <#table_rs_name as ::laraxum::Collection>::get_all(db).await
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            } else {
-                let index_token_streams = indexes.map(|(i, _)| i);
+                } else {
+                    let aggregate_token_streams = aggregates.map(|(i, _)| i);
 
-                quote! {
-                    #collection_token_stream
-                    #( #index_token_streams )*
-                }
-            };
+                    quote! {
+                        #collection_token_stream
+                        #( #aggregate_token_streams )*
+                    }
+                };
 
             let Some(table_id) = table.columns.model() else {
                 return collection_token_stream;
@@ -1591,7 +1600,7 @@ impl From<stage3::Table<'_>> for Table {
                 &table.name_intern,
                 &table.name_extern,
                 response_getters,
-                (stage3::ColumnAttrIndexFilter::Eq, table_id_name_intern),
+                (stage3::ColumnAttrAggregateFilter::Eq, table_id_name_intern),
             );
             let get_one = transform_response_one(
                 &quote! {
@@ -1628,7 +1637,7 @@ impl From<stage3::Table<'_>> for Table {
 
             let update_request_setters = update_patch_columns
                 .clone()
-                .filter_map(|column| column.request_one_setter())
+                .filter_map(|column| column.request_setter_molecule())
                 .map(|setter| {
                     let rs_name = setter.rs_name;
                     request_setter(&quote! { request.#rs_name }, setter.is_optional)
@@ -1636,7 +1645,7 @@ impl From<stage3::Table<'_>> for Table {
 
             let update_patch_request_columns = update_patch_columns
                 .clone()
-                .filter_map(|column| column.request_one());
+                .filter_map(|column| column.request_molecule());
 
             let update_one = update_one(
                 &table.name_intern,
@@ -1668,16 +1677,16 @@ impl From<stage3::Table<'_>> for Table {
 
             let delete_one = delete_one(&table.name_intern, table_id_name);
 
-            let update_request_compounds_setters =
-                compounds_request_setters.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
+            let update_request_setter_collections =
+                request_setter_collections.clone().map(|column| {
+                    let &stage3::RequestColumnSetterCollection {
                         rs_name,
-                        index_rs_name,
+                        aggregate_rs_name,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
                         <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #index_rs_name,
+                            #aggregate_rs_name,
                         >>::update_many(
                             db,
                             id,
@@ -1685,43 +1694,45 @@ impl From<stage3::Table<'_>> for Table {
                         ).await?;
                     }}
                 });
-            let update_request_compounds_setters =
-                quote! { #( #update_request_compounds_setters )*};
-            let patch_request_compounds_setters = compounds_request_setters.clone().map(|column| {
-                let stage3::RequestColumnSetterCompounds {
-                    rs_name,
-                    index_rs_name,
-                    many_foreign_table_rs_name,
-                } = column;
-                quote! { if let ::core::option::Option::Some(#rs_name) = &request.#rs_name {
-                    <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                        #index_rs_name,
-                    >>::update_many(
-                        db,
-                        id,
-                        #rs_name,
-                    ).await?;
-                };}
-            });
-            let patch_request_compounds_setters = quote! { #( #patch_request_compounds_setters )*};
-            let delete_request_compounds_setters =
-                compounds_request_setters.clone().map(|column| {
-                    let stage3::RequestColumnSetterCompounds {
+            let update_request_setter_collections =
+                quote! { #( #update_request_setter_collections )*};
+            let patch_request_setter_collections =
+                request_setter_collections.clone().map(|column| {
+                    let &stage3::RequestColumnSetterCollection {
+                        rs_name,
+                        aggregate_rs_name,
+                        many_foreign_table_rs_name,
+                    } = column;
+                    quote! { if let ::core::option::Option::Some(#rs_name) = &request.#rs_name {
+                        <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
+                            #aggregate_rs_name,
+                        >>::update_many(
+                            db,
+                            id,
+                            #rs_name,
+                        ).await?;
+                    };}
+                });
+            let patch_request_setter_collections =
+                quote! { #( #patch_request_setter_collections )*};
+            let delete_request_setter_collections =
+                request_setter_collections.clone().map(|column| {
+                    let &stage3::RequestColumnSetterCollection {
                         rs_name: _,
-                        index_rs_name,
+                        aggregate_rs_name,
                         many_foreign_table_rs_name,
                     } = column;
                     quote! {{
                         <#many_foreign_table_rs_name as ::laraxum::ManyModel::<
-                            #index_rs_name,
+                            #aggregate_rs_name,
                         >>::delete_many(
                             db,
                             id,
                         ).await?;
                     }}
                 });
-            let delete_request_compounds_setters =
-                quote! { #( #delete_request_compounds_setters )*};
+            let delete_request_setter_collections =
+                quote! { #( #delete_request_setter_collections )*};
 
             let update_patch_request_validates =
                 validates.iter().filter(|(column, _, _)| column.is_mut);
@@ -1831,7 +1842,7 @@ impl From<stage3::Table<'_>> for Table {
                         let response = #create_one;
                         let response = response.execute(&db.pool).await?;
                         let id = response.last_insert_id();
-                        #create_request_compounds_setters
+                        #create_request_setter_collections
                         transaction.commit().await?;
                         let response = Self::get_one(db, id).await?;
                         ::core::result::Result::Ok(response)
@@ -1853,7 +1864,7 @@ impl From<stage3::Table<'_>> for Table {
                         let transaction = db.pool.begin().await?;
                         let response = #update_one;
                         response.execute(&db.pool).await?;
-                        #update_request_compounds_setters
+                        #update_request_setter_collections
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
@@ -1873,7 +1884,7 @@ impl From<stage3::Table<'_>> for Table {
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
                         #( #patch_one )*
-                        #patch_request_compounds_setters
+                        #patch_request_setter_collections
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
@@ -1889,7 +1900,7 @@ impl From<stage3::Table<'_>> for Table {
                         let response = ::sqlx::query!(#delete_one, id);
                         let transaction = db.pool.begin().await?;
                         response.execute(&db.pool).await?;
-                        #delete_request_compounds_setters
+                        #delete_request_setter_collections
                         transaction.commit().await?;
                         ::core::result::Result::Ok(())
                     }
@@ -1904,10 +1915,10 @@ impl From<stage3::Table<'_>> for Table {
                 .map_or_else(|| quote! { () }, quote::ToTokens::to_token_stream);
 
             let get_many_request_query = table
-                .index_rs_name
+                .aggregate_rs_name
                 .map_or_else(|| quote! { () }, quote::ToTokens::to_token_stream);
 
-            let get_many = table.index_rs_name.map(|index_rs_name| {
+            let get_many = table.aggregate_rs_name.map(|aggregate_rs_name_rs_name| {
                 quote! {
                     async fn get_many(
                         ::axum::extract::State(state):
@@ -1921,8 +1932,8 @@ impl From<stage3::Table<'_>> for Table {
                         >
                     {
                         let records = <
-                            #table_rs_name as ::laraxum::CollectionIndexMany<#index_rs_name>
-                        >::get_index_many(&*state, query).await?;
+                            #table_rs_name as ::laraxum::AggregateMany<#aggregate_rs_name_rs_name>
+                        >::aggregate_many(&*state, query).await?;
                         ::core::result::Result::Ok(::laraxum::Json(records))
 
                     }
@@ -1942,10 +1953,10 @@ impl From<stage3::Table<'_>> for Table {
         let many_model_token_stream = table.columns.many_model().map(|(a, b)| {
             fn many_model(
                 table: &stage3::Table,
-                one: &stage3::ColumnOne,
-                many: &stage3::ColumnOne,
+                one: &stage3::ColumnMolecule,
+                many: &stage3::ColumnMolecule,
             ) -> proc_macro2::TokenStream {
-                let index_rs_ty = many.struct_name.map_or_else(
+                let aggregate_rs_ty = many.struct_name.map_or_else(
                     || one.response.field.rs_ty.to_token_stream(),
                     |struct_name| struct_name.to_token_stream(),
                 );
@@ -1962,7 +1973,7 @@ impl From<stage3::Table<'_>> for Table {
                 let many_response_rs_ty = many.response.field.rs_ty;
 
                 let many_response_getter =
-                    stage3::ResponseColumnGetterRef::One(&many.response.getter);
+                    stage3::ResponseColumnGetterRef::Molecule(&many.response.getter);
 
                 let response_getter = response_getter(many_response_getter, false);
                 let response_getter = response_getter_fn(&response_getter);
@@ -1977,7 +1988,7 @@ impl From<stage3::Table<'_>> for Table {
                         &response_getter_column_elements,
                         &response_getter_column_compounds,
                     ),
-                    (stage3::ColumnAttrIndexFilter::Eq, one.name_intern()),
+                    (stage3::ColumnAttrAggregateFilter::Eq, one.name_intern()),
                 );
                 let get_many_response = transform_response_many(
                     &quote! {
@@ -1993,7 +2004,7 @@ impl From<stage3::Table<'_>> for Table {
                 let table_rs_name = table.rs_name;
 
                 quote! {
-                    impl ::laraxum::ManyModel<#index_rs_ty> for #table_rs_name {
+                    impl ::laraxum::ManyModel<#aggregate_rs_ty> for #table_rs_name {
                         type OneRequest = #one_request_rs_ty;
                         type ManyRequest = #many_request_rs_ty;
                         type ManyResponse = #many_response_rs_ty;
@@ -2036,10 +2047,10 @@ impl From<stage3::Table<'_>> for Table {
                             >
                         {
                             <
-                                Self as ::laraxum::ManyModel<#index_rs_ty>
+                                Self as ::laraxum::ManyModel<#aggregate_rs_ty>
                             >::delete_many(db, one).await?;
                             <
-                                Self as ::laraxum::ManyModel<#index_rs_ty>
+                                Self as ::laraxum::ManyModel<#aggregate_rs_ty>
                             >::create_many(db, one, many).await?;
                             ::core::result::Result::Ok(())
                         }

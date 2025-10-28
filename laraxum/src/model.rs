@@ -1,12 +1,6 @@
-use serde::Deserialize;
+//! A model manages the data storage and interacts with the database.
 
 use crate::{Error, ModelError};
-
-/// The type used for for an id.
-///
-/// Currently this must be a `u64`.
-/// This will be changed in the future to be more flexible, so don't rely on it too much.
-pub type Id = u64;
 
 /// A database and a table that belongs to it.
 pub trait Db<Model> {}
@@ -14,10 +8,10 @@ pub trait Db<Model> {}
 /// Get the `DATABASE_URL` environment variable.
 ///
 /// # Panics
-/// - Invalid environment variable
+/// - Invalid environment variable.
 #[must_use]
 pub fn database_url() -> Option<String> {
-    crate::env_var_opt!("DATABASE_URL")
+    crate::macros::env_var_opt!("DATABASE_URL")
 }
 
 /// Connect to a database.
@@ -32,7 +26,7 @@ pub trait Table: Sized {
     type Response: Send + Sync;
 }
 
-/// A table without uniquely identifiable records.
+/// A table with records.
 ///
 /// These operations don't require the records to be uniquely identifiable for them to work.
 pub trait Collection: Table {
@@ -41,7 +35,7 @@ pub trait Collection: Table {
     /// Error when creating record.
     type CreateRequestError;
 
-    /// Get all records.
+    /// Return all records.
     async fn get_all(db: &Self::Db) -> Result<Vec<Self::Response>, Error>;
     /// Create a record.
     async fn create_one(
@@ -50,22 +44,22 @@ pub trait Collection: Table {
     ) -> Result<(), ModelError<Self::CreateRequestError>>;
 }
 
-/// A table with uniquely identifiable records.
+/// A table with uniquely identifiable records using an identifier column.
 ///
 /// These operations require the records to be uniquely identifiable for them to work.
 pub trait Model: Collection {
-    /// The type to identify an entity.
+    /// The identifier column to identify a record.
     type Id: Copy;
-    /// Request to update a record
+    /// Request to update a record.
     type UpdateRequest;
     /// Error when updating record.
     type UpdateRequestError;
-    /// Request to patch update a record
+    /// Request to patch update a record.
     type PatchRequest;
-    /// Error when patch updating record.
+    /// Error when patch updating a record.
     type PatchRequestError;
 
-    /// Get a record with an id
+    /// Return a record.
     async fn get_one(db: &Self::Db, id: Self::Id) -> Result<Self::Response, Error>;
     /// Create a record and return it.
     async fn create_get_one(
@@ -108,69 +102,79 @@ pub trait Model: Collection {
     async fn delete_one(db: &Self::Db, id: Self::Id) -> Result<(), Error>;
 }
 
-/// A table with two columns where multiple entities are identified by the other column.
+/// A table with a value column and an identifier column to identify multiple values.
+///
+/// It can be implemented for each column.
+/// The [`AggregateBy`] type generic is a marker type for the identifier column.  
 ///
 /// This can be used to create many-to-many relationships.
-pub trait ManyModel<Index>: Table {
+pub trait ManyModel<AggregateBy>: Table {
+    /// The identifier column used to identify many value columns.
     type OneRequest;
+    /// The value column in a request.
     type ManyRequest;
+    /// The value column in a response.
     type ManyResponse;
 
+    /// Return many value columns.
     async fn get_many(
         db: &Self::Db,
         one: Self::OneRequest,
     ) -> Result<Vec<Self::ManyResponse>, Error>;
+    /// Create many value columns.
     async fn create_many(
         db: &Self::Db,
         one: Self::OneRequest,
         many: &[Self::ManyRequest],
     ) -> Result<(), Error>;
+    /// Update many value columns.
     async fn update_many(
         db: &Self::Db,
         one: Self::OneRequest,
         many: &[Self::ManyRequest],
     ) -> Result<(), Error>;
+    /// Delete many value columns.
     async fn delete_many(db: &Self::Db, one: Self::OneRequest) -> Result<(), Error>;
 }
 
-/// A collection where many records can be filtered by an index.
-pub trait CollectionIndexMany<Index>: Collection {
+/// A collection where many records can be aggregated.
+pub trait AggregateMany<AggregateBy>: Collection {
     type OneRequest<'a>;
     type ManyResponse;
-    async fn get_index_many<'a>(
+    async fn aggregate_many<'a>(
         db: &Self::Db,
         one: Self::OneRequest<'a>,
     ) -> Result<Vec<Self::ManyResponse>, Error>;
 }
-/// A collection where a single record can be filtered by an index.
-pub trait CollectionIndexOne<Index>: Collection {
+/// A collection where a single record can be aggregated.
+pub trait AggregateOne<AggregateBy>: Collection {
     type OneRequest<'a>;
     type OneResponse;
-    async fn get_index_one<'a>(
+    async fn aggregate_one<'a>(
         db: &Self::Db,
         one: Self::OneRequest<'a>,
     ) -> Result<Self::OneResponse, Error>;
-    async fn get_index_one_optional<'a>(
+    async fn aggregate_option<'a>(
         db: &Self::Db,
         one: Self::OneRequest<'a>,
     ) -> Result<Option<Self::OneResponse>, Error> {
-        match Self::get_index_one(db, one).await {
+        match Self::aggregate_one(db, one).await {
             Ok(rs) => Ok(Some(rs)),
             Err(Error::NotFound) => Ok(None),
             Err(err) => Err(err),
         }
     }
-    async fn get_index_one_vec<'a>(
+    async fn aggregate_one_vec<'a>(
         db: &Self::Db,
         one: Self::OneRequest<'a>,
     ) -> Result<Vec<Self::OneResponse>, Error> {
-        let response = Self::get_index_one_optional(db, one).await?;
+        let response = Self::aggregate_option(db, one).await?;
         let response = response.into_iter().collect();
         Ok(response)
     }
 }
 
-#[derive(Deserialize, Clone, Copy, Default)]
+#[derive(serde::Deserialize, Clone, Copy, Default)]
 pub enum Sort {
     #[default]
     #[serde(rename = "asc")]

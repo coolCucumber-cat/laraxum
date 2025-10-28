@@ -23,23 +23,19 @@ impl Push<Self> for syn::Error {
 
 pub trait TryCollectAll<T, CollectT, E, CollectE>: Iterator<Item = Result<T, E>> + Sized
 where
-    CollectT: Push<T>,
+    CollectT: Push<T> + Default,
     CollectE: Push<E>,
 {
-    fn try_collect_all(mut self) -> Result<Option<CollectT>, CollectE> {
+    fn try_collect_all(mut self) -> Result<CollectT, CollectE> {
         let e = 'ok: {
-            let mut collect_t = match self.next() {
-                Some(Ok(t)) => CollectT::new_and_push(t),
-                Some(Err(e)) => break 'ok e,
-                None => return Ok(None),
-            };
+            let mut collect_t = CollectT::default();
             for value in &mut self {
                 match value {
                     Ok(t) => collect_t.push(t),
                     Err(e) => break 'ok e,
                 }
             }
-            return Ok(Some(collect_t));
+            return Ok(collect_t);
         };
         let mut collect_e = CollectE::new_and_push(e);
         for value in self {
@@ -48,12 +44,6 @@ where
             }
         }
         Err(collect_e)
-    }
-    fn try_collect_all_default(self) -> Result<CollectT, CollectE>
-    where
-        CollectT: Default,
-    {
-        self.try_collect_all().map(Option::unwrap_or_default)
     }
 }
 

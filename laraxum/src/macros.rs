@@ -100,6 +100,7 @@ macro_rules! transparent {
     };
 }
 
+/// Create an enum wrapper type for integers and implement traits.
 #[macro_export]
 macro_rules! transparent_enum {
     {
@@ -177,9 +178,8 @@ macro_rules! transparent_enum {
 /// Get environment variable.
 ///
 /// # Panics
-/// - not present
-/// - not unicode
-#[macro_export]
+/// - Not present.
+/// - Not unicode.
 macro_rules! env_var {
     ($env_var:expr) => {
         match ::std::env::var($env_var) {
@@ -204,11 +204,11 @@ macro_rules! env_var {
         }
     };
 }
+pub(crate) use env_var;
 /// Get optional environment variable.
 ///
 /// # Panics
-/// - not unicode
-#[macro_export]
+/// - Not unicode.
 macro_rules! env_var_opt {
     ($env_var:expr) => {
         match ::std::env::var($env_var) {
@@ -229,55 +229,16 @@ macro_rules! env_var_opt {
         }
     };
 }
+pub(crate) use env_var_opt;
 /// Get environment variable with default.
 ///
 /// # Panics
-/// - not unicode
-#[macro_export]
+/// - Not unicode.
 macro_rules! env_var_default {
     ($env_var:expr, $default:expr) => {
-        $crate::env_var_opt!($env_var)
+        $crate::macros::env_var_opt!($env_var)
             .map(::std::borrow::Cow::Owned)
             .unwrap_or(::std::borrow::Cow::Borrowed($default))
     };
 }
-
-/// Serve the router.
-#[macro_export]
-macro_rules! serve {
-    ($app:expr) => {
-        async {
-            let url = $crate::controller::url();
-            let url = &*url;
-            let app_listener = ::tokio::net::TcpListener::bind(url).await?;
-            ::std::println!("Listening at: {url:?}");
-            ::axum::serve(app_listener, $app).await?;
-            ::core::result::Result::Ok(())
-        }
-    };
-}
-
-/// Implement authorization for a type that can be compared to the authentication type.
-#[macro_export]
-macro_rules! authorize {
-    {
-        $(
-            $ty:ty => $var_ty:ident => $var:expr
-        ),* $(,)?
-    } => {
-        $(
-            impl $crate::Authorize for $var_ty {
-                type Authenticate = $ty;
-                fn authorize(
-                    authenticate: Self::Authenticate,
-                ) -> ::core::result::Result<Self, $crate::error::AuthError> {
-                    if authenticate >= $var {
-                        ::core::result::Result::Ok($var_ty)
-                    } else {
-                        ::core::result::Result::Err($crate::error::AuthError::Unauthorized)
-                    }
-                }
-            }
-        )*
-    };
-}
+pub(crate) use env_var_default;
