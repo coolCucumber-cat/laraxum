@@ -1,3 +1,7 @@
+#[doc = include_str!("../../README.md")]
+// TODO
+// - docs: validate min_len
+// - docs: aggregate example
 pub mod controller;
 pub mod error;
 pub mod macros;

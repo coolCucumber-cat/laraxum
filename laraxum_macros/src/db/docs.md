@@ -381,14 +381,14 @@ pub mod AppDb {
         #[db(ty(id))]
         id: u64,
         #[db(ty(foreign(many(model(GroupUser)))))]
-        groups: Vec<Group>, // many to many relationship
+        groups: Vec<Group>, // many-to-many relationship
         #[db(ty(foreign()), request(name = "contact_id"), name = "contact_id")]
         contact: Contact,
         #[db(ty(varchar = 255))]
         name: String,
-        #[db(ty(varchar = 255), unique, aggregate(name(UserEmail)), borrow(str))] // <User as CollectionaggregateOne<UserEmail>>
+        #[db(ty(varchar = 255), unique, aggregate(name(UserEmail)), borrow(str))] // <User as AggregateOne<UserEmail>>
         email: String,
-        #[db(ty(varchar = 255), response(skip), request(validate(min_len(12))))]
+        #[db(ty(varchar = 255), response(skip), request(validate(min_len = 12)))]
         password: String,
         #[db(ty(on_create))]
         created_at: chrono::DateTime<chrono::Utc>,
