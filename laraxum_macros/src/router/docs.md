@@ -2,6 +2,9 @@ Create a router.
 
 The router has methods and routes. A route is a path and a router, which makes it nested and recursive. If the router has methods, they are created at the start in a `use` statement. You can either create each method route with curly brackets like a struct expression where the field name is the router method, or you can give the controller, which will create all the method routes and nested method routes for that controller.
 
+# Returns
+`Router`
+
 # Examples
 
 ```rust

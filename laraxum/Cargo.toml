@@ -4,7 +4,7 @@ version = "0.2.1"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/coolCucumber-cat/laraxum.git"
-readme = "../README.md"
+readme = "README.md"
 description = """
 Create API database servers easily using Axum and SQLX.
 """

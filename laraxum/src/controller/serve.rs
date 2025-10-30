@@ -1,6 +1,11 @@
-/// Serve the router.
+/// Serve the app.
+///
+/// Serve the app at address in `URL` environment variable, defaults to "localhost:80".
 ///
 /// See [router](crate::router) for examples.
+///
+/// # Returns
+/// `Future<Output = Result<(), std::io::Error>>`
 #[cfg_attr(not(feature = "macros"), docs(hidden))]
 #[macro_export]
 macro_rules! serve {
