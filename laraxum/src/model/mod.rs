@@ -1,5 +1,8 @@
 //! A model manages the data storage and interacts with the database.
 
+pub mod request;
+pub mod types;
+
 use crate::{Error, ModelError};
 
 /// A database and a table that belongs to it.
@@ -11,7 +14,7 @@ pub trait Db<Model> {}
 /// - Invalid environment variable.
 #[must_use]
 pub fn database_url() -> Option<String> {
-    crate::macros::env_var_opt!("DATABASE_URL")
+    crate::env::env_var_opt!("DATABASE_URL")
 }
 
 /// Connect to a database.
@@ -181,84 +184,4 @@ pub enum Sort {
     Ascending,
     #[serde(rename = "desc")]
     Descending,
-}
-
-/// Decode from the value stored in the database.
-pub trait Decode {
-    type Decode;
-    fn decode(decode: Self::Decode) -> Self;
-}
-/// Encode into the value stored in the database.
-pub trait Encode {
-    type Encode;
-    fn encode(self) -> Self::Encode;
-}
-
-crate::impl_encode_decode_self! {
-    String,
-    u8,
-    i8,
-    u16,
-    i16,
-    u32,
-    i32,
-    u64,
-    i64,
-    f32,
-    f64,
-}
-#[cfg(feature = "time")]
-crate::impl_encode_decode_self! {
-    time::OffsetDateTime,
-    time::PrimitiveDateTime,
-    time::Date,
-    time::Time,
-    time::Duration,
-}
-#[cfg(feature = "chrono")]
-crate::impl_encode_decode_self! {
-    chrono::DateTime::<chrono::Utc>,
-    chrono::DateTime::<chrono::Local>,
-    chrono::NaiveDateTime,
-    chrono::NaiveDate,
-    chrono::NaiveTime,
-    chrono::TimeDelta,
-}
-
-// mysql stores `bool`s as `i8`, so we need to convert it.
-impl Decode for bool {
-    #[cfg(not(feature = "mysql"))]
-    type Decode = Self;
-    #[cfg(feature = "mysql")]
-    type Decode = i8;
-
-    #[inline]
-    fn decode(decode: Self::Decode) -> Self {
-        #[cfg(not(feature = "mysql"))]
-        {
-            decode
-        }
-        #[cfg(feature = "mysql")]
-        {
-            decode != 0
-        }
-    }
-}
-impl Encode for bool {
-    #[cfg(not(feature = "mysql"))]
-    type Encode = Self;
-    #[cfg(feature = "mysql")]
-    type Encode = i8;
-
-    #[inline]
-    fn encode(self) -> Self::Encode {
-        #[cfg(not(feature = "mysql"))]
-        {
-            self
-        }
-        #[cfg(feature = "mysql")]
-        {
-            i8::from(self)
-        }
-    }
 }

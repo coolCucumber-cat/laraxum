@@ -42,7 +42,7 @@ fn flatten_routes<'a>(
         flatten_routes(router, Some(path), flat_routes);
     }
     if let Some(method_router) = method_router {
-        let path = parent_path.unwrap_or(Cow::Borrowed(""));
+        let path = parent_path.unwrap_or(Cow::Borrowed("/"));
         flat_routes.push(Route {
             path,
             method_router,

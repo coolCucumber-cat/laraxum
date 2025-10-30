@@ -213,7 +213,9 @@ impl fmt2::write_to::WriteTo for stage3::TyMolecule<'_> {
                 foreign_table_id_name,
                 ..
             }) => {
-                fmt2::fmt! { (? w) => " FOREIGN KEY REFERENCES " {foreign_table_name} "(" {foreign_table_id_name} ")" }?;
+                fmt2::fmt! { (? w) =>
+                    " FOREIGN KEY REFERENCES " {foreign_table_name} "(" {foreign_table_id_name} ")"
+                }?;
             }
         }
         Ok(())
@@ -319,7 +321,9 @@ fn get(
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} "=?" };
             }
             stage3::ColumnAttrAggregateFilter::Like => {
-                fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} " LIKE CONCAT('%', ?, '%')" };
+                fmt2::fmt! { (get) =>
+                    " WHERE " {filter_column_name_intern} " LIKE CONCAT('%', ?, '%')"
+                };
             }
             stage3::ColumnAttrAggregateFilter::Gt => {
                 fmt2::fmt! { (get) => " WHERE " {filter_column_name_intern} ">?" };
@@ -579,7 +583,7 @@ fn response_getter_column(
     if is_optional {
         quote! {
             if let ::core::option::Option::Some(v) = #field_access {
-                ::core::option::Option::Some(::laraxum::model::Decode::decode(v))
+                ::core::option::Option::Some(::laraxum::model::types::Decode::decode(v))
             } else {
                 ::core::option::Option::None
             }
@@ -587,14 +591,14 @@ fn response_getter_column(
     } else if is_parent_optional {
         quote! {
             if let ::core::option::Option::Some(v) = #field_access {
-                ::laraxum::model::Decode::decode(v)
+                ::laraxum::model::types::Decode::decode(v)
             } else {
                 return ::core::result::Result::Ok(::core::option::Option::None);
             }
         }
     } else {
         quote! {
-            ::laraxum::model::Decode::decode(#field_access)
+            ::laraxum::model::types::Decode::decode(#field_access)
         }
     }
 }
@@ -761,12 +765,12 @@ fn request_setter(
         quote! {
             ::core::option::Option::map(
                 #request,
-                ::laraxum::model::Encode::encode,
+                ::laraxum::model::types::Encode::encode,
             )
         }
     } else {
         quote! {
-            ::laraxum::model::Encode::encode(#request)
+            ::laraxum::model::types::Encode::encode(#request)
         }
     }
 }
@@ -917,7 +921,7 @@ impl From<stage3::Table<'_>> for Table {
                 #( #response_fields ),*
             }
 
-            impl ::laraxum::model::Decode for #table_rs_name {
+            impl ::laraxum::model::types::Decode for #table_rs_name {
                 type Decode = Self;
                 #[inline]
                 fn decode(decode: Self::Decode) -> Self {
@@ -925,7 +929,7 @@ impl From<stage3::Table<'_>> for Table {
                 }
             }
 
-            impl ::laraxum::model::Encode for #table_rs_name {
+            impl ::laraxum::model::types::Encode for #table_rs_name {
                 type Encode = Self;
                 #[inline]
                 fn encode(self) -> Self::Encode {
@@ -1047,8 +1051,9 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::ModelError<Self::CreateRequestError>>
                     {
                         <
-                            Self::CreateRequest
-                            as ::laraxum::Request::<::laraxum::request::method::Create>
+                            Self::CreateRequest as ::laraxum::model::request::Request::<
+                                ::laraxum::model::request::method::Create
+                            >
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
                         let response = #create_one;
@@ -1133,7 +1138,7 @@ impl From<stage3::Table<'_>> for Table {
                         let validates = validates.map(|validate| {
                             quote! {
                                 if let ::core::result::Result::Err(err) = #validate {
-                                    ::laraxum::request::error_builder::<
+                                    ::laraxum::model::request::error_builder::<
                                         (),
                                         Self::Error,
                                     >(
@@ -1191,7 +1196,7 @@ impl From<stage3::Table<'_>> for Table {
                     }
                 }
 
-                impl ::laraxum::Request::<::laraxum::request::method::Create>
+                impl ::laraxum::model::request::Request::<::laraxum::model::request::method::Create>
                     for #create_request_rs_name
                 {
                     type Error = #request_error_rs_name;
@@ -1786,7 +1791,7 @@ impl From<stage3::Table<'_>> for Table {
                     #( #patch_request_fields )*
                 }
 
-                impl ::laraxum::Request::<::laraxum::request::method::Update>
+                impl ::laraxum::model::request::Request::<::laraxum::model::request::method::Update>
                     for #update_request_rs_name
                 {
                     type Error = #request_error_rs_name;
@@ -1796,7 +1801,7 @@ impl From<stage3::Table<'_>> for Table {
                         e
                     }
                 }
-                impl ::laraxum::Request::<::laraxum::request::method::Patch>
+                impl ::laraxum::model::request::Request::<::laraxum::model::request::method::Patch>
                     for #patch_request_rs_name
                 {
                     type Error = #request_error_rs_name;
@@ -1834,9 +1839,9 @@ impl From<stage3::Table<'_>> for Table {
                             ::laraxum::ModelError<Self::CreateRequestError>
                         >
                     {
-                        <
-                            Self::CreateRequest
-                            as ::laraxum::Request::<::laraxum::request::method::Create>
+                        <Self::CreateRequest as ::laraxum::model::request::Request::<
+                                ::laraxum::model::request::method::Create
+                            >
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
                         let response = #create_one;
@@ -1858,8 +1863,9 @@ impl From<stage3::Table<'_>> for Table {
                         >
                     {
                         <
-                            Self::UpdateRequest
-                            as ::laraxum::Request::<::laraxum::request::method::Update>
+                            Self::UpdateRequest as ::laraxum::model::request::Request::<
+                                ::laraxum::model::request::method::Update
+                            >
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
                         let response = #update_one;
@@ -1879,8 +1885,9 @@ impl From<stage3::Table<'_>> for Table {
                         >
                     {
                         <
-                            Self::PatchRequest
-                            as ::laraxum::Request::<::laraxum::request::method::Patch>
+                            Self::PatchRequest as ::laraxum::model::request::Request::<
+                                ::laraxum::model::request::method::Patch
+                            >
                         >::validate(&request)?;
                         let transaction = db.pool.begin().await?;
                         #( #patch_one )*

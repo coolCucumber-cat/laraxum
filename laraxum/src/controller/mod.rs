@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod extract;
+mod serve;
 
 use auth::AuthToken;
 use extract::Json;
@@ -24,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// # Panics
 /// - Not unicode.
 pub fn url() -> std::borrow::Cow<'static, str> {
-    crate::macros::env_var_default!("URL", "localhost:80")
+    crate::env::env_var_default!("URL", "localhost:80")
 }
 
 /// A controller manages the connection between model and view.  
@@ -143,19 +144,4 @@ where
         Self::delete_one(&*state.0, id.0).await?;
         Ok(())
     }
-}
-
-/// Serve the router.
-#[macro_export]
-macro_rules! serve {
-    ($app:expr) => {
-        async {
-            let url = $crate::controller::url();
-            let url = &*url;
-            let app_listener = ::tokio::net::TcpListener::bind(url).await?;
-            ::std::println!("Listening at: {url:?}");
-            ::axum::serve(app_listener, $app).await?;
-            ::core::result::Result::Ok(())
-        }
-    };
 }

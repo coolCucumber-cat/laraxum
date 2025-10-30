@@ -8,6 +8,7 @@ use serde::Serialize;
 
 /// An error in the controller.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     // /// [400 Bad Request](https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1)
     // BadRequest,
@@ -126,13 +127,13 @@ where
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AppError {
-    #[error("io error: {0}")]
+    #[error("{0}")]
     Io(
         #[from]
         #[source]
         std::io::Error,
     ),
-    #[error("sql error: {0}")]
+    #[error("{0}")]
     Sql(
         #[from]
         #[source]

@@ -336,7 +336,7 @@ where
 /// - Invalid environment variable.
 #[must_use]
 pub fn auth_secret() -> String {
-    crate::macros::env_var!("AUTH_SECRET")
+    crate::env::env_var!("AUTH_SECRET")
 }
 
 /// Encryption and decryption keys for encoding and decoding JSON Web Tokens.
@@ -377,6 +377,7 @@ impl AuthKeys {
 }
 
 /// Implement authorization for a type that can be compared to the authentication type.
+#[cfg_attr(not(feature = "macros"), docs(hidden))]
 #[macro_export]
 macro_rules! authorize {
     {

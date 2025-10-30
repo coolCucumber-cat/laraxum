@@ -1,3 +1,5 @@
+//! Request handling and validation.
+
 /// Request methods.
 pub mod method {
     /// GET
@@ -13,6 +15,7 @@ pub mod method {
 }
 
 /// Validate a request for a given request method.
+#[doc(alias = "Validate")]
 pub trait Request<RequestType> {
     /// Request validation error.
     type Error;
@@ -26,6 +29,7 @@ pub trait Request<RequestType> {
 /// Build an error.
 ///
 /// For advanced error logic.
+#[doc(hidden)]
 pub fn error_builder<T, E>(result: &mut Result<T, E>, f: impl FnOnce(&mut E))
 where
     E: Default,
