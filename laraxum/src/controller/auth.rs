@@ -20,14 +20,22 @@
 //! When a user logs in or registers, encode their credentials into a JSON Web Token and
 //! return them so the user can use it to authenticate themselves in subsequent requests.
 //!
-//! ⚠️ JSON Web Tokens are *not* encrypted.
+//! <div class="warning">
+//!
+//! JSON Web Tokens are *not* encrypted.
 //! Do not send sensitive information like credit card details, passwords or emails.
 //! Anyone can read them, but only you can create a valid one.
 //! Changing a JSON Web Token will invalidate it so it is impossible to fake.
 //!
-//! ⚠️ JSON Web Tokens have security vulnerabilities if implemented incorrectly.
+//! </div>
+//!
+//! <div class="warning">
+//!
+//! JSON Web Tokens have security vulnerabilities if implemented incorrectly.
 //! They can't be faked but they can be stolen.
 //! Always make sure you have good security practices on the frontend *and* on the backend.
+//!
+//! </div>
 //!
 //! # Example
 //!

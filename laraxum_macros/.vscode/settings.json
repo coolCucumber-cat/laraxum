@@ -1,0 +1,12 @@
+{
+	"markdown.validate.ignoredLinks": [
+		"../laraxum/model/trait.Model.html",
+		"../laraxum/model/trait.AggregateOne.html",
+		"../laraxum/model/trait.AggregateMany.html",
+		"../laraxum/model/trait.ManyModel.html",
+		"../laraxum/controller/trait.Controller.html",
+		"../laraxum/controller/auth/index.html",
+		"../laraxum/model/types/trait.Decode.html",
+		"../laraxum/model/types/trait.Encode.html"
+	]
+}

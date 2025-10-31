@@ -20,9 +20,13 @@ use serde::{Serialize, de::DeserializeOwned};
 /// - The body contains syntactically valid JSON, but it couldn't be deserialized into the target type.
 /// - Buffering the request body fails.
 ///
-/// ⚠️ Since parsing JSON requires consuming the request body, the [Json] extractor must be
+/// <div class="warning">
+///
+/// Since parsing JSON requires consuming the request body, the [Json] extractor must be
 /// *last* if there are multiple extractors in a handler.
 /// See [`the order of extractors`](axum::extract#the-order-of-extractors).
+///
+/// </div>
 ///
 /// See [DeserializeRequestError] for more details.
 ///

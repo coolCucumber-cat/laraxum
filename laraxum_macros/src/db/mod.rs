@@ -3,6 +3,23 @@ mod stage2;
 mod stage3;
 mod stage4;
 
+/// Define a database, tables and columns.
+///
+///  verb | noun
+/// ------|----------------
+///       |tokenstream
+/// stage1|
+///       |syntax data
+/// ------|----------------
+/// stage2|
+///       |abstract data
+/// ------|----------------
+/// stage3|
+///       |syntax data
+/// ------|----------------
+/// stage4|
+///       |tokenstream
+/// ------|----------------
 pub fn db(
     attr: proc_macro2::TokenStream,
     input: proc_macro2::TokenStream,
