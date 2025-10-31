@@ -1,6 +1,6 @@
 [package]
 name = "laraxum"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 license = "GPL-2.0-only"
 repository = "https://github.com/coolCucumber-cat/laraxum.git"
@@ -10,7 +10,7 @@ Create API database servers easily using Axum and SQLX.
 categories = ["database"]
 
 [dependencies]
-laraxum_macros = { version = "0.2.4", optional = true }
+laraxum_macros = { version = "0.2.5", optional = true }
 sqlx = "0.8.6"
 axum = "0.8.6"
 axum-extra = { version = "0.10.3", features = ["typed-header"] }
